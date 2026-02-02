@@ -67,7 +67,7 @@ def test_c_function_return_type():
     
     # Instead of checking signature (which doesn't work with nanobind),
     # just verify the function exists and is callable
-    assert hasattr(_core.run_motali_cpp, '__call__')
+    assert callable(_core.run_motali_cpp)
 
 
 if __name__ == "__main__":
