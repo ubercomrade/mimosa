@@ -11,10 +11,10 @@ def test_c_module_import():
 
 def test_c_function_signature():
     """Test that C function has correct signature."""
-    import yamcot._core as _core
+    from yamcot._core import run_motali_cpp
     
     # Check function documentation
-    doc = _core.run_motali_cpp.__doc__
+    doc = run_motali_cpp.__doc__
     assert doc is not None
     assert 'run_motali_cpp' in doc
     assert 'file_fasta' in doc
@@ -24,7 +24,7 @@ def test_c_function_signature():
 
 def test_c_function_call_with_invalid_params():
     """Test that C function handles invalid parameters gracefully."""
-    import yamcot._core as _core
+    from yamcot._core import run_motali_cpp
     
     # Test with non-existent files to verify function can be called
     # and returns appropriate error codes
@@ -34,7 +34,7 @@ def test_c_function_call_with_invalid_params():
     try:
         # Call with temporary file and dummy parameters
         # This should fail due to missing files but not crash
-        result = _core.run_motali_cpp(
+        result = run_motali_cpp(
             file_fasta=temp_fa.name,
             type_model_1="pwm",
             type_model_2="pwm", 
@@ -63,11 +63,11 @@ def test_c_function_call_with_invalid_params():
 
 def test_c_function_return_type():
     """Test that C function returns integer as expected."""
-    import yamcot._core as _core
+    from yamcot._core import run_motali_cpp
     
     # Instead of checking signature (which doesn't work with nanobind),
     # just verify the function exists and is callable
-    assert callable(_core.run_motali_cpp)
+    assert callable(run_motali_cpp)
 
 
 if __name__ == "__main__":
