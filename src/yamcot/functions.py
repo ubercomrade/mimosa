@@ -721,8 +721,8 @@ def _fast_pearson_kernel(data1, offsets1, data2, offsets2, search_range):
     n_seq = len(offsets1) - 1
     n_offsets = 2 * search_range + 1
     
-    correlations = np.zeros(n_offsets, dtype=np.float32)
-    pvalues = np.ones(n_offsets, dtype=np.float32)
+    correlations = np.zeros(n_offsets, dtype=np.float64)
+    pvalues = np.ones(n_offsets, dtype=np.float64)
     valid_correlations = np.zeros(n_offsets, dtype=np.bool_)
 
     for k in range(n_offsets):

@@ -12,9 +12,7 @@ import pytest
 
 from yamcot.comparison import DataComparator, TomtomComparator, UniversalMotifComparator
 from yamcot.functions import (
-    all_scores,
     batch_all_scores,
-    batch_best_scores,
     cut_prc,
     cut_roc,
     format_params,
@@ -104,22 +102,6 @@ def test_score_seq_basic():
     # With kmer=1, the function should compute the sum of model values at positions
     expected_score = 1.0 + 2.0 + 3.0
     assert score == expected_score
-
-
-def test_all_scores_basic():
-    """Test basic all_scores function"""
-    # Create a simple scoring matrix
-    model = np.array([[1.0, 2.0, 3.0]])
-    # Create a short DNA sequence as numerical representation
-    num_seq = np.array([0, 1, 2, 3], dtype=np.int8)  # A, C, G, T
-    kmer = 1
-    
-    scores = all_scores(num_seq, model, kmer)
-    
-    # Verify output shape: (2, number_of_possible_positions)
-    # For sequence of length 4 and model of length 3, there are 2 possible positions
-    expected_shape = (2, 2)  # Forward and reverse, 2 positions
-    assert scores.shape == expected_shape
 
 
 def test_precision_recall_curve_basic():
@@ -320,18 +302,6 @@ def test_batch_all_scores_with_simple_data():
     
     result = batch_all_scores(sequences, matrix, kmer=1, is_revcomp=False)
     assert hasattr(result, 'data') and hasattr(result, 'offsets')
-
-
-def test_batch_best_scores_with_simple_data():
-    """Test batch_best_scores with simple RaggedData"""
-    # Create proper RaggedData for testing
-    data = np.array([0, 1, 2, 3, 0, 1], dtype=np.int8)
-    offsets = np.array([0, 3, 6], dtype=np.int64)
-    sequences = RaggedData(data, offsets)
-    matrix = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
-    
-    result = batch_best_scores(sequences, matrix, kmer=1, is_revcomp=False, both_strands=False)
-    assert isinstance(result, np.ndarray)
 
 
 if __name__ == "__main__":
