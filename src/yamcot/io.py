@@ -37,9 +37,9 @@ def read_fasta(path: str) -> RaggedData:
     # First collect lengths and data in one pass if possible,
     # but FASTA requires parsing to determine lengths.
     # For efficiency, we use a temporary list or intermediate buffer.
-    
+
     sequences: List[np.ndarray] = []
-    
+
     with open(path, "r") as handle:
         current_seq_bytes = bytearray()
         for line in handle:
@@ -52,7 +52,7 @@ def read_fasta(path: str) -> RaggedData:
                     sequences.append(encoded)
                     current_seq_bytes.clear()
             else:
-                current_seq_bytes.extend(line.encode('ascii', errors='ignore'))
+                current_seq_bytes.extend(line.encode("ascii", errors="ignore"))
 
         if current_seq_bytes:
             encoded = np.frombuffer(current_seq_bytes.translate(trans_table), dtype=np.int8).copy()
@@ -65,11 +65,11 @@ def read_fasta(path: str) -> RaggedData:
     n = len(sequences)
     offsets = np.zeros(n + 1, dtype=np.int64)
     for i, seq in enumerate(sequences):
-        offsets[i+1] = offsets[i] + len(seq)
-    
+        offsets[i + 1] = offsets[i] + len(seq)
+
     total_data = np.empty(offsets[-1], dtype=np.int8)
     for i, seq in enumerate(sequences):
-        total_data[offsets[i]:offsets[i+1]] = seq
+        total_data[offsets[i] : offsets[i + 1]] = seq
 
     return RaggedData(total_data, offsets)
 
@@ -85,7 +85,7 @@ def write_fasta(sequences: Union[RaggedData, Iterable[np.ndarray]], path: str) -
         Path to the output file.
     """
     # Array for converting indices back to symbols
-    decoder = np.array(['A', 'C', 'G', 'T', 'N'], dtype='U1')
+    decoder = np.array(["A", "C", "G", "T", "N"], dtype="U1")
 
     with open(path, "w") as out:
         if isinstance(sequences, RaggedData):
@@ -105,18 +105,16 @@ def write_fasta(sequences: Union[RaggedData, Iterable[np.ndarray]], path: str) -
                 out.write(f"{seq_str}\n")
 
 
-
-
 def read_meme(path: str, index: int = 0) -> Tuple[np.ndarray, Tuple[str, int], int]:
     """Read a specific motif from a MEME formatted file and return total count.
-    
+
     Parameters
     ----------
     path : str
         Path to the MEME file.
     index : int, default 0
         The zero-based index of the motif to return.
-    
+
     Returns
     -------
     Tuple[np.ndarray, Tuple[str, int], int]
@@ -128,22 +126,22 @@ def read_meme(path: str, index: int = 0) -> Tuple[np.ndarray, Tuple[str, int], i
     target_motif: np.ndarray | None = None
     target_info: Tuple[str, int] | None = None
     motif_count = 0
-    
+
     with open(path) as handle:
         line = handle.readline()
         while line:
             if line.startswith("MOTIF"):
                 # Check if this is the motif we are looking for
-                is_target = (motif_count == index)
+                is_target = motif_count == index
                 motif_count += 1
-                
+
                 parts = line.strip().split()
                 name = parts[1]
-                
+
                 # Read header line containing motif length (w=)
                 header_line = handle.readline()
                 header = header_line.strip().split()
-                
+
                 try:
                     length_idx = header.index("w=") + 1
                     length = int(header[length_idx])
@@ -158,7 +156,7 @@ def read_meme(path: str, index: int = 0) -> Tuple[np.ndarray, Tuple[str, int], i
                         if not row:
                             continue
                         matrix.append(list(map(float, row)))
-                    
+
                     # Transpose into shape (4, length)
                     target_motif = np.array(matrix, dtype=np.float32).T
                     target_info = (name, length)
@@ -166,7 +164,7 @@ def read_meme(path: str, index: int = 0) -> Tuple[np.ndarray, Tuple[str, int], i
                     # Skip the matrix rows for other motifs to save time
                     for _ in range(length):
                         handle.readline()
-        
+
             line = handle.readline()
 
     if target_motif is None:
@@ -178,7 +176,7 @@ def read_meme(path: str, index: int = 0) -> Tuple[np.ndarray, Tuple[str, int], i
     # We know that if target_motif is not None, then target_info is also not None
     # because they are set together in the same condition
     assert target_info is not None
-    
+
     return target_motif, target_info, motif_count
 
 
@@ -211,12 +209,12 @@ def write_meme(motifs: List[np.ndarray], info: List[Tuple[str, int]], path: str)
 
 def read_sitega(path: str) -> tuple[np.ndarray, int, float, float]:
     """Parse SiteGA output file and return the motif matrix with metadata.
-    
+
     Parameters
     ----------
     path : str
         Path to the SiteGA output file (typically ends with '.mat').
-    
+
     Returns
     -------
     tuple[np.ndarray, int, float, float]
@@ -226,14 +224,14 @@ def read_sitega(path: str) -> tuple[np.ndarray, int, float, float]:
         - Minimum score value
         - Maximum score value
     """
-    converter = {'A': 0, 'C': 1, 'G': 2, 'T': 3}
+    converter = {"A": 0, "C": 1, "G": 2, "T": 3}
     with open(path) as file:
         _name = file.readline().strip()
         _number_of_lpd = int(file.readline().strip().split()[0])
         length = int(file.readline().strip().split()[0])
         minimum = float(file.readline().strip().split()[0])
         maximum = float(file.readline().strip().split()[0])
-        sitega = np.zeros((5,5,length), dtype=np.float32)
+        sitega = np.zeros((5, 5, length), dtype=np.float32)
         for line in file:
             start, stop, value, _, dinucleotide = line.strip().split()
             dinucleotide = dinucleotide.upper()
@@ -246,12 +244,12 @@ def read_sitega(path: str) -> tuple[np.ndarray, int, float, float]:
 
 def parse_file_content(filepath: str) -> tuple[dict[int, list[np.ndarray]], int, int]:
     """Parse BaMM file content, ignoring comments starting with '#'.
-    
+
     Parameters
     ----------
     filepath : str
         Path to the BaMM file to parse.
-    
+
     Returns
     -------
     tuple[dict[int, list[np.ndarray]], int, int]
@@ -259,7 +257,7 @@ def parse_file_content(filepath: str) -> tuple[dict[int, list[np.ndarray]], int,
         - Dictionary mapping order indices to lists of coefficient arrays
         - Maximum order found in the file
         - Number of positions (length of motif)
-    
+
     Raises
     ------
     FileNotFoundError
@@ -270,21 +268,18 @@ def parse_file_content(filepath: str) -> tuple[dict[int, list[np.ndarray]], int,
     if not os.path.isfile(filepath):
         raise FileNotFoundError(f"File {filepath} not found")
 
-    with open(filepath, 'r') as f:
+    with open(filepath, "r") as f:
         raw_text = f.read()
 
     # Split blocks by double newline
-    raw_blocks = raw_text.strip().split('\n\n')
+    raw_blocks = raw_text.strip().split("\n\n")
     clean_blocks_data = []
 
     for raw_block in raw_blocks:
-        lines = raw_block.strip().split('\n')
+        lines = raw_block.strip().split("\n")
 
         # Filter comments and empty lines
-        valid_lines = [
-            line.strip() for line in lines
-            if line.strip() and not line.strip().startswith('#')
-        ]
+        valid_lines = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
 
         if not valid_lines:
             continue
@@ -311,7 +306,7 @@ def parse_file_content(filepath: str) -> tuple[dict[int, list[np.ndarray]], int,
         data_by_order[k] = []
         for pos_idx in range(num_positions):
             if len(clean_blocks_data[pos_idx]) <= k:
-                 raise ValueError(f"Inconsistent orders in block {pos_idx}")
+                raise ValueError(f"Inconsistent orders in block {pos_idx}")
             data_by_order[k].append(clean_blocks_data[pos_idx][k])
 
     return data_by_order, max_order, num_positions
@@ -319,11 +314,11 @@ def parse_file_content(filepath: str) -> tuple[dict[int, list[np.ndarray]], int,
 
 def read_bamm(motif_path: str, bg_path: str, target_order: int) -> np.ndarray:
     """Read BaMM files, apply ramp-up logic, and add padding for 'N' (index 4).
-    
+
     This function reads motif and background BaMM files, computes log-odds ratios,
     applies a ramp-up strategy for lower-order coefficients, and adds padding for
     ambiguous nucleotides ('N') by setting their scores to the minimum of each position.
-    
+
     Parameters
     ----------
     motif_path : str
@@ -332,7 +327,7 @@ def read_bamm(motif_path: str, bg_path: str, target_order: int) -> np.ndarray:
         Path to the background BaMM file (.hbcp format).
     target_order : int
         Target order for the BaMM model (determines tensor dimensions).
-    
+
     Returns
     -------
     np.ndarray
@@ -340,7 +335,7 @@ def read_bamm(motif_path: str, bg_path: str, target_order: int) -> np.ndarray:
         equals target_order + 2. The final dimension represents motif length,
         and the first target_order+1 dimensions represent nucleotide dependencies
         including 'N' padding at index 4.
-    
+
     Raises
     ------
     ValueError
@@ -356,8 +351,7 @@ def read_bamm(motif_path: str, bg_path: str, target_order: int) -> np.ndarray:
         target_order = max_order_file
         logger = logging.getLogger(__name__)
         logger.warning(
-            f"Target order {target_order} exceeds file max order {max_order_file}, "
-            "target order set as max order"
+            f"Target order {target_order} exceeds file max order {max_order_file}, target order set as max order"
         )
 
     # 2. Build 4x4...x4 Tensor slices (Standard Logic)
@@ -398,7 +392,7 @@ def read_bamm(motif_path: str, bg_path: str, target_order: int) -> np.ndarray:
     # We want min over axes (0, 1, ..., target_order).
     # acgt_tensor shape is (4, 4, ..., L). Last axis is Length.
     reduce_axes = tuple(range(target_order + 1))
-    min_scores_per_pos = np.min(acgt_tensor, axis=reduce_axes) # Shape (Length,)
+    min_scores_per_pos = np.min(acgt_tensor, axis=reduce_axes)  # Shape (Length,)
 
     # Define new shape: (5, 5, ..., 5, Length)
     new_shape = [5] * (target_order + 1) + [motif_length]
@@ -418,7 +412,7 @@ def read_bamm(motif_path: str, bg_path: str, target_order: int) -> np.ndarray:
 
 def write_sitega(motif, path: str) -> None:
     """Write SiteGA motif to a file in the .mat format understood by mco_prc.exe.
-    
+
     Parameters
     ----------
     motif : SitegaMotif
@@ -427,8 +421,8 @@ def write_sitega(motif, path: str) -> None:
         Path to the output file.
     """
     sitega_matrix = motif.matrix
-    converter = {0: 'A', 1: 'C', 2: 'G', 3: 'T'}
-    
+    converter = {0: "A", 1: "C", 2: "G", 3: "T"}
+
     # Список для хранения найденных сегментов (start, stop, value, dinucleotide)
     segments = []
 
@@ -438,59 +432,52 @@ def write_sitega(motif, path: str) -> None:
             # Пропускаем, если все значения для динуклеотида нулевые
             if np.all(np.abs(sitega_matrix[nuc1, nuc2, :]) <= 1e-9):
                 continue
-            
+
             dinucleotide = converter[nuc1] + converter[nuc2]
             pos = 0
-            
+
             while pos < motif.length:
                 # Пропускаем нули
                 while pos < motif.length and abs(sitega_matrix[nuc1, nuc2, pos]) <= 1e-9:
                     pos += 1
-                
+
                 if pos >= motif.length:
                     break
-                
+
                 # Начало ненулевой последовательности
                 start_pos = pos
                 current_val = sitega_matrix[nuc1, nuc2, pos]
-                
+
                 # Ищем конец последовательности с одинаковым значением
-                while (pos + 1 < motif.length and
-                       abs(sitega_matrix[nuc1, nuc2, pos + 1] - current_val) < 1e-9):
+                while pos + 1 < motif.length and abs(sitega_matrix[nuc1, nuc2, pos + 1] - current_val) < 1e-9:
                     pos += 1
-                
+
                 # Сохраняем сегмент
-                segments.append({
-                    'start': start_pos,
-                    'stop': pos,
-                    'val': current_val,
-                    'dinucl': dinucleotide
-                })
-                
+                segments.append({"start": start_pos, "stop": pos, "val": current_val, "dinucl": dinucleotide})
+
                 pos += 1
 
     # Количество строк данных теперь просто длина списка
     lpd_count = len(segments)
 
-    with open(path, 'w') as f:
+    with open(path, "w") as f:
         f.write(f"{motif.name}\n")
         f.write(f"{lpd_count}\tLPD count\n")
         f.write(f"{motif.length}\tModel length\n")
         f.write(f"{motif.minimum:.12f}\tMinimum\n")
         f.write(f"{motif.maximum:.12f}\tRazmah\n")
-        
+
         # Записываем данные из собранного списка
         for seg in segments:
-            range_length = seg['stop'] - seg['start'] + 1
-            total_value = seg['val'] * range_length
-            
-            f.write(f"{seg['start']}\t{seg['stop']}\t{total_value:.12f}\t0\t{seg['dinucl'].lower()}\n")
+            range_length = seg["stop"] - seg["start"] + 1
+            total_value = seg["val"] * range_length
 
+            f.write(f"{seg['start']}\t{seg['stop']}\t{total_value:.12f}\t0\t{seg['dinucl'].lower()}\n")
 
 
 def write_pfm(pfm: np.ndarray, name: str, length: int, path: str) -> None:
     """Write a Position Frequency Matrix to a file.
-    
+
     Parameters
     ----------
     pfm : np.ndarray
@@ -505,17 +492,17 @@ def write_pfm(pfm: np.ndarray, name: str, length: int, path: str) -> None:
     with open(path, "w") as f:
         f.write(f">{name}\n")
         # Transpose the matrix to get the right format
-        np.savetxt(f, pfm.T, fmt='%.6f', delimiter='\t')
+        np.savetxt(f, pfm.T, fmt="%.6f", delimiter="\t")
 
 
 def read_pfm(path: str) -> tuple[np.ndarray, int, float, float]:
     """Read a Position Frequency Matrix (PFM) from a file and convert to PWM.
-    
+
     Parameters
     ----------
     path : str
         Path to the PFM file.
-    
+
     Returns
     -------
     tuple[np.ndarray, int, float, float]
@@ -525,7 +512,7 @@ def read_pfm(path: str) -> tuple[np.ndarray, int, float, float]:
         - Minimum possible score
         - Maximum possible score
     """
-    pfm = np.loadtxt(path, comments='>').T
+    pfm = np.loadtxt(path, comments=">").T
     length = pfm.shape[1]
     pwm = pfm_to_pwm(pfm)
     minimum = np.sum(pwm.min(axis=0))
@@ -533,5 +520,3 @@ def read_pfm(path: str) -> tuple[np.ndarray, int, float, float]:
     pwm = np.concatenate((pwm, np.min(pwm, axis=0).reshape(1, pwm.shape[1])), axis=0)
     pwm = np.array(pwm, dtype=np.float32)
     return pwm, length, minimum, maximum
-
-

@@ -1,7 +1,7 @@
 """
 Pytest configuration and common fixtures for unimotifcomparator tests.
 """
-import os
+
 import sys
 import tempfile
 from pathlib import Path

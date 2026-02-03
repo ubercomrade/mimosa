@@ -97,6 +97,9 @@ coverage.xml
 .env.local
 .env.*.local
 ./uv.lock
+uv.lock
+.uv.lock
+*.lock
 
 # Certificate and security files
 *.key

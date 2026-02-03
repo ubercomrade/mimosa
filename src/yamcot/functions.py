@@ -14,12 +14,12 @@ PCM_TO_PFM_DENOMINATOR_CONSTANT = 1  # Constant added to denominator in PCM to P
 def pfm_to_pwm(pfm):
     """
     Convert Position Frequency Matrix to Position Weight Matrix.
-    
+
     Parameters
     ----------
     pfm : np.ndarray
         Position Frequency Matrix of shape (4, L) where L is the motif length.
-        
+
     Returns
     -------
     np.ndarray
@@ -33,12 +33,12 @@ def pfm_to_pwm(pfm):
 def pcm_to_pfm(pcm):
     """
     Convert Position Count Matrix to Position Frequency Matrix.
-    
+
     Parameters
     ----------
     pcm : np.ndarray
         Position Count Matrix of shape (4, L) where L is the motif length.
-        
+
     Returns
     -------
     np.ndarray
@@ -54,7 +54,7 @@ def pcm_to_pfm(pcm):
 def score_seq(num_site, kmer, model):
     """
     Compute score for a sequence site using a k-mer model.
-    
+
     Parameters
     ----------
     num_site : np.ndarray
@@ -63,7 +63,7 @@ def score_seq(num_site, kmer, model):
         Length of the k-mer used for indexing.
     model : np.ndarray
         Scoring model matrix.
-        
+
     Returns
     -------
     float
@@ -80,7 +80,7 @@ def score_seq(num_site, kmer, model):
     return score
 
 
-@njit(inline='always')
+@njit(inline="always")
 def _fill_rc_buffer(data, start, length, buffer):
     """
     Заполняет буфер обратным комплементом без аллокаций.
@@ -98,29 +98,29 @@ def _batch_all_scores_jit(data, offsets, matrix, kmer, is_revcomp):
     """
     n_seq = len(offsets) - 1
     m = matrix.shape[-1]
-    
+
     # 1. Расчет новых смещений
     new_offsets = np.zeros(n_seq + 1, dtype=np.int64)
     for i in range(n_seq):
-        seq_len = offsets[i+1] - offsets[i]
+        seq_len = offsets[i + 1] - offsets[i]
         if seq_len >= m:
-            new_offsets[i+1] = seq_len - m + 1
-            
+            new_offsets[i + 1] = seq_len - m + 1
+
     for i in range(n_seq):
-        new_offsets[i+1] += new_offsets[i]
-        
+        new_offsets[i + 1] += new_offsets[i]
+
     total_scores = new_offsets[n_seq]
     results = np.zeros(total_scores, dtype=np.float32)
-    
+
     # 2. Основной цикл
     for i in prange(n_seq):
         start = offsets[i]
         out_start = new_offsets[i]
-        n_scores = new_offsets[i+1] - out_start
-        
+        n_scores = new_offsets[i + 1] - out_start
+
         if n_scores > 0:
             site_buffer = np.empty(m, dtype=data.dtype)
-                
+
             for k in range(n_scores):
                 if not is_revcomp:
                     # Zero-copy view для прямой цепи
@@ -130,7 +130,7 @@ def _batch_all_scores_jit(data, offsets, matrix, kmer, is_revcomp):
                     # Заполнение буфера для обратной цепи
                     _fill_rc_buffer(data, start + k, m, site_buffer)
                     results[out_start + k] = score_seq(site_buffer, kmer, matrix)
-                    
+
     return results, new_offsets
 
 
@@ -144,47 +144,48 @@ def _batch_all_scores_with_context_jit(data, offsets, matrix, kmer, is_revcomp):
     m = matrix.shape[-1]
     context_len = kmer - 1
     window_size = m + context_len
-    
+
     # Расчет смещений аналогичен PWM
     new_offsets = np.zeros(n_seq + 1, dtype=np.int64)
     for i in range(n_seq):
-        seq_len = offsets[i+1] - offsets[i]
+        seq_len = offsets[i + 1] - offsets[i]
         if seq_len >= m:
-            new_offsets[i+1] = seq_len - m + 1
-            
+            new_offsets[i + 1] = seq_len - m + 1
+
     for i in range(n_seq):
-        new_offsets[i+1] += new_offsets[i]
-        
+        new_offsets[i + 1] += new_offsets[i]
+
     total_scores = new_offsets[n_seq]
     results = np.zeros(total_scores, dtype=np.float32)
-    
+
     for i in prange(n_seq):
         start = offsets[i]
-        seq_len = offsets[i+1] - start
+        seq_len = offsets[i + 1] - start
         out_start = new_offsets[i]
-        n_scores = new_offsets[i+1] - out_start
-        
+        n_scores = new_offsets[i + 1] - out_start
+
         # Буфер обязателен для BaMM из-за паддинга
         site_buffer = np.full(window_size, 4, dtype=data.dtype)
-        
+
         if n_scores > 0:
             for k in range(n_scores):
                 # Сброс буфера в 'N' (4)
                 site_buffer[:] = 4
-                
+
                 if not is_revcomp:
                     # Forward: копируем с учетом границ
                     s_idx = k - context_len
                     e_idx = k + m
-                    
+
                     actual_start = max(0, s_idx)
                     actual_end = min(seq_len, e_idx)
                     dest_start = max(0, -s_idx)
-                    
+
                     copy_len = actual_end - actual_start
                     if copy_len > 0:
-                        site_buffer[dest_start : dest_start + copy_len] = \
-                            data[start + actual_start : start + actual_end]
+                        site_buffer[dest_start : dest_start + copy_len] = data[
+                            start + actual_start : start + actual_end
+                        ]
                 else:
                     # Reverse: сложная логика RC с паддингом
                     r_start = k
@@ -193,23 +194,19 @@ def _batch_all_scores_with_context_jit(data, offsets, matrix, kmer, is_revcomp):
                         data_idx = start + r_start + (window_size - 1 - t)
                         if start <= data_idx < start + seq_len:
                             site_buffer[t] = RC_TABLE[data[data_idx]]
-                            
+
                 results[out_start + k] = score_seq(site_buffer, kmer, matrix)
 
     return results, new_offsets
 
 
 def batch_all_scores(
-    sequences: RaggedData,
-    matrix: np.ndarray,
-    kmer: int = 1,
-    is_revcomp: bool = False,
-    with_context: bool = False
+    sequences: RaggedData, matrix: np.ndarray, kmer: int = 1, is_revcomp: bool = False, with_context: bool = False
 ) -> RaggedData:
     """
     Compute scores for all sequences in RaggedData.
     Supports both PWM (with_context=False) and BaMM models.
-    
+
     Parameters
     ----------
     sequences : RaggedData
@@ -222,20 +219,16 @@ def batch_all_scores(
         Whether to consider reverse complement strand (default is False).
     with_context : bool, optional
         Whether to use extending site ((kmer - 1) + length of site) (default is False).
-        
+
     Returns
     -------
     RaggedData
         RaggedData object containing computed scores.
     """
     if with_context:
-        data, offsets = _batch_all_scores_with_context_jit(
-            sequences.data, sequences.offsets, matrix, kmer, is_revcomp
-        )
+        data, offsets = _batch_all_scores_with_context_jit(sequences.data, sequences.offsets, matrix, kmer, is_revcomp)
     else:
-        data, offsets = _batch_all_scores_jit(
-            sequences.data, sequences.offsets, matrix, kmer, is_revcomp
-        )
+        data, offsets = _batch_all_scores_jit(sequences.data, sequences.offsets, matrix, kmer, is_revcomp)
     return RaggedData(data, offsets)
 
 
@@ -370,12 +363,12 @@ def roc_curve(classification, scores):
 def cut_roc(tpr: np.ndarray, fpr: np.ndarray, thr: np.ndarray, score_cutoff: float):
     """
     Truncate ROC curve at a specific score threshold.
-    
+
     This function truncates the ROC curve (True Positive Rate vs False Positive Rate)
     at a given score threshold. If interpolation is needed between points, it
     performs linear interpolation to determine the TPR and FPR values at the exact
     score cutoff.
-    
+
     Parameters
     ----------
     tpr : np.ndarray
@@ -386,7 +379,7 @@ def cut_roc(tpr: np.ndarray, fpr: np.ndarray, thr: np.ndarray, score_cutoff: flo
         Threshold values corresponding to each TPR/FPR pair.
     score_cutoff : float
         The score threshold at which to truncate the ROC curve.
-    
+
     Returns
     -------
     tuple
@@ -401,7 +394,7 @@ def cut_roc(tpr: np.ndarray, fpr: np.ndarray, thr: np.ndarray, score_cutoff: flo
         return (
             np.array([tpr[0]], dtype=tpr.dtype),
             np.array([0.0], dtype=fpr.dtype),
-            np.array([score_cutoff], dtype=thr.dtype)
+            np.array([score_cutoff], dtype=thr.dtype),
         )
 
     last = int(np.where(mask)[0][-1])
@@ -428,11 +421,11 @@ def cut_roc(tpr: np.ndarray, fpr: np.ndarray, thr: np.ndarray, score_cutoff: flo
 def cut_prc(rec: np.ndarray, prec: np.ndarray, thr: np.ndarray, score_cutoff: float):
     """
     Truncate Precision-Recall curve at a specific score threshold.
-    
+
     This function truncates the Precision-Recall curve at a given score threshold.
     If interpolation is needed between points, it performs linear interpolation
     to determine the precision and recall values at the exact score cutoff.
-    
+
     Parameters
     ----------
     rec : np.ndarray
@@ -443,7 +436,7 @@ def cut_prc(rec: np.ndarray, prec: np.ndarray, thr: np.ndarray, score_cutoff: fl
         Threshold values corresponding to each precision/recall pair.
     score_cutoff : float
         The score threshold at which to truncate the PRC.
-    
+
     Returns
     -------
     tuple
@@ -460,7 +453,7 @@ def cut_prc(rec: np.ndarray, prec: np.ndarray, thr: np.ndarray, score_cutoff: fl
         return (
             np.array([0.0], dtype=rec.dtype),
             np.array([prec[0]], dtype=prec.dtype),
-            np.array([score_cutoff], dtype=thr.dtype)
+            np.array([score_cutoff], dtype=thr.dtype),
         )
 
     last = int(np.where(mask)[0][-1])
@@ -488,12 +481,12 @@ def cut_prc(rec: np.ndarray, prec: np.ndarray, thr: np.ndarray, score_cutoff: fl
 def standardized_pauc(pauc_raw: float, pauc_min: float, pauc_max: float) -> float:
     """
     Standardize partial AUC value to range [0.5, 1].
-    
+
     This function standardizes a raw partial AUC value to a range between 0.5 and 1,
     where 0.5 represents random performance and 1 represents perfect performance.
     This standardization accounts for the theoretical minimum and maximum possible
     partial AUC values for the given conditions.
-    
+
     Parameters
     ----------
     pauc_raw : float
@@ -502,32 +495,31 @@ def standardized_pauc(pauc_raw: float, pauc_min: float, pauc_max: float) -> floa
         Minimum possible partial AUC value for the given conditions.
     pauc_max : float
         Maximum possible partial AUC value for the given conditions.
-    
+
     Returns
     -------
     float
         Standardized partial AUC value in range [0.5, 1].
     """
-    denom = (pauc_max - pauc_min)
+    denom = pauc_max - pauc_min
     if denom <= 0:
         return 0.5
     return 0.5 * (1.0 + (pauc_raw - pauc_min) / denom)
 
 
-
 def scores_to_frequencies(ragged_scores: RaggedData) -> RaggedData:
     """
     Convert RaggedData containing scores to frequency representation.
-    
+
     This function computes log-frequency transformation of scores where each
     unique score value is replaced by its negative log-frequency across all
     sequences in the RaggedData structure.
-    
+
     Parameters
     ----------
     ragged_scores : RaggedData
         Input RaggedData containing score values.
-        
+
     Returns
     -------
     RaggedData
@@ -535,17 +527,17 @@ def scores_to_frequencies(ragged_scores: RaggedData) -> RaggedData:
     """
     flat = ragged_scores.data
     n = flat.size
-    
+
     if n == 0:
         return RaggedData(np.zeros(0, dtype=np.float32), ragged_scores.offsets.copy())
 
     _, inv, cnt = np.unique(flat, return_inverse=True, return_counts=True)
     surv = np.cumsum(cnt[::-1])[::-1]
-    
+
     # To avoid log10(0)
     eps = 1e-12
     log_p = np.log10(n + eps) - np.log10(surv + eps)
-    
+
     new_data = log_p[inv].astype(np.float32)
     return RaggedData(new_data, ragged_scores.offsets.copy())
 
@@ -554,11 +546,11 @@ def scores_to_frequencies(ragged_scores: RaggedData) -> RaggedData:
 def _fast_overlap_kernel_numba(data1, offsets1, data2, offsets2, search_range):
     """
     Fast overlap coefficient kernel for RaggedData using JIT compilation.
-    
+
     This kernel computes the overlap coefficient (Szymkiewicz-Simpson coefficient)
     between two sets of ragged sequences, finding the best alignment within
     the specified search range.
-    
+
     Parameters
     ----------
     data1 : np.ndarray
@@ -571,7 +563,7 @@ def _fast_overlap_kernel_numba(data1, offsets1, data2, offsets2, search_range):
         Offsets for second sequence collection.
     search_range : int
         Range of offsets to search for best alignment (from -search_range to +search_range).
-        
+
     Returns
     -------
     tuple
@@ -581,14 +573,14 @@ def _fast_overlap_kernel_numba(data1, offsets1, data2, offsets2, search_range):
     """
     n_seq = len(offsets1) - 1
     n_offsets = 2 * search_range + 1
-    
+
     inters = np.zeros(n_offsets, dtype=np.float32)
-    sum1s  = np.zeros(n_offsets, dtype=np.float32)
-    sum2s  = np.zeros(n_offsets, dtype=np.float32)
+    sum1s = np.zeros(n_offsets, dtype=np.float32)
+    sum2s = np.zeros(n_offsets, dtype=np.float32)
 
     for i in range(n_seq):
-        s1 = data1[offsets1[i]:offsets1[i+1]]
-        s2 = data2[offsets2[i]:offsets2[i+1]]
+        s1 = data1[offsets1[i] : offsets1[i + 1]]
+        s2 = data2[offsets2[i] : offsets2[i + 1]]
         vlen1 = s1.size
         vlen2 = s2.size
 
@@ -605,8 +597,8 @@ def _fast_overlap_kernel_numba(data1, offsets1, data2, offsets2, search_range):
                 continue
 
             local_inter = np.float32(0.0)
-            local_s1    = np.float32(0.0)
-            local_s2    = np.float32(0.0)
+            local_s1 = np.float32(0.0)
+            local_s2 = np.float32(0.0)
 
             for j in range(overlap):
                 v1 = s1[idx1_start + j]
@@ -617,8 +609,8 @@ def _fast_overlap_kernel_numba(data1, offsets1, data2, offsets2, search_range):
                 local_inter += np.float32(0.5) * (v1 + v2 - abs(v1 - v2))
 
             inters[k] += local_inter
-            sum1s[k]  += local_s1
-            sum2s[k]  += local_s2
+            sum1s[k] += local_s1
+            sum2s[k] += local_s2
 
     best = -1.0
     best_offset = 0
@@ -634,14 +626,15 @@ def _fast_overlap_kernel_numba(data1, offsets1, data2, offsets2, search_range):
 
     return best, best_offset
 
+
 @njit(fastmath=True, cache=True)
 def _fast_cj_kernel_numba(data1, offsets1, data2, offsets2, search_range):
     """
     Fast  Continues Jaccard (CJ) coefficient kernel for RaggedData using JIT compilation.
-    
+
     This kernel computes the continues jaccard coefficient between two sets of
     ragged sequences, finding the best alignment within the specified search range.
-    
+
     Parameters
     ----------
     data1 : np.ndarray
@@ -654,7 +647,7 @@ def _fast_cj_kernel_numba(data1, offsets1, data2, offsets2, search_range):
         Offsets for second sequence collection.
     search_range : int
         Range of offsets to search for best alignment (from -search_range to +search_range).
-        
+
     Returns
     -------
     tuple
@@ -664,13 +657,13 @@ def _fast_cj_kernel_numba(data1, offsets1, data2, offsets2, search_range):
     """
     n_seq = len(offsets1) - 1
     n_offsets = 2 * search_range + 1
-    
-    sums  = np.zeros(n_offsets, dtype=np.float32)
+
+    sums = np.zeros(n_offsets, dtype=np.float32)
     diffs = np.zeros(n_offsets, dtype=np.float32)
 
     for i in range(n_seq):
-        s1 = data1[offsets1[i]:offsets1[i+1]]
-        s2 = data2[offsets2[i]:offsets2[i+1]]
+        s1 = data1[offsets1[i] : offsets1[i + 1]]
+        s2 = data2[offsets2[i] : offsets2[i + 1]]
         vlen1 = s1.size
         vlen2 = s2.size
 
@@ -692,7 +685,7 @@ def _fast_cj_kernel_numba(data1, offsets1, data2, offsets2, search_range):
             for j in range(overlap):
                 v1 = s1[idx1_start + j]
                 v2 = s2[idx2_start + j]
-                local_sum += (v1 + v2)
+                local_sum += v1 + v2
                 local_diff += abs(v1 - v2)
 
             sums[k] += local_sum
@@ -717,23 +710,23 @@ def _fast_cj_kernel_numba(data1, offsets1, data2, offsets2, search_range):
 
 def _fast_pearson_kernel(data1, offsets1, data2, offsets2, search_range):
     """Pearson correlation kernel for RaggedData using numpy built-in functions."""
-    
+
     n_seq = len(offsets1) - 1
     n_offsets = 2 * search_range + 1
-    
+
     correlations = np.zeros(n_offsets, dtype=np.float64)
     pvalues = np.ones(n_offsets, dtype=np.float64)
     valid_correlations = np.zeros(n_offsets, dtype=np.bool_)
 
     for k in range(n_offsets):
         offset = k - search_range
-        
+
         all_x_values = []
         all_y_values = []
-        
+
         for i in range(n_seq):
-            s1 = data1[offsets1[i]:offsets1[i+1]]
-            s2 = data2[offsets2[i]:offsets2[i+1]]
+            s1 = data1[offsets1[i] : offsets1[i + 1]]
+            s2 = data2[offsets2[i] : offsets2[i + 1]]
             vlen1 = s1.size
             vlen2 = s2.size
 
@@ -747,16 +740,16 @@ def _fast_pearson_kernel(data1, offsets1, data2, offsets2, search_range):
             if overlap <= 0:
                 continue
 
-            x_vals = s1[idx1_start:idx1_start + overlap]
-            y_vals = s2[idx2_start:idx2_start + overlap]
-            
+            x_vals = s1[idx1_start : idx1_start + overlap]
+            y_vals = s2[idx2_start : idx2_start + overlap]
+
             all_x_values.extend(x_vals)
             all_y_values.extend(y_vals)
 
         if len(all_x_values) > 1:  # Need at least 2 points for correlation
             x_array = np.array(all_x_values, dtype=np.float64)
             y_array = np.array(all_y_values, dtype=np.float64)
-            
+
             # Check if either array has zero variance
             if np.var(x_array) > 1e-10 and np.var(y_array) > 1e-10:
                 corr_val, pvalue = pearsonr(x_array, y_array)
@@ -783,7 +776,7 @@ def _fast_pearson_kernel(data1, offsets1, data2, offsets2, search_range):
             found_valid = True
 
     if not found_valid:
-        best_corr = 0.0 
+        best_corr = 0.0
         best_pvalue = 1.0
 
     return best_corr, best_pvalue, best_offset

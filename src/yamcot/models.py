@@ -29,10 +29,11 @@ from yamcot.ragged import RaggedData
 
 StrandMode = Literal["best", "+", "-", "both"]
 
+
 @dataclass(frozen=True)
 class RaggedScores:
     """Container for ragged arrays of scores with variable-length sequences.
-    
+
     Attributes
     ----------
     values : np.ndarray
@@ -40,18 +41,19 @@ class RaggedScores:
     lengths : np.ndarray
         Int32 array of shape (n_seq,) containing the length of each sequence.
     """
-    values: np.ndarray      # float32, shape (n_seq, Lmax)
-    lengths: np.ndarray     # int32, shape (n_seq,)
+
+    values: np.ndarray  # float32, shape (n_seq, Lmax)
+    lengths: np.ndarray  # int32, shape (n_seq,)
 
     @classmethod
     def from_numba(cls, rs_numba: RaggedData) -> RaggedScores:
         """Convert a RaggedData object from Numba to RaggedScores.
-        
+
         Parameters
         ----------
         rs_numba : RaggedData
             Input RaggedData object from Numba computations.
-            
+
         Returns
         -------
         RaggedScores
@@ -61,13 +63,14 @@ class RaggedScores:
         lengths = np.zeros(n, dtype=np.int32)
         for i in range(n):
             lengths[i] = rs_numba.get_length(i)
-        
+
         l_max = int(lengths.max()) if n > 0 else 0
         values = np.zeros((n, l_max), dtype=np.float32)
         for i in range(n):
             row = rs_numba.get_slice(i)
-            values[i, :len(row)] = row
+            values[i, : len(row)] = row
         return cls(values, lengths)
+
 
 @dataclass
 class MotifModel:
@@ -107,6 +110,7 @@ class MotifModel:
         default_factory=dict,
         init=False,
     )
+
     @classmethod
     def register_subclass(cls, model_type: str, subclass: type[MotifModel]):
         """Register a subclass for a specific model type."""
@@ -130,7 +134,6 @@ class MotifModel:
             logger.warning(f"There is no threshold table for model: {self.name}")
         return self._threshold_table
 
-
     def get_threshold_table(self, promoters) -> np.ndarray:
         """Compute the threshold table based on the matrix.
 
@@ -147,18 +150,17 @@ class MotifModel:
 
         return self._threshold_table
 
-
     def _calculate_threshold_table(self, promoters: RaggedData) -> np.ndarray:
         """Calculate the threshold table using all sites in all sequences.
-        
+
         Computes a lookup table mapping motif scores to false positive rates (FPR)
         by evaluating the motif against all possible positions in the promoter sequences.
-        
+
         Parameters
         ----------
         promoters : RaggedData
             Collection of promoter sequences to calculate thresholds against.
-        
+
         Returns
         -------
         np.ndarray, shape (N, 2)
@@ -204,12 +206,12 @@ class MotifModel:
 
     def _score_to_frequency(self, score: float) -> float:
         """Return -log10(FPR) for a given score using the threshold table.
-        
+
         Parameters
         ----------
         score : float
             Motif score to convert to frequency.
-        
+
         Returns
         -------
         float
@@ -233,17 +235,17 @@ class MotifModel:
 
     def _frequency_to_score(self, frequency: float, background_data: Optional[RaggedData] = None) -> float:
         """Convert frequency (FPR) to threshold score.
-        
+
         If background_data is provided, calculation is done across ALL positions (sites)
         in these sequences using scores_to_frequencies.
-        
+
         Parameters
         ----------
         frequency : float
             False positive rate to convert to a score threshold.
         background_data : RaggedData, optional
             Background sequences to calculate threshold from, if not using precomputed table.
-        
+
         Returns
         -------
         float
@@ -252,7 +254,7 @@ class MotifModel:
         if background_data is not None:
             # 1. Get scores for ALL positions in background data
             all_sites_scores = self.scan(background_data, strand="best")
-            
+
             if all_sites_scores.data.size == 0:
                 return 0.0
 
@@ -260,22 +262,22 @@ class MotifModel:
             # Function internally performs np.unique and np.cumsum on all .data values
             freq_ragged = scores_to_frequencies(all_sites_scores)
             log_p_values = freq_ragged.data
-            
+
             # 3. Determine target -log10(FPR) value
             target_log_p = -np.log10(frequency) if frequency > 0 else 100.0
-            
+
             # 4. Find minimum score among those whose frequency <= target (i.e. -log_p >= target)
             # This precisely corresponds to the _threshold_table construction logic
             mask = log_p_values >= target_log_p
             if not np.any(mask):
                 return float(all_sites_scores.data.min())
-                
+
             return float(all_sites_scores.data[mask].min())
 
         # Fallback via precomputed table
         if self._threshold_table is None:
             raise ValueError("Threshold table not computed. Call get_threshold_table() or provide background_data.")
-        
+
         if frequency <= 0:
             return float(self._threshold_table[0, 0])  # infinitely strict threshold -> maximum score
 
@@ -291,7 +293,6 @@ class MotifModel:
 
         last_valid = np.where(mask)[0][-1]
         return float(scores_col[last_valid])
-
 
     # ------------------------------------------------------------------
     # Scanning
@@ -318,19 +319,18 @@ class MotifModel:
         """
         raise NotImplementedError("MotifModel subclasses must implement scan()")
 
-
     @classmethod
-    def from_file(cls, path: str, **kwargs) -> 'MotifModel':
+    def from_file(cls, path: str, **kwargs) -> "MotifModel":
         """
         Abstract class method to create a motif model from a file.
-        
+
         Parameters
         ----------
         path : str
             Path to the motif file.
         **kwargs : dict
             Additional arguments for specific model types.
-            
+
         Returns
         -------
         MotifModel
@@ -339,10 +339,10 @@ class MotifModel:
         raise NotImplementedError("Subclasses must implement from_file()")
 
     @classmethod
-    def create_from_file(cls, path: str, model_type: str, **kwargs) -> 'MotifModel':
+    def create_from_file(cls, path: str, model_type: str, **kwargs) -> "MotifModel":
         """
         Factory method to create a motif model from a file based on model_type.
-        
+
         Parameters
         ----------
         path : str
@@ -351,7 +351,7 @@ class MotifModel:
             Type of the model ('pwm', 'bamm', 'sitega').
         **kwargs : dict
             Additional arguments for specific model types.
-            
+
         Returns
         -------
         MotifModel
@@ -359,12 +359,10 @@ class MotifModel:
         """
         model_type = model_type.lower()
         if model_type not in cls._registry:
-            raise ValueError(f"Unsupported model type: {model_type}. "
-                             f"Registered types: {list(cls._registry.keys())}")
-        
+            raise ValueError(f"Unsupported model type: {model_type}. Registered types: {list(cls._registry.keys())}")
+
         subclass = cls._registry[model_type]
         return subclass.from_file(path, **kwargs)
-
 
     def get_sites(
         self,
@@ -373,11 +371,11 @@ class MotifModel:
         fpr_threshold: Optional[float] = None,
     ) -> pd.DataFrame:
         """Find motif binding sites in sequences.
-        
+
         The method operates in two modes:
         - "best": finds the single best site in each sequence
         - "threshold": finds all sites with false positive rate ≤ fpr_threshold
-        
+
         Parameters
         ----------
         sequences : RaggedData
@@ -408,9 +406,7 @@ class MotifModel:
 
         # Determine threshold score
         score_threshold = (
-            self._frequency_to_score(fpr_threshold)
-            if mode == "threshold" and fpr_threshold is not None
-            else None
+            self._frequency_to_score(fpr_threshold) if mode == "threshold" and fpr_threshold is not None else None
         )
         if score_threshold is not None:
             logger = logging.getLogger(__name__)
@@ -429,15 +425,17 @@ class MotifModel:
             if strand_idx == 1:
                 site_seq = self._get_rc_sequence(site_seq)
 
-            results.append({
-                'seq_index': seq_idx,
-                'start': int(pos),
-                'end': int(pos + self.length),
-                'strand': strand,
-                'score': score,
-                'frequency': self._score_to_frequency(score),
-                'site': self._int_to_seq(site_seq)
-            })
+            results.append(
+                {
+                    "seq_index": seq_idx,
+                    "start": int(pos),
+                    "end": int(pos + self.length),
+                    "strand": strand,
+                    "score": score,
+                    "frequency": self._score_to_frequency(score),
+                    "site": self._int_to_seq(site_seq),
+                }
+            )
 
         # Collect results
         results = []
@@ -479,7 +477,7 @@ class MotifModel:
         # Create and sort DataFrame
         df = pd.DataFrame(results)
         if len(df) > 0:
-            df = df.sort_values(['seq_index', 'score'], ascending=[True, False]).reset_index(drop=True)
+            df = df.sort_values(["seq_index", "score"], ascending=[True, False]).reset_index(drop=True)
 
         logger = logging.getLogger(__name__)
         logger.info(f"Found {len(df)} site(s) in {sequences.num_sequences} sequence(s)")
@@ -488,7 +486,7 @@ class MotifModel:
     @staticmethod
     def _int_to_seq(seq_int: np.ndarray) -> str:
         """Convert integer-encoded sequence to ACGT string.
-        
+
         Parameters
         ----------
         seq_int : np.ndarray
@@ -499,14 +497,14 @@ class MotifModel:
         str
             Sequence as string.
         """
-        decoder = np.array(['A', 'C', 'G', 'T', 'N'], dtype='U1')
+        decoder = np.array(["A", "C", "G", "T", "N"], dtype="U1")
         safe_seq = np.clip(seq_int, 0, 4)
-        return ''.join(decoder[safe_seq])
+        return "".join(decoder[safe_seq])
 
     @staticmethod
     def _get_rc_sequence(seq_int: np.ndarray) -> np.ndarray:
         """Return reverse complement of sequence.
-        
+
         Parameters
         ----------
         seq_int : np.ndarray
@@ -531,15 +529,17 @@ class MotifModel:
         if self.pfm is not None:
             with open(path, "w") as fname:
                 header = f">{self.name}"
-                np.savetxt(fname,
-                            self.pfm[:4, :].T,
-                            fmt='%.8f',
-                            delimiter='\t',
-                            newline='\n',
-                            header=header,
-                            footer='',
-                            comments='',
-                            encoding=None)
+                np.savetxt(
+                    fname,
+                    self.pfm[:4, :].T,
+                    fmt="%.8f",
+                    delimiter="\t",
+                    newline="\n",
+                    header=header,
+                    footer="",
+                    comments="",
+                    encoding=None,
+                )
 
     def write_dist(self, path: str) -> None:
         """Write the threshold table of motif to a DIST formatted file.
@@ -561,14 +561,7 @@ class MotifModel:
 
         table[:, 0] = (table[:, 0] - min_score) / (max_score - min_score)
         with open(path, "w") as fname:
-            np.savetxt(fname,
-                          table,
-                          fmt='%.18f',
-                          delimiter='\t',
-                          newline='\n',
-                          footer='',
-                          comments='',
-                          encoding=None)
+            np.savetxt(fname, table, fmt="%.18f", delimiter="\t", newline="\n", footer="", comments="", encoding=None)
 
     @property
     def pfm(self) -> Optional[np.ndarray]:
@@ -593,10 +586,10 @@ class MotifModel:
         fpr_threshold: Optional[float] = None,
         top_fraction: Optional[float] = None,
         pseudocount: float = 0.25,
-        force_recompute: bool = False
+        force_recompute: bool = False,
     ) -> np.ndarray:
         """Construct Position Frequency Matrix (PFM) from binding sites.
-        
+
         Result is cached in the _pfm attribute for reuse.
 
         Parameters
@@ -633,21 +626,21 @@ class MotifModel:
         if len(sites_df) == 0:
             raise ValueError("No sites found")
 
-        sites_df = sites_df.sort_values(by=['score'], axis=0, ascending=False)
+        sites_df = sites_df.sort_values(by=["score"], axis=0, ascending=False)
 
         # Select top N% if specified
         if top_fraction is not None:
             n_keep = max(1, int(len(sites_df) * top_fraction))
-            sites_df = sites_df.nlargest(n_keep, 'score')
+            sites_df = sites_df.nlargest(n_keep, "score")
             logger = logging.getLogger(__name__)
-            logger.info(f"Selected top {top_fraction*100:.1f}%: {n_keep} sites")
+            logger.info(f"Selected top {top_fraction * 100:.1f}%: {n_keep} sites")
 
         # Initialize PFM with pseudocounts
         pfm = np.full((4, self.length), pseudocount, dtype=np.float32)
-        nuc_map = {'A': 0, 'C': 1, 'G': 2, 'T': 3}
+        nuc_map = {"A": 0, "C": 1, "G": 2, "T": 3}
 
         # Fill counters
-        for site_str in sites_df['site']:
+        for site_str in sites_df["site"]:
             for pos, nuc in enumerate(site_str):
                 if nuc in nuc_map:
                     pfm[nuc_map[nuc], pos] += 1.0
@@ -723,7 +716,7 @@ class MotifModel:
         """Clear all cached scores, frequencies and normalization range."""
         self._freq_cache.clear()
         self._threshold_table = None
-        if not getattr(self, '_pfm_is_required', False):
+        if not getattr(self, "_pfm_is_required", False):
             self._pfm = None
 
     def save(self, filepath: str, clear_cache: bool = True) -> None:
@@ -768,7 +761,7 @@ class MotifModel:
     def model_type(self) -> str:
         """Abstract property to return the type of model."""
         raise NotImplementedError("Subclasses must implement model_type property")
-    
+
     def write(self, path: str) -> None:
         """Abstract method to write the motif to a file in its native format."""
         raise NotImplementedError("Subclasses must implement write() method")
@@ -847,13 +840,12 @@ class PwmMotif(MotifModel):
             logger.error(f"Unknown strand mode: {strand}")
             sys.exit(1)
 
-
     @classmethod
     def from_file(cls, path: str, index: int = 0, **kwargs) -> PwmMotif:
         """Create a PwmMotif from a file.
-        
+
         Supports MEME, ProSampler, and PFM formats.
-        
+
         Parameters
         ----------
         path : str
@@ -862,7 +854,7 @@ class PwmMotif(MotifModel):
             Index of motif to read from file if multiple motifs are present (default 0).
         **kwargs : dict
             Additional arguments.
-            
+
         Returns
         -------
         PwmMotif
@@ -870,15 +862,15 @@ class PwmMotif(MotifModel):
         """
         # Determine file format based on extension
         _, ext = os.path.splitext(path.lower())
-        
-        if ext == '.pkl':
+
+        if ext == ".pkl":
             return joblib.load(path)
-        elif ext == '.meme':
+        elif ext == ".meme":
             # MEME format
             matrix, info, _number_of_motifs = read_meme(path, index=index)
             pfm = matrix
             name, length = info
-        elif ext == '.pfm':
+        elif ext == ".pfm":
             # PFM format
             pwm, length, _minimum, _maximum = read_pfm(path)
             # Extract PFM from PWM (first 4 rows, excluding the 5th row of minimums)
@@ -888,29 +880,23 @@ class PwmMotif(MotifModel):
             logger = logging.getLogger(__name__)
             logger.error(f"Wrong format pf PWM model: {path}")
             sys.exit(1)
-        
+
         # Convert PFM to PWM
         pwm = pfm_to_pwm(pfm)
         # Add the 5th row for 'N' characters (minimum values at each position)
         pwm_ext = np.concatenate((pwm, np.min(pwm, axis=0, keepdims=True)), axis=0)
-        return cls(
-            matrix=pwm_ext,
-            name=name,
-            length=int(length),
-            pfm=pfm
-        )
+        return cls(matrix=pwm_ext, name=name, length=int(length), pfm=pfm)
 
     @property
     def model_type(self) -> str:
         """Return the type of model ('pwm')."""
-        return 'pwm'
+        return "pwm"
 
     def write(self, path: str) -> None:
         """Write the PWM motif to a file in PFM format."""
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self.write_pfm(path)
-
 
 
 class BammMotif(MotifModel):
@@ -981,12 +967,10 @@ class BammMotif(MotifModel):
             logger.error(f"Unknown strand mode: {strand}")
             sys.exit(1)
 
-
-
     @classmethod
-    def from_file(cls, path: str, bg_path: str | None = None, order: int = 2, **kwargs) -> 'BammMotif':
+    def from_file(cls, path: str, bg_path: str | None = None, order: int = 2, **kwargs) -> "BammMotif":
         """Create a BammMotif from a file.
-        
+
         Parameters
         ----------
         path : str
@@ -998,14 +982,14 @@ class BammMotif(MotifModel):
             Order of the BaMM model (default is 2).
         **kwargs : dict
             Additional arguments.
-            
+
         Returns
         -------
         BammMotif
             A BammMotif object created from the file.
         """
         # Handle case where path is provided without extension (as in pipeline.py)
-        if not path.endswith('.ihbcp') and not os.path.exists(path):
+        if not path.endswith(".ihbcp") and not os.path.exists(path):
             ihbcp_path = f"{path}.ihbcp"
             hbcp_path = f"{path}.hbcp"
             if os.path.exists(ihbcp_path):
@@ -1019,19 +1003,19 @@ class BammMotif(MotifModel):
             dir_path = os.path.dirname(path)
             basename = os.path.basename(path)
             # Try to find background file by replacing extension or using common names
-            possible_bg_names = ['bamm.hbcp', 'background.hbcp', basename.replace('.ihbcp', '.hbcp')]
+            possible_bg_names = ["bamm.hbcp", "background.hbcp", basename.replace(".ihbcp", ".hbcp")]
             for bg_name in possible_bg_names:
                 possible_bg_path = os.path.join(dir_path, bg_name)
                 if os.path.exists(possible_bg_path):
                     bg_path = possible_bg_path
                     break
-        
+
         if bg_path is None:
             raise ValueError(f"Background file not found for {path}. Please provide bg_path parameter.")
-        
+
         _, max_order, length = parse_file_content(path)
         if order > max_order:
-             order = max_order
+            order = max_order
 
         # Read the BaMM motif and background files
         matrix = read_bamm(path, bg_path, order)
@@ -1040,13 +1024,13 @@ class BammMotif(MotifModel):
             matrix=matrix,
             name=name,
             length=length,
-            kmer=order + 1  # BaMM kmer is typically order + 1
+            kmer=order + 1,  # BaMM kmer is typically order + 1
         )
 
     @property
     def model_type(self) -> str:
         """Return the type of model ('bamm')."""
-        return 'bamm'
+        return "bamm"
 
     def write(self, path: str) -> None:
         """Write the BaMM motif to a file."""
@@ -1054,7 +1038,6 @@ class BammMotif(MotifModel):
         # For now, we'll implement a basic version that saves as joblib
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         self.save(path)
-
 
 
 class SitegaMotif(MotifModel):
@@ -1128,18 +1111,17 @@ class SitegaMotif(MotifModel):
             logger.error(f"Unknown strand mode: {strand}")
             sys.exit(1)
 
-
     @classmethod
     def from_file(cls, path: str, **kwargs) -> SitegaMotif:
         """Parse SiteGA output file to create a SitegaMotif object.
-        
+
         Parameters
         ----------
         path : str
             Path to the SiteGA output file (typically ends with '.mat').
         **kwargs : dict
             Additional arguments.
-            
+
         Returns
         -------
         SitegaMotif
@@ -1147,10 +1129,10 @@ class SitegaMotif(MotifModel):
         """
         # Parse the SiteGA output file
         matrix, length, minimum, maximum = read_sitega(path)
-        
+
         # Extract motif name from the file path
         name = os.path.splitext(os.path.basename(path))[0]
-        
+
         # Create and return the SitegaMotif instance
         return cls(
             matrix=matrix,
@@ -1158,13 +1140,13 @@ class SitegaMotif(MotifModel):
             length=length,
             minimum=minimum,
             maximum=maximum,
-            kmer=2  # SiteGA typically uses dinucleotide dependencies
+            kmer=2,  # SiteGA typically uses dinucleotide dependencies
         )
 
     @property
     def model_type(self) -> str:
         """Return the type of model ('sitega')."""
-        return 'sitega'
+        return "sitega"
 
     def write(self, path: str) -> None:
         """Write the SiteGA motif to a file in .mat format."""
@@ -1174,6 +1156,6 @@ class SitegaMotif(MotifModel):
 
 
 # Register subclasses for polymorphic loading
-MotifModel.register_subclass('pwm', PwmMotif)
-MotifModel.register_subclass('bamm', BammMotif)
-MotifModel.register_subclass('sitega', SitegaMotif)
+MotifModel.register_subclass("pwm", PwmMotif)
+MotifModel.register_subclass("bamm", BammMotif)
+MotifModel.register_subclass("sitega", SitegaMotif)

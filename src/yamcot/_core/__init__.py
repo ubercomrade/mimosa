@@ -2,10 +2,12 @@
 try:
     # Try to import the compiled C++ extension directly
     from . import _core
+
     run_motali_cpp = _core.run_motali_cpp
 except (ImportError, AttributeError) as e:
     _import_error = e
     _core = None
+
     # Fallback when the compiled extension is not available
     def run_motali_cpp(*args, **kwargs):
         raise ImportError(
