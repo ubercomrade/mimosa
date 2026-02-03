@@ -8,12 +8,12 @@ find_package(nanobind CONFIG REQUIRED)
 # Define the extension module
 # Note: Paths are relative to the project root where CMakeLists.txt resides
 nanobind_add_module(_core
-    yamcot/_core/bindings.cpp
-    yamcot/_core/mco_prc.cpp
+    src/yamcot/_core/bindings.cpp
+    src/yamcot/_core/mco_prc.cpp
 )
 
 # Include directories
-target_include_directories(_core PRIVATE yamcot/_core)
+target_include_directories(_core PRIVATE src/yamcot/_core)
 
 # Set C++ standard
 target_compile_features(_core PUBLIC cxx_std_17)
