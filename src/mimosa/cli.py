@@ -571,21 +571,6 @@ def main_cli():
     # Map CLI arguments to pipeline kwargs
     pipeline_kwargs = map_args_to_pipeline_kwargs(args)
 
-    if args.verbose:
-        logger = logging.getLogger(__name__)
-        logger.info("=" * 60)
-        logger.info(f"UniMotifComparator Pipeline - {args.mode.capitalize()} Mode")
-        logger.info("=" * 60)
-        logger.info(f"Comparison method: {args.mode}")
-        logger.info(f"Model 1: {model1_path}")
-        logger.info(f"Model 2: {model2_path}")
-        if args.mode in ["motif", "motali", "tomtom-like"]:
-            logger.info(f"Model 1 type: {getattr(args, 'model1_type', 'N/A')}")
-            logger.info(f"Model 2 type: {getattr(args, 'model2_type', 'N/A')}")
-            if args.mode in ["motif", "motali"]:
-                logger.info(f"Sequences: {args.fasta or 'Generated internally'}")
-        logger.info("=" * 60)
-
     try:
         # Run the pipeline
         comparison_type = args.mode
