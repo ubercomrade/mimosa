@@ -1,13 +1,12 @@
 [project]
-name = "mimosa"
+name = "mimosa-tool"
 version = "1.0.0"
-description = "Universal motif comparison tool"
+description = "Model-Independent Motif Similarity Assessment tool"
 authors = [{name = "Anton Tsukanov", email = "tsukanov@bionet.nsc.ru"}]
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 classifiers = [
-    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
