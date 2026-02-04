@@ -19,9 +19,7 @@ def setup_logging(verbose: bool):
 def create_arg_parser() -> argparse.ArgumentParser:
     """Create and configure argument parser with subcommands."""
     parser = argparse.ArgumentParser(
-        description=(
-            "MIMOSA: Compare motifs using three distinct approaches - profile, motif, and tomtom-like"
-        ),
+        description=("MIMOSA: Compare motifs using three distinct approaches - profile, motif, and tomtom-like"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
  Examples:
