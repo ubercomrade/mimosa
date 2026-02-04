@@ -27,7 +27,7 @@ from mimosa.functions import batch_all_scores, pfm_to_pwm, scores_to_frequencies
 from mimosa.io import parse_file_content, read_bamm, read_meme, read_pfm, read_sitega, write_sitega
 from mimosa.ragged import RaggedData
 
-StrandMode = Literal["best", "+", "-", "both"]
+StrandMode = Literal["best", "+", "-"]
 
 
 @dataclass(frozen=True)

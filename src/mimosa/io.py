@@ -6,7 +6,6 @@ from typing import Iterable, List, Tuple, Union
 
 import numpy as np
 
-from mimosa.functions import pfm_to_pwm
 from mimosa.ragged import RaggedData
 
 
