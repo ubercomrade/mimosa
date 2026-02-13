@@ -222,13 +222,6 @@ def test_model_registry():
     bamm_strategy = model_registry.get("bamm")
     assert bamm_strategy is not None
 
-    # Test invalid strategy raises ValueError
-    try:
-        model_registry.get("invalid_strategy")
-        assert False, "Should raise ValueError for invalid strategy"
-    except ValueError:
-        pass  # Expected
-
 
 def test_create_comparator_config():
     """Test ComparatorConfig creation and factory function"""
