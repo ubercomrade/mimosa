@@ -1,3 +1,7 @@
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+Set-Location $PSScriptRoot
+
 mimosa profile ./myog.ihbcp ./pif4.meme `
 --model1-type bamm `
 --model2-type pwm `
@@ -8,7 +12,7 @@ mimosa profile ./gata2.ihbcp ./gata4.ihbcp `
 --model1-type bamm `
 --model2-type bamm `
 --permutations 1000 `
---metric cj
+--metric co
 
 mimosa profile ./sitega_stat6.mat ./pif4.meme `
 --model1-type sitega `
@@ -39,7 +43,7 @@ mimosa motif ./sitega_stat6.mat ./pif4.meme `
 mimosa profile ./sitega.mat ./pif4.meme `
 --model1-type sitega `
 --model2-type pwm `
---metric cj `
+--metric co `
 --permutations 1000
 
 mimosa motif ./sitega_stat6.mat ./sitega_gata2.mat `

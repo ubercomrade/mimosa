@@ -38,8 +38,22 @@ jobs:
         working-directory: examples
         shell: bash
         run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            uv run pwsh ./run.ps1
-          else
-            uv run bash run.sh
-          fi
+          uv run bash ./run.sh
+          uv run python ./benchmark_fast_profile_score.py \
+            --threads 1 \
+            --repeats 1 \
+            --warmups 0 \
+            --num-rows 10 \
+            --row-length 20 \
+            --modes pairwise \
+            --metrics co \
+            --min-logfpr 0
+          uv run python ./benchmark_profile_one_to_many.py \
+            --num-targets 3 \
+            --num-sequences 10 \
+            --seq-length 20 \
+            --passes 1 \
+            --metrics co \
+            --min-logfpr 0 \
+            --cache-modes off \
+            --scenarios fresh

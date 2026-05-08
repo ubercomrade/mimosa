@@ -1,3 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
 mimosa profile ./myog.ihbcp ./pif4.meme \
 --model1-type bamm \
@@ -10,7 +15,7 @@ mimosa profile ./gata2.ihbcp ./gata4.ihbcp \
 --model1-type bamm \
 --model2-type bamm \
 --permutations 1000 \
---metric cj
+--metric co
 
 
 mimosa profile ./sitega_stat6.mat ./pif4.meme \
@@ -42,7 +47,7 @@ mimosa motif ./sitega_stat6.mat ./pif4.meme \
 mimosa profile ./sitega.mat ./pif4.meme \
 --model1-type sitega \
 --model2-type pwm \
---metric cj \
+--metric co \
 --permutations 1000
 
 mimosa motif ./sitega_stat6.mat ./sitega_gata2.mat \
