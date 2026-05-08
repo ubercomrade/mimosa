@@ -6,7 +6,7 @@ It supports two complementary comparison strategies:
 - `profile`: compare score profiles, either from precomputed score tracks or from motif scans on sequences
 - `motif`: compare motif representations directly, with optional PFM reconstruction for incompatible representations
 
-The current package version is `1.1.4`.
+The current package version is `1.2.0`.
 
 ## Introduction
 
