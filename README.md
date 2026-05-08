@@ -75,7 +75,7 @@ The continuous overlap coefficient, also known as the Szymkiewicz-Simpson coeffi
 profile is contained in the larger one:
 
 $$
-\operatorname{CO}(v_1, v_2) =
+\mathrm{CO}(v_1, v_2) =
 \frac{\sum_i \min(v_1^i, v_2^i)}
 {\min\left(\sum_i v_1^i, \sum_i v_2^i\right)}
 $$
@@ -85,7 +85,7 @@ $$
 The Dice coefficient normalizes the shared mass by the total mass of both profiles:
 
 $$
-\operatorname{Dice}(v_1, v_2) =
+\mathrm{Dice}(v_1, v_2) =
 \frac{2 \sum_i \min(v_1^i, v_2^i)}
 {\sum_i v_1^i + \sum_i v_2^i}
 $$
@@ -95,7 +95,7 @@ $$
 Cosine similarity compares the angle between two vectors:
 
 $$
-\operatorname{Cosine}(v_1, v_2) =
+\mathrm{Cosine}(v_1, v_2) =
 \frac{\sum_i v_1^i v_2^i}
 {\sqrt{\sum_i (v_1^i)^2}\sqrt{\sum_i (v_2^i)^2}}
 $$
@@ -110,7 +110,7 @@ aligned columns at position $t$.
 **Pearson Correlation (`pcc`)**
 
 $$
-\operatorname{PCC}(u_t, v_t) =
+\mathrm{PCC}(u_t, v_t) =
 \frac{\sum_k (u_{k,t} - \bar{u}_t)(v_{k,t} - \bar{v}_t)}
 {\sqrt{\sum_k (u_{k,t} - \bar{u}_t)^2}
 \sqrt{\sum_k (v_{k,t} - \bar{v}_t)^2}}
@@ -119,7 +119,7 @@ $$
 **Euclidean Distance (`ed`)**
 
 $$
-\operatorname{ED}(u_t, v_t) = \lVert u_t - v_t \rVert_2
+\mathrm{ED}(u_t, v_t) = \lVert u_t - v_t \rVert_2
 $$
 
 For `ed`, MIMOSA returns the negative mean Euclidean distance across aligned columns so that larger values still
@@ -130,7 +130,7 @@ represent more similar motifs.
 For motif matrices, `cosine` is computed column-wise and averaged across the aligned overlap:
 
 $$
-\operatorname{Cosine}(u_t, v_t) =
+\mathrm{Cosine}(u_t, v_t) =
 \frac{\sum_k u_{k,t} v_{k,t}}
 {\sqrt{\sum_k u_{k,t}^2}\sqrt{\sum_k v_{k,t}^2}}
 $$
