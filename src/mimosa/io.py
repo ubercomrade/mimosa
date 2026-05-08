@@ -462,31 +462,6 @@ def read_slim(path: str) -> tuple[np.ndarray, int, int]:
     return tensor, length, span
 
 
-# def _parse_dimont_treeelement(elem: ET.Element) -> dict:
-#     """Parse one recursive MarkovModelDiffSM tree element."""
-#     node = {"context_pos": int(_xml_numeric_value(elem.find("contextPos")))}
-#     pars = elem.find("pars")
-#     pars_pos = [child for child in pars if child.tag == "pos"] if pars is not None else []
-
-#     if pars_pos:
-#         node["scores"] = np.asarray(
-#             [_xml_numeric_value(pos.find("parameter/value")) for pos in pars_pos],
-#             dtype=np.float64,
-#         )
-#         node["log_z"] = np.asarray(
-#             [(_xml_numeric_value(pos.find("parameter/z")) or 0.0) for pos in pars_pos],
-#             dtype=np.float64,
-#         )
-#         return node
-
-#     children_elem = elem.find("children")
-#     if children_elem is None:
-#         raise ValueError("Malformed Dimont tree: expected children or parameters")
-
-#     node["children"] = [_parse_dimont_treeelement(pos.find("treeElement")) for pos in children_elem if pos.tag == "pos"]
-#     return node
-
-
 def _parse_dimont_treeelement(elem: ET.Element) -> dict:
     """Parse one recursive MarkovModelDiffSM tree element."""
     node = {"context_pos": int(_xml_numeric_value(elem.find("contextPos")))}
@@ -560,29 +535,6 @@ def _dimont_span(context_positions: list[list[int]]) -> int:
     return span
 
 
-# def _dimont_root_offsets(path: str, nodes: list[dict], context_positions: list[list[int]]) -> np.ndarray:
-#     """Compute Dimont root normalizers for positions without parents."""
-#     root_offsets = np.zeros(len(nodes), dtype=np.float64)
-#     for position, positions in enumerate(context_positions):
-#         if positions:
-#             continue
-#         if "scores" not in nodes[position]:
-#             raise ValueError(f"Malformed Dimont model in {path}: root position {position} is not a leaf")
-#         root_offsets[position] = _logsumexp(nodes[position]["scores"] + nodes[position]["log_z"])
-#     return root_offsets
-
-
-# def _normalize_dimont_parameters(path: str) -> dict:
-#     """Normalize Dimont XML state to a tensor-materialization plan."""
-#     context_positions, nodes = _parse_dimont_model(path)
-#     return {
-#         "length": len(nodes),
-#         "span": _dimont_span(context_positions),
-#         "nodes": nodes,
-#         "root_offsets": _dimont_root_offsets(path, nodes, context_positions),
-#     }
-
-
 def _normalize_dimont_parameters(path: str) -> dict:
     """Normalize Dimont XML state to a tensor-materialization plan."""
     context_positions, nodes = _parse_dimont_model(path)
@@ -591,24 +543,6 @@ def _normalize_dimont_parameters(path: str) -> dict:
         "span": _dimont_span(context_positions),
         "nodes": nodes,
     }
-
-
-# def _build_dimont_position_tensor(
-#     position: int,
-#     node: dict,
-#     root_offset: float,
-#     span: int,
-#     full_contexts: list[Tuple[int, ...]],
-# ) -> np.ndarray:
-#     """Materialize one Dimont position into a dense tensor."""
-#     context_log_probs = {}
-#     for full_context in full_contexts:
-#         current = node
-#         while "scores" not in current:
-#             parent_nt = _context_value(full_context, span, position, current["context_pos"])
-#             current = current["children"][parent_nt]
-#         context_log_probs[full_context] = current["scores"] + _LOG_UNIFORM_BASE - root_offset
-#     return _build_position_tensor(context_log_probs, list(range(span)), span)
 
 
 def _build_dimont_position_tensor(
@@ -635,24 +569,6 @@ def _build_dimont_position_tensor(
         context_scores[full_context] = current["scores"] + _LOG_UNIFORM_BASE
 
     return _build_position_tensor(context_scores, list(range(span)), span)
-
-
-# def read_dimont(path: str) -> tuple[np.ndarray, int, int]:
-#     """Read a Jstacs Dimont XML model into a dense log-odds tensor."""
-#     params = _normalize_dimont_parameters(path)
-#     span = int(params["span"])
-#     length = int(params["length"])
-#     tensor = np.empty((5,) * (span + 1) + (length,), dtype=np.float32)
-#     full_contexts = list(_iter_full_contexts(span))
-#     for position, node in enumerate(params["nodes"]):
-#         tensor[..., position] = _build_dimont_position_tensor(
-#             position,
-#             node,
-#             float(params["root_offsets"][position]),
-#             span,
-#             full_contexts,
-#         )
-#     return tensor, length, span
 
 
 def read_dimont(path: str) -> tuple[np.ndarray, int, int]:

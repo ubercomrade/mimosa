@@ -267,10 +267,7 @@ def _add_motif_parser(subparsers: argparse._SubParsersAction) -> None:
         "--metric",
         choices=list(SUPPORTED_MOTIF_METRICS),
         default="pcc",
-        help=(
-            "Column-wise comparison metric. "
-            f"Choices: {', '.join(SUPPORTED_MOTIF_METRICS)}. (default: %(default)s)"
-        ),
+        help=(f"Column-wise comparison metric. Choices: {', '.join(SUPPORTED_MOTIF_METRICS)}. (default: %(default)s)"),
     )
     motif_group.add_argument(
         "--permutations",

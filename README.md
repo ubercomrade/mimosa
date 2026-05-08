@@ -41,7 +41,7 @@ matrix comparison [22, 26].
 
 `profile` mode converts motif behavior into positional score profiles. If inputs are motif models, MIMOSA scans
 the supplied FASTA sequences on both strands. If raw scores must be normalized, they are mapped to empirical
-`-log10(tail probability)` values using either `--background` sequences or the comparison sequences themselves.
+`-log10(FPR)` values using either `--background` sequences or the comparison sequences themselves.
 This makes scores from different model families more comparable.
 
 The workflow then selects anchor sites from the first model: either one best-scoring site per sequence, or all sites

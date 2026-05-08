@@ -164,60 +164,53 @@ def _parse_dimont_tree_reference(elem: ET.Element) -> dict:
     pars = elem.find("pars")
     pars_pos = [child for child in pars if child.tag == "pos"] if pars is not None else []
     if pars_pos:
-        values = np.asarray(
-            [_xml_numeric_value_reference(pos.find("parameter/value")) for pos in pars_pos],
-            dtype=np.float64,
-        )
-        log_z = np.asarray(
-            [(_xml_numeric_value_reference(pos.find("parameter/z")) or 0.0) for pos in pars_pos],
-            dtype=np.float64,
-        )
-        return {"scores": values, "log_z": log_z}
+        values = np.full(4, -np.inf, dtype=np.float64)
+        for pos in pars_pos:
+            parameter = pos.find("parameter")
+            symbol = int(_xml_numeric_value_reference(parameter.find("symbol")))
+            values[symbol] = float(_xml_numeric_value_reference(parameter.find("value")))
+        return {"scores": values}
 
     children = elem.find("children")
     assert children is not None
+    child_nodes = [None] * 4
+    for pos in children:
+        if pos.tag == "pos":
+            child_nodes[int(pos.attrib["val"])] = _parse_dimont_tree_reference(pos.find("treeElement"))
+
     return {
         "context_pos": int(_xml_numeric_value_reference(elem.find("contextPos"))),
-        "children": [_parse_dimont_tree_reference(pos.find("treeElement")) for pos in children if pos.tag == "pos"],
+        "children": child_nodes,
     }
 
 
 @lru_cache(maxsize=None)
-def _load_dimont_reference(path: str) -> tuple[tuple[dict, ...], np.ndarray]:
-    """Load the Java-equivalent Dimont tree structure from XML."""
+def _load_dimont_reference(path: str) -> tuple[dict, ...]:
+    """Load the Java getLogScoreFor-equivalent Dimont tree structure from XML."""
     root = ET.parse(path).getroot()
     model = root.find(".//ThresholdedStrandChIPper/function/pos/MarkovModelDiffSM")
     assert model is not None
     trees = model.find("bayesianNetworkSF/trees")
     assert trees is not None
     parsed_trees = []
-    root_offsets = []
     for pos in trees:
         if pos.tag != "pos":
             continue
         node = _parse_dimont_tree_reference(pos.find("parameterTree/root/treeElement"))
         parsed_trees.append(node)
 
-        context_pos_elem = pos.find("parameterTree/contextPoss")
-        parents = [int(_xml_numeric_value_reference(child)) for child in context_pos_elem if child.tag == "pos"]
-        if parents:
-            root_offsets.append(0.0)
-        else:
-            assert "scores" in node
-            root_offsets.append(_logsumexp_reference(node["scores"] + node["log_z"]))
-
-    return tuple(parsed_trees), np.asarray(root_offsets, dtype=np.float64)
+    return tuple(parsed_trees)
 
 
 def _reference_dimont_site_score(path: Path, sequence: np.ndarray) -> float:
-    """Evaluate one site as Dimont log-odds against a uniform single-base background."""
-    trees, root_offsets = _load_dimont_reference(str(path))
+    """Evaluate one site with Dimont raw score plus uniform-background log-odds correction."""
+    trees = _load_dimont_reference(str(path))
     total = 0.0
     for position, tree in enumerate(trees):
         node = tree
         while "scores" not in node:
             node = node["children"][int(sequence[node["context_pos"]])]
-        total += float(node["scores"][int(sequence[position])]) - float(root_offsets[position])
+        total += float(node["scores"][int(sequence[position])])
     return total + len(sequence) * _LOG_UNIFORM_BASE
 
 
@@ -563,9 +556,11 @@ def test_model_registry():
 
 
 def test_read_model_supports_dimont_xml_and_matches_example_score():
-    """Dimont XML models should load and reproduce exact uniform-background log-odds site scores."""
-    model = read_model(str(FIXTURES_ROOT / "dimont" / "exampleD-model-1.xml"), "dimont")
-    plus_sequence = make_sequence_batch([_encode_sequence("TTCCAGGGAACCC")])
+    """Dimont XML models should load and reproduce Java raw-score log-odds semantics."""
+    path = FIXTURES_ROOT / "dimont" / "exampleD-model-1.xml"
+    plus_site = _encode_sequence("TTCCAGGGAACCC")
+    model = read_model(str(path), "dimont")
+    plus_sequence = make_sequence_batch([plus_site])
     minus_sequence = make_sequence_batch([_encode_sequence("GGGTTCCCTGGAA")])
 
     plus_scores = scan_model(model, plus_sequence, "+")
@@ -575,8 +570,8 @@ def test_read_model_supports_dimont_xml_and_matches_example_score():
     assert model.length == 13
     assert model.config["kmer"] == 1
     assert model.representation.shape == (5, 13)
-    assert row_values(plus_scores, 0)[0] == pytest.approx(6.65103275172514)
-    assert row_values(minus_scores, 0)[0] == pytest.approx(6.65103275172514)
+    assert row_values(plus_scores, 0)[0] == pytest.approx(_reference_dimont_site_score(path, plus_site))
+    assert row_values(minus_scores, 0)[0] == pytest.approx(_reference_dimont_site_score(path, plus_site))
 
 
 def test_read_model_supports_higher_order_dimont_xml():

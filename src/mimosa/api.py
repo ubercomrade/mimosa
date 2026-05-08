@@ -280,8 +280,7 @@ def run_one_to_many(config: OneToManyConfig) -> List[dict]:
         query_model,
     )
     needs_sequences = any(
-        _needs_sequences(strategy, config["comparator"], query_model, target_model)
-        for target_model in target_models
+        _needs_sequences(strategy, config["comparator"], query_model, target_model) for target_model in target_models
     )
     sequences = _resolve_sequences(config.get("sequences"), config) if needs_sequences else None
 
@@ -349,6 +348,7 @@ def _validate_models_for_strategy(strategy: str, model1: GenericModel, model2: G
     """Validate model combinations for the selected comparison strategy."""
     if strategy == "motif" and ("scores" in {model1.type_key, model2.type_key}):
         raise ValueError("Motif strategy does not support score-profile inputs.")
+
 
 def _validate_comparator_for_strategy(strategy: str, comparator: ComparatorConfig) -> None:
     """Validate comparator options for the selected strategy."""
