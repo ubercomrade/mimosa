@@ -36,8 +36,6 @@ def test_profile_comparison_bamm_vs_pwm(examples_dir, temp_dir):
         "bamm",
         "--model2-type",
         "pwm",
-        "--permutations",
-        "100",
         "--metric",
         "co",
     ]
@@ -65,8 +63,6 @@ def test_profile_comparison_bamm_vs_bamm(examples_dir, temp_dir):
         "bamm",
         "--model2-type",
         "bamm",
-        "--permutations",
-        "100",
         "--metric",
         "co",
     ]
@@ -96,9 +92,6 @@ def test_motif_comparison_pwm_vs_pwm(examples_dir, temp_dir):
         "pwm",
         "--metric",
         "ed",
-        "--permutations",
-        "1000",
-        "--permute-rows",
     ]
 
     result = run_cli(cmd)
@@ -124,8 +117,6 @@ def test_motif_comparison_bamm_vs_bamm(examples_dir, temp_dir):
         "bamm",
         "--model2-type",
         "bamm",
-        "--permutations",
-        "1000",
         "--metric",
         "ed",
         "-v",
@@ -154,8 +145,6 @@ def test_profile_comparison_sitega_vs_pwm(examples_dir, temp_dir):
         "sitega",
         "--model2-type",
         "pwm",
-        "--permutations",
-        "100",
         "--metric",
         "co",
     ]
@@ -177,8 +166,6 @@ def test_motif_comparison_sitega_vs_pwm(examples_dir, temp_dir):
         "pwm",
         "--metric",
         "ed",
-        "--permutations",
-        "100",
     ]
 
     result = run_cli(cmd)
@@ -198,8 +185,6 @@ def test_motif_comparison_sitega_vs_pwm_pcc(examples_dir, temp_dir):
         "pwm",
         "--metric",
         "pcc",
-        "--permutations",
-        "100",
         "--pfm-mode",
     ]
 
@@ -220,8 +205,6 @@ def test_profile_comparison_sitega_vs_pwm_second_case(examples_dir, temp_dir):
         "pwm",
         "--metric",
         "co",
-        "--permutations",
-        "100",
     ]
 
     result = run_cli(cmd)
@@ -241,9 +224,6 @@ def test_motif_comparison_sitega_vs_sitega_1(examples_dir, temp_dir):
         "sitega",
         "--metric",
         "pcc",
-        "--permutations",
-        "1000",
-        "--permute-rows",
         "--pfm-mode",
     ]
 
@@ -264,9 +244,6 @@ def test_motif_comparison_sitega_vs_sitega_2(examples_dir, temp_dir):
         "sitega",
         "--metric",
         "ed",
-        "--permutations",
-        "1000",
-        "--permute-rows",
         "--pfm-mode",
     ]
 
@@ -287,9 +264,6 @@ def test_motif_comparison_sitega_vs_sitega_3(examples_dir, temp_dir):
         "sitega",
         "--metric",
         "ed",
-        "--permutations",
-        "1000",
-        "--permute-rows",
         "--pfm-mode",
     ]
 
@@ -310,8 +284,6 @@ def test_motif_comparison_pwm_vs_sitega(examples_dir, temp_dir):
         "sitega",
         "--metric",
         "ed",
-        "--permutations",
-        "1000",
         "--pfm-mode",
     ]
 
@@ -332,8 +304,6 @@ def test_profile_comparison_basic(examples_dir, temp_dir):
         "scores",
         "--metric",
         "co",
-        "--permutations",
-        "100",
     ]
 
     result = run_cli(cmd)
@@ -534,8 +504,9 @@ def test_profile_comparison_accepts_background_argument(examples_dir, temp_dir):
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
 
-def test_profile_comparison_invalid_kernel_range(examples_dir, temp_dir):
-    """Profile mode should fail fast when kernel range contains no odd size."""
+@pytest.mark.parametrize("removed_flag", ["--permutations", "--distortion", "--min-kernel-size", "--max-kernel-size"])
+def test_profile_comparison_rejects_removed_null_flags(examples_dir, temp_dir, removed_flag):
+    """Profile mode should reject removed Monte Carlo flags in argparse."""
     cmd = [
         "mimosa",
         "profile",
@@ -545,15 +516,34 @@ def test_profile_comparison_invalid_kernel_range(examples_dir, temp_dir):
         "scores",
         "--model2-type",
         "scores",
-        "--min-kernel-size",
-        "4",
-        "--max-kernel-size",
+        removed_flag,
         "4",
     ]
 
     result = run_cli(cmd)
-    assert result.returncode != 0, "Should fail with invalid kernel-size range"
-    assert "odd value" in result.stderr.lower(), "Should mention odd kernel-size requirement"
+    assert result.returncode != 0
+    assert "unrecognized arguments" in result.stderr.lower()
+
+
+def test_motif_comparison_rejects_removed_null_flags(examples_dir, temp_dir):
+    """Motif mode should reject removed permutation flags in argparse."""
+    cmd = [
+        "mimosa",
+        "motif",
+        str(examples_dir / "pif4.meme"),
+        str(examples_dir / "pif4.meme"),
+        "--model1-type",
+        "pwm",
+        "--model2-type",
+        "pwm",
+        "--permutations",
+        "10",
+        "--permute-rows",
+    ]
+
+    result = run_cli(cmd)
+    assert result.returncode != 0
+    assert "unrecognized arguments" in result.stderr.lower()
 
 
 def test_pipeline_with_missing_files():
@@ -592,6 +582,65 @@ def test_profile_comparison_rejects_corr_metric(examples_dir, temp_dir):
     result = run_cli(cmd)
     assert result.returncode != 0, "Should fail with unsupported profile metric"
     assert "invalid choice" in result.stderr.lower()
+
+
+def test_build_null_and_motif_pvalue_annotation(tmp_path):
+    """build-null should create an artifact usable by motif comparison."""
+    motif_dir = tmp_path / "motifs"
+    motif_dir.mkdir()
+    (motif_dir / "q.pfm").write_text(">q\n0.7 0.1 0.1 0.1\n0.1 0.7 0.1 0.1\n", encoding="utf-8")
+    (motif_dir / "t1.pfm").write_text(">t1\n0.1 0.7 0.1 0.1\n0.7 0.1 0.1 0.1\n", encoding="utf-8")
+    (motif_dir / "t2.pfm").write_text(">t2\n0.1 0.1 0.7 0.1\n0.1 0.7 0.1 0.1\n", encoding="utf-8")
+    groups = tmp_path / "groups.tsv"
+    groups.write_text("motif\tgroup\nq\tA\nt1\tB\nt2\tB\n", encoding="utf-8")
+    artifact = tmp_path / "motif-pcc.null.joblib"
+
+    build = run_cli(
+        [
+            "mimosa",
+            "build-null",
+            str(motif_dir),
+            "--model-type",
+            "pwm",
+            "--pattern",
+            "*.pfm",
+            "--groups",
+            str(groups),
+            "--strategy",
+            "motif",
+            "--metric",
+            "pcc",
+            "--output",
+            str(artifact),
+        ]
+    )
+    assert build.returncode == 0, f"Command failed with stderr: {build.stderr}"
+
+    result = run_cli(
+        [
+            "mimosa",
+            "motif",
+            str(motif_dir / "q.pfm"),
+            str(motif_dir / "t1.pfm"),
+            "--model1-type",
+            "pwm",
+            "--model2-type",
+            "pwm",
+            "--metric",
+            "pcc",
+            "--pvalue",
+            "--null-distribution",
+            str(artifact),
+        ]
+    )
+    assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
+
+    import json
+
+    output = json.loads(result.stdout)
+    assert "p-value" in output
+    assert "E-value" in output
+    assert "q-value" in output
 
 
 def test_pipeline_with_invalid_mode():

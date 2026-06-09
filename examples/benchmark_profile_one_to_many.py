@@ -94,7 +94,6 @@ def _run_one_to_many(
 ) -> dict:
     comparator = create_comparator_config(
         metric=metric,
-        n_permutations=0,
         min_logfpr=min_logfpr,
         search_range=search_range,
         cache_mode=cache_mode,

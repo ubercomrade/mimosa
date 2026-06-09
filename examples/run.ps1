@@ -3,86 +3,71 @@ Set-StrictMode -Version Latest
 Set-Location $PSScriptRoot
 
 mimosa profile ./myog.ihbcp ./pif4.meme `
---model1-type bamm `
---model2-type pwm `
---permutations 500 `
---metric co
+  --model1-type bamm `
+  --model2-type pwm `
+  --metric co
 
 mimosa profile ./gata2.ihbcp ./gata4.ihbcp `
---model1-type bamm `
---model2-type bamm `
---permutations 1000 `
---metric co
+  --model1-type bamm `
+  --model2-type bamm `
+  --metric co
 
 mimosa profile ./sitega_stat6.mat ./pif4.meme `
---model1-type sitega `
---model2-type pwm `
---permutations 500 `
---metric co
+  --model1-type sitega `
+  --model2-type pwm `
+  --metric co
 
 mimosa motif ./sitega_gata2.mat ./pif4.meme `
---model1-type sitega `
---model2-type pwm `
---metric ed `
---permutations 500
+  --model1-type sitega `
+  --model2-type pwm `
+  --metric ed
 
 mimosa motif ./pif4.meme ./pif4.meme `
---model1-type pwm `
---model2-type pwm `
---metric ed `
---permutations 10000 `
---permute-rows
+  --model1-type pwm `
+  --model2-type pwm `
+  --metric ed
 
 mimosa motif ./sitega_stat6.mat ./pif4.meme `
---model1-type sitega `
---model2-type pwm `
---metric pcc `
---permutations 1000 `
---pfm-mode
+  --model1-type sitega `
+  --model2-type pwm `
+  --metric pcc `
+  --pfm-mode
 
 mimosa profile ./sitega.mat ./pif4.meme `
---model1-type sitega `
---model2-type pwm `
---metric co `
---permutations 1000
+  --model1-type sitega `
+  --model2-type pwm `
+  --metric co
 
 mimosa motif ./sitega_stat6.mat ./sitega_gata2.mat `
---model1-type sitega `
---model2-type sitega `
---metric pcc `
---permutations 10000 `
---permute-rows `
---pfm-mode
+  --model1-type sitega `
+  --model2-type sitega `
+  --metric pcc `
+  --pfm-mode
 
 mimosa motif ./sitega_stat6.mat ./sitega_gata2.mat `
---model1-type sitega `
---model2-type sitega `
---metric ed `
---permutations 10000 `
---permute-rows `
---pfm-mode
+  --model1-type sitega `
+  --model2-type sitega `
+  --metric ed `
+  --pfm-mode
 
 mimosa motif ./sitega_stat6.mat ./sitega_stat6.mat `
---model1-type sitega `
---model2-type sitega `
---metric ed `
---permutations 10000 `
---permute-rows `
---pfm-mode
+  --model1-type sitega `
+  --model2-type sitega `
+  --metric ed `
+  --pfm-mode
 
 mimosa motif ./gata2.meme ./sitega_gata2.mat `
---model1-type pwm `
---model2-type sitega `
---metric ed `
---permutations 1000 `
---pfm-mode
+  --model1-type pwm `
+  --model2-type sitega `
+  --metric ed `
+  --pfm-mode
 
 mimosa motif ./gata2.ihbcp ./gata4.ihbcp `
---model1-type bamm `
---model2-type bamm `
---permutations 1000 `
---metric ed -v
+  --model1-type bamm `
+  --model2-type bamm `
+  --metric ed `
+  -v
 
 mimosa profile ./scores_1.fasta ./scores_2.fasta `
---model1-type scores `
---model2-type scores
+  --model1-type scores `
+  --model2-type scores

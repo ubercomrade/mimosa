@@ -68,7 +68,7 @@ from mimosa.functions import (
     scores_to_empirical_log_tail,
     standardized_pauc,
 )
-from mimosa.io import parse_file_content, read_pfm, read_scores, write_dist
+from mimosa.io import parse_file_content, read_meme_many, read_pfm, read_scores, write_dist
 from mimosa.models import (
     GenericModel,
     calculate_threshold_table,
@@ -76,11 +76,23 @@ from mimosa.models import (
     get_pfm,
     get_sites,
     read_model,
+    read_models,
     scan_model,
     scan_model_strands,
     write_model,
 )
 from mimosa.models import registry as model_registry
+from mimosa.nulls import (
+    EmpiricalSurvivalEstimator,
+    annotate_results_with_nulls,
+    bh_qvalues,
+    build_null_distributions,
+    fit_survival_estimator,
+    is_artifact_compatible,
+    parse_group_relations,
+    parse_pair_relations,
+    save_null_artifact,
+)
 
 FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures" / "models"
 EXAMPLES_ROOT = Path(__file__).resolve().parents[1] / "examples"
@@ -689,18 +701,19 @@ def test_create_comparator_config():
     # Test factory function with defaults
     config = create_comparator_config()
     assert config["metric"] == "pcc"
-    assert config["n_permutations"] == 0
     assert config["seed"] is None
     assert config["pfm_top_fraction"] == pytest.approx(0.05)
     assert config["profile_normalization"] == "empirical_log_tail"
     assert config["n_jobs"] is None
+    assert config["pvalue"] is False
+    assert "n_permutations" not in config
 
     # Test factory function with custom parameters
-    config = create_comparator_config(metric="co", n_permutations=100, seed=42, pfm_top_fraction=0.2)
+    config = create_comparator_config(metric="co", seed=42, pfm_top_fraction=0.2, pvalue=True)
     assert config["metric"] == "co"
-    assert config["n_permutations"] == 100
     assert config["seed"] == 42
     assert config["pfm_top_fraction"] == pytest.approx(0.2)
+    assert config["pvalue"] is True
 
 
 def test_create_comparator_config_resolves_n_jobs():
@@ -742,18 +755,18 @@ def test_cli_maps_jobs_to_n_jobs_for_profile_config():
     args = SimpleNamespace(
         mode="profile",
         metric="co",
-        permutations=7,
-        distortion=0.3,
         jobs=3,
         seed=5,
         search_range=2,
         window_radius=4,
         realign_window=1,
-        min_kernel_size=3,
-        max_kernel_size=5,
         min_logfpr=None,
         cache="off",
         cache_dir=".mimosa-cache",
+        pvalue=False,
+        null_distribution=None,
+        null_search_dirs=None,
+        effective_number_of_targets=None,
     )
 
     kwargs = map_args_to_comparator_kwargs(args)
@@ -763,17 +776,14 @@ def test_cli_maps_jobs_to_n_jobs_for_profile_config():
     assert config["n_jobs"] == 3
 
 
-def test_create_comparator_config_validates_kernel_range():
-    """Kernel-size range should be valid for centered surrogate kernels."""
-    with pytest.raises(ValueError, match="min_kernel_size"):
-        create_comparator_config(min_kernel_size=7, max_kernel_size=5)
-
-    with pytest.raises(ValueError, match="at least one odd value"):
-        create_comparator_config(min_kernel_size=4, max_kernel_size=4)
-
-    config = create_comparator_config(min_kernel_size=4, max_kernel_size=6)
-    assert config["min_kernel_size"] == 4
-    assert config["max_kernel_size"] == 6
+@pytest.mark.parametrize(
+    "key",
+    ["n_permutations", "distortion_level", "min_kernel_size", "max_kernel_size", "permute_rows"],
+)
+def test_create_comparator_config_rejects_removed_null_options(key):
+    """Removed Monte Carlo options should no longer be accepted by the public config."""
+    with pytest.raises(ValueError, match="Unknown comparator option"):
+        create_comparator_config(**{key: 1})
 
 
 def test_create_comparator_config_validates_min_logfpr():
@@ -1420,7 +1430,7 @@ def test_profile_orientation_search_keeps_all_four_candidates():
     target_minus = make_score_batch([np.array([0.0, 0.0, 1.0], dtype=np.float32)])
     query_bundle = make_strand_bundle(query_plus, query_minus)
     target_bundle = make_strand_bundle(target_plus, target_minus)
-    cfg = create_comparator_config(metric="co", n_permutations=0, search_range=0, window_radius=0, realign_window=0)
+    cfg = create_comparator_config(metric="co", search_range=0, window_radius=0, realign_window=0)
 
     best = strategy_profile.__globals__["_select_best_orientation"](
         score_profile_candidates(
@@ -1446,7 +1456,7 @@ def test_strategy_profile_uses_motif_offset_convention_for_score_tracks():
     """Profile strategy should report target position minus query position."""
     model1 = _make_scores_model("s1", [[0.0, 0.0, 9.0, 0.0, 0.0, 0.0]])
     model2 = _make_scores_model("s2", [[0.0, 0.0, 0.0, 0.0, 9.0, 0.0]])
-    cfg = create_comparator_config(metric="co", search_range=4, window_radius=0, min_logfpr=0.1, n_permutations=0)
+    cfg = create_comparator_config(metric="co", search_range=4, window_radius=0, min_logfpr=0.1)
 
     forward = strategy_profile(model1, model2, None, cfg)
     reverse = strategy_profile(model2, model1, None, cfg)
@@ -1472,10 +1482,9 @@ def test_strategy_profile_offset_matches_motif_for_shifted_pwm_core():
         sequence[25 : 25 + embedded_site.size] = embedded_site
         sequences.append(sequence)
     sequence_batch = make_sequence_batch(sequences)
-    motif_cfg = create_comparator_config(metric="cosine", n_permutations=0, pfm_mode=False)
+    motif_cfg = create_comparator_config(metric="cosine", pfm_mode=False)
     profile_cfg = create_comparator_config(
         metric="co",
-        n_permutations=0,
         search_range=5,
         window_radius=0,
         realign_window=0,
@@ -1507,10 +1516,9 @@ def test_strategy_profile_offset_matches_motif_for_reverse_complement_pwm_core()
         sequence[45 : 45 + embedded_site.size] = embedded_site
         sequences.append(sequence)
     sequence_batch = make_sequence_batch(sequences)
-    motif_cfg = create_comparator_config(metric="cosine", n_permutations=0, pfm_mode=False)
+    motif_cfg = create_comparator_config(metric="cosine", pfm_mode=False)
     profile_cfg = create_comparator_config(
         metric="co",
-        n_permutations=0,
         search_range=8,
         window_radius=5,
         realign_window=0,
@@ -1538,7 +1546,7 @@ def test_strategy_profile_empirical_uses_combined_strand_table():
 
     ragged_sequences = make_sequence_batch(sequences)
     dimont = read_model(str(FIXTURES_ROOT / "dimont" / "PEAKS036274_FOXA1_P35582_MACS2-model-1.xml"), "dimont")
-    cfg = create_comparator_config(metric="co", n_permutations=0)
+    cfg = create_comparator_config(metric="co")
 
     plus_scores = scan_model(dimont, ragged_sequences, "+")
     minus_scores = scan_model(dimont, ragged_sequences, "-")
@@ -1583,7 +1591,7 @@ def test_strategy_profile_uses_background_for_empirical_calibration():
     model = GenericModel(type_key="pwm", name="m1", representation=representation, length=2, config={"kmer": 1})
     sequences = make_sequence_batch([_encode_sequence("ACACAC"), _encode_sequence("CAAAAA")])
     background = make_sequence_batch([_encode_sequence("AAAAAA"), _encode_sequence("CCCCCC")])
-    cfg = create_comparator_config(metric="co", background=background, n_permutations=0)
+    cfg = create_comparator_config(metric="co", background=background)
 
     plus_scores = scan_model(model, sequences, "+")
     background_plus = scan_model(model, background, "+")
@@ -1623,7 +1631,7 @@ def test_resolve_profile_bundle_matches_direct_two_strand_normalization():
             _encode_sequence("AAAAAC"),
         ]
     )
-    cfg = create_comparator_config(metric="co", n_permutations=0, cache_mode="off")
+    cfg = create_comparator_config(metric="co", cache_mode="off")
 
     resolve_profile_bundle = strategy_profile.__globals__["_resolve_profile_bundle"]
     resolved = resolve_profile_bundle(model, sequences, sequences, cfg)
@@ -1658,7 +1666,7 @@ def test_strategy_motif_handles_reverse_complement_for_higher_order_tensors():
     model1 = GenericModel(type_key="sitega", name="m1", representation=rep1, length=6, config={"kmer": 2})
     model2 = GenericModel(type_key="sitega", name="m2", representation=rep2, length=6, config={"kmer": 2})
 
-    result = strategy_motif(model1, model2, None, create_comparator_config(metric="cosine", n_permutations=0))
+    result = strategy_motif(model1, model2, None, create_comparator_config(metric="cosine"))
 
     assert result["orientation"] == "+-"
     assert result["score"] == pytest.approx(1.0, abs=1e-6)
@@ -1673,7 +1681,7 @@ def test_foxa1_cross_type_motif_comparison_recovers_dimont_and_slim_similarity()
     bamm = read_model(str(FIXTURES_ROOT / "bamm" / "PEAKS036274_FOXA1_P35582_MACS2_motif_1.ihbcp"), "bamm", order=2)
     dimont = read_model(str(FIXTURES_ROOT / "dimont" / "PEAKS036274_FOXA1_P35582_MACS2-model-1.xml"), "dimont")
     slim = read_model(str(FIXTURES_ROOT / "slim" / "PEAKS036274_FOXA1_P35582_MACS2-model-2.xml"), "slim")
-    cfg = create_comparator_config(metric="pcc", n_permutations=0)
+    cfg = create_comparator_config(metric="pcc")
 
     pwm_dimont = strategy_motif(pwm, dimont, sequences, cfg)
     pwm_slim = strategy_motif(pwm, slim, sequences, cfg)
@@ -1714,7 +1722,7 @@ def test_strategy_profile_co_uses_sparse_signal_on_foxa1_dimont_pwm_sites():
     pwm = read_model(str(FIXTURES_ROOT / "pwm" / "PEAKS036274_FOXA1_P35582_MACS2.meme"), "pwm")
     dimont = read_model(str(FIXTURES_ROOT / "dimont" / "PEAKS036274_FOXA1_P35582_MACS2-model-1.xml"), "dimont")
 
-    result = strategy_profile(dimont, pwm, ragged_sequences, create_comparator_config(metric="co", n_permutations=0))
+    result = strategy_profile(dimont, pwm, ragged_sequences, create_comparator_config(metric="co"))
 
     assert result["orientation"] == "--"
     assert abs(result["offset"]) == 2
@@ -1736,7 +1744,7 @@ def test_profile_orientation_search_requires_minus_minus_candidate_on_real_profi
     ragged_sequences = make_sequence_batch(sequences)
     pwm = read_model(str(FIXTURES_ROOT / "pwm" / "PEAKS036274_FOXA1_P35582_MACS2.meme"), "pwm")
     dimont = read_model(str(FIXTURES_ROOT / "dimont" / "PEAKS036274_FOXA1_P35582_MACS2-model-1.xml"), "dimont")
-    cfg = create_comparator_config(metric="co", n_permutations=0)
+    cfg = create_comparator_config(metric="co")
     calibration_sequences = strategy_profile.__globals__["_get_profile_background_sequences"](ragged_sequences, cfg)
     resolve_profile_bundle = strategy_profile.__globals__["_resolve_profile_bundle"]
     score_profile_candidates = strategy_profile.__globals__["_score_profile_candidates"]
@@ -1767,7 +1775,7 @@ def test_strategy_profile_is_symmetric_when_models_peak_on_different_strands():
     ragged_sequences = make_sequence_batch(sequences)
     pwm = read_model(str(FIXTURES_ROOT / "pwm" / "PEAKS036274_FOXA1_P35582_MACS2.meme"), "pwm")
     dimont = read_model(str(FIXTURES_ROOT / "dimont" / "PEAKS036274_FOXA1_P35582_MACS2-model-1.xml"), "dimont")
-    cfg = create_comparator_config(metric="co", n_permutations=0)
+    cfg = create_comparator_config(metric="co")
 
     pwm_vs_dimont = strategy_profile(pwm, dimont, ragged_sequences, cfg)
     dimont_vs_pwm = strategy_profile(dimont, pwm, ragged_sequences, cfg)
@@ -1792,8 +1800,8 @@ def test_strategy_runtime_cache_keys_use_model_content_not_name():
     sequences = make_sequence_batch(
         [np.random.default_rng(3).integers(0, 4, size=200, dtype=np.int8) for _ in range(20)]
     )
-    cfg_profile = create_comparator_config(metric="co", n_permutations=0)
-    cfg_motif = create_comparator_config(metric="cosine", n_permutations=0, pfm_mode=False)
+    cfg_profile = create_comparator_config(metric="co")
+    cfg_motif = create_comparator_config(metric="cosine", pfm_mode=False)
 
     model_a = build_model(1, "a")
     model_b = build_model(2, "b")
@@ -1833,7 +1841,7 @@ def test_strategy_profile_uses_disk_cache_for_target_and_query(tmp_path, monkeyp
     )
     query = make_model("query")
     target = make_model("target")
-    cfg = create_comparator_config(metric="co", cache_mode="on", cache_dir=str(tmp_path), n_permutations=0)
+    cfg = create_comparator_config(metric="co", cache_mode="on", cache_dir=str(tmp_path))
 
     first = strategy_profile(query, target, sequences, cfg)
     assert first["target"] == "target"
@@ -1858,8 +1866,8 @@ def test_strategy_profile_uses_disk_cache_for_target_and_query(tmp_path, monkeyp
     assert second["orientation"] == first["orientation"]
 
 
-def test_strategy_profile_permutations_use_batched_surrogate_scoring(monkeypatch):
-    """Profile permutations should reuse the new scorer with four observed and two surrogate orientations."""
+def test_strategy_profile_uses_batched_orientation_scoring(monkeypatch):
+    """Profile strategy should score the four observed orientation pairs."""
     scores_1 = _score_batch_from_flat(
         np.array([0.0, 0.8, 1.7, 0.2, 0.0, 1.1, 0.4, 0.0], dtype=np.float32),
         np.array([0, 4, 8], dtype=np.int64),
@@ -1882,7 +1890,7 @@ def test_strategy_profile_permutations_use_batched_surrogate_scoring(monkeypatch
         length=0,
         config={"scores_data": scores_2},
     )
-    cfg = create_comparator_config(metric="co", n_permutations=1, n_jobs=1, search_range=2)
+    cfg = create_comparator_config(metric="co", n_jobs=1, search_range=2)
 
     call_sizes = []
     original_candidates = strategy_profile.__globals__["_score_profile_candidates"]
@@ -1891,23 +1899,16 @@ def test_strategy_profile_permutations_use_batched_surrogate_scoring(monkeypatch
         call_sizes.append(len(pair_specs))
         return original_candidates(left_bundle, right_bundle, pair_specs, cfg)
 
-    def fake_run_montecarlo(obs_score_func, surrogate_generator_func, n_permutations, seed, *args):
-        value = surrogate_generator_func(np.random.default_rng(0), *args)
-        null_scores = np.array([value], dtype=np.float32)
-        return null_scores, float(null_scores.mean()), float(null_scores.std())
-
     monkeypatch.setitem(
         strategy_profile.__globals__,
         "_score_profile_candidates",
         recording_candidates,
     )
-    monkeypatch.setitem(strategy_profile.__globals__, "run_montecarlo", fake_run_montecarlo)
 
     result = strategy_profile(model1, model2, None, cfg)
 
     assert result["score"] >= 0.0
     assert 4 in call_sizes
-    assert 2 in call_sizes
 
 
 def test_clear_cache_removes_cached_profiles(tmp_path):
@@ -1925,7 +1926,7 @@ def test_clear_cache_removes_cached_profiles(tmp_path):
     sequences = make_sequence_batch([np.array([0, 1, 2, 3, 0, 1, 2], dtype=np.int8)])
     query = GenericModel(type_key="pwm", name="query", representation=representation, length=3, config={"kmer": 1})
     target = GenericModel(type_key="pwm", name="target", representation=representation, length=3, config={"kmer": 1})
-    cfg = create_comparator_config(metric="co", cache_mode="on", cache_dir=str(tmp_path), n_permutations=0)
+    cfg = create_comparator_config(metric="co", cache_mode="on", cache_dir=str(tmp_path))
 
     strategy_profile(query, target, sequences, cfg)
 
@@ -1944,14 +1945,12 @@ def test_create_config_builds_unified_config():
         model2_type="pwm",
         strategy="profile",
         metric="co",
-        n_permutations=10,
         n_jobs=2,
         seed=99,
     )
 
     assert config["strategy"] == "profile"
     assert config["comparator"]["metric"] == "co"
-    assert config["comparator"]["n_permutations"] == 10
     assert config["comparator"]["n_jobs"] == 2
     assert config["seed"] == 99
 
@@ -1965,14 +1964,12 @@ def test_create_many_config_builds_unified_config():
         target_type="pwm",
         strategy="profile",
         metric="co",
-        n_permutations=5,
         n_jobs=3,
         seed=11,
     )
 
     assert config["strategy"] == "profile"
     assert config["comparator"]["metric"] == "co"
-    assert config["comparator"]["n_permutations"] == 5
     assert config["comparator"]["n_jobs"] == 3
     assert config["targets"] == ["target_a.pfm", "target_b.pfm"]
     assert config["seed"] == 11
@@ -2005,7 +2002,6 @@ def test_run_comparison_with_unified_config_and_models():
         strategy="profile",
         sequences=sequences,
         metric="co",
-        n_permutations=0,
         seed=7,
     )
     result = run_comparison(config)
@@ -2053,16 +2049,11 @@ def test_run_one_to_many_matches_pairwise_profile_results():
         targets=[target_a, target_b],
         strategy="profile",
         metric="co",
-        n_permutations=0,
     )
     results = run_one_to_many(config)
 
-    expected_a = run_comparison(
-        create_config(model1=query, model2=target_a, strategy="profile", metric="co", n_permutations=0)
-    )
-    expected_b = run_comparison(
-        create_config(model1=query, model2=target_b, strategy="profile", metric="co", n_permutations=0)
-    )
+    expected_a = run_comparison(create_config(model1=query, model2=target_a, strategy="profile", metric="co"))
+    expected_b = run_comparison(create_config(model1=query, model2=target_b, strategy="profile", metric="co"))
 
     assert [result["target"] for result in results] == ["target_a", "target_b"]
     for result, expected in zip(results, [expected_a, expected_b], strict=False):
@@ -2097,7 +2088,7 @@ def test_run_one_to_many_passes_targets_lazily(monkeypatch):
         length=0,
         config={"scores_data": target_scores},
     )
-    config = create_many_config(query=query, targets=[target], strategy="profile", metric="co", n_permutations=0)
+    config = create_many_config(query=query, targets=[target], strategy="profile", metric="co")
     observed = {}
 
     def fake_compare_one_to_many_models(query_model, target_models, strategy, config, sequences=None, background=None):
@@ -2143,7 +2134,7 @@ def test_run_one_to_many_preserves_generator_targets():
         "num_sequences": 1000,
         "seq_length": 200,
         "seed": 127,
-        "comparator": create_comparator_config(metric="co", n_permutations=0),
+        "comparator": create_comparator_config(metric="co"),
         "query_kwargs": {},
         "target_kwargs": {},
     }
@@ -2176,7 +2167,6 @@ def test_run_comparison_rejects_removed_profile_metrics(metric):
             strategy="profile",
             sequences=sequences,
             metric=metric,
-            n_permutations=0,
             seed=7,
         )
         run_comparison(config)
@@ -2208,7 +2198,7 @@ def test_strategy_profile_co_has_no_default_floor():
         model1,
         model2,
         None,
-        create_comparator_config(metric="co", window_radius=0, n_permutations=0),
+        create_comparator_config(metric="co", window_radius=0),
     )
 
     assert result["score"] == pytest.approx(1.0)
@@ -2227,7 +2217,7 @@ def test_strategy_profile_zero_min_logfpr_uses_best_anchor_mode():
     model1 = GenericModel(type_key="scores", name="s1", representation=None, length=0, config={"scores_data": scores_1})
     model2 = GenericModel(type_key="scores", name="s2", representation=None, length=0, config={"scores_data": scores_2})
 
-    kwargs = {"metric": "co", "window_radius": 0, "search_range": 0, "n_permutations": 0}
+    kwargs = {"metric": "co", "window_radius": 0, "search_range": 0}
     omitted = strategy_profile(model1, model2, None, create_comparator_config(**kwargs, min_logfpr=None))
     zero = strategy_profile(model1, model2, None, create_comparator_config(**kwargs, min_logfpr=0))
 
@@ -2242,7 +2232,7 @@ def test_strategy_profile_handles_all_positions_masked_by_threshold(metric):
     scores_2 = _score_batch_from_flat(np.array([0.1, 0.2, 0.4], dtype=np.float32), np.array([0, 3], dtype=np.int64))
     model1 = GenericModel(type_key="scores", name="s1", representation=None, length=0, config={"scores_data": scores_1})
     model2 = GenericModel(type_key="scores", name="s2", representation=None, length=0, config={"scores_data": scores_2})
-    cfg = create_comparator_config(metric=metric, min_logfpr=10.0, n_permutations=0)
+    cfg = create_comparator_config(metric=metric, min_logfpr=10.0)
 
     result = strategy_profile(model1, model2, None, cfg)
 
@@ -2259,7 +2249,7 @@ def test_run_comparison_supports_dice_for_profile():
     model1 = GenericModel(type_key="scores", name="s1", representation=None, length=0, config={"scores_data": scores_1})
     model2 = GenericModel(type_key="scores", name="s2", representation=None, length=0, config={"scores_data": scores_2})
 
-    config = create_config(model1=model1, model2=model2, strategy="profile", metric="dice", n_permutations=0, seed=7)
+    config = create_config(model1=model1, model2=model2, strategy="profile", metric="dice", seed=7)
     result = run_comparison(config)
 
     assert result["metric"] == "dice"
@@ -2276,7 +2266,6 @@ def test_run_comparison_supports_dice_rowwise_for_profile():
         model2=model2,
         strategy="profile",
         metric="dice_rowwise",
-        n_permutations=0,
         seed=7,
         window_radius=1,
     )
@@ -2296,7 +2285,6 @@ def test_run_comparison_supports_cosine_for_profile():
         model2=model2,
         strategy="profile",
         metric="cosine",
-        n_permutations=0,
         seed=7,
         window_radius=1,
     )
@@ -2316,7 +2304,6 @@ def test_run_comparison_supports_co_rowwise_for_profile():
         model2=model2,
         strategy="profile",
         metric="co_rowwise",
-        n_permutations=0,
         seed=7,
         window_radius=1,
     )
@@ -2348,7 +2335,6 @@ def test_compare_motifs_shortcut_works_with_single_import_api():
         strategy="profile",
         sequences=sequences,
         metric="co",
-        n_permutations=0,
         seed=13,
     )
 
@@ -2415,17 +2401,137 @@ def test_compare_one_to_many_matches_pairwise_motif_results():
         targets=[target_a, target_b],
         strategy="motif",
         metric="pcc",
-        n_permutations=0,
     )
 
-    expected_a = compare_motifs(query, target_a, strategy="motif", metric="pcc", n_permutations=0)
-    expected_b = compare_motifs(query, target_b, strategy="motif", metric="pcc", n_permutations=0)
+    expected_a = compare_motifs(query, target_a, strategy="motif", metric="pcc")
+    expected_b = compare_motifs(query, target_b, strategy="motif", metric="pcc")
 
     assert [result["target"] for result in results] == ["target_a", "target_b"]
     for result, expected in zip(results, [expected_a, expected_b], strict=False):
         assert result["orientation"] == expected["orientation"]
         assert result["offset"] == expected["offset"]
         np.testing.assert_allclose(result["score"], expected["score"])
+
+
+def test_read_meme_many_and_read_models_load_multi_meme(tmp_path):
+    """Collection loading should preserve all MEME motifs in file order."""
+    meme_path = tmp_path / "two.meme"
+    meme_path.write_text(
+        """MEME version 4
+
+ALPHABET= ACGT
+
+MOTIF alpha
+letter-probability matrix: alength= 4 w= 3 nsites= 10 E= 0
+0.7 0.1 0.1 0.1
+0.1 0.7 0.1 0.1
+0.1 0.1 0.7 0.1
+
+MOTIF beta
+letter-probability matrix: alength= 4 w= 3 nsites= 10 E= 0
+0.1 0.1 0.1 0.7
+0.1 0.1 0.7 0.1
+0.1 0.7 0.1 0.1
+""",
+        encoding="utf-8",
+    )
+
+    raw = read_meme_many(meme_path)
+    models = read_models(meme_path, "pwm")
+
+    assert [info[0] for _, info in raw] == ["alpha", "beta"]
+    assert [model.name for model in models] == ["alpha", "beta"]
+
+
+def test_read_models_directory_is_deterministic(tmp_path):
+    """Directory collection loading should sort paths and keep stable model names."""
+    first = tmp_path / "b_second.pfm"
+    second = tmp_path / "a_first.pfm"
+    first.write_text(">b_second\n0.7 0.1 0.1 0.1\n0.1 0.7 0.1 0.1\n", encoding="utf-8")
+    second.write_text(">a_first\n0.1 0.7 0.1 0.1\n0.7 0.1 0.1 0.1\n", encoding="utf-8")
+
+    models = read_models(tmp_path, "pwm", pattern="*.pfm")
+
+    assert [model.name for model in models] == ["a_first", "b_second"]
+
+
+def test_relation_parsers_exclude_self_and_group_matches(tmp_path):
+    """Relation parsers should include only unrelated or explicitly included non-self pairs."""
+    groups = tmp_path / "groups.tsv"
+    groups.write_text("motif\tfamily\nq\tA\nt1\tA\nt2\tB\n", encoding="utf-8")
+    pairs = tmp_path / "pairs.tsv"
+    pairs.write_text("query\ttarget\tinclude\nq\tq\ttrue\nq\tt1\tfalse\nq\tt2\ttrue\n", encoding="utf-8")
+
+    group_relations = parse_group_relations(groups, group_column="family", known_names={"q", "t1", "t2"})
+    pair_relations = parse_pair_relations(pairs, known_names={"q", "t1", "t2"})
+
+    assert group_relations["q"] == {"t2"}
+    assert pair_relations["q"] == {"t2"}
+
+
+def test_null_estimators_and_bh_qvalues_are_bounded_and_monotone():
+    """Survival estimators and BH-FDR should return bounded upper-tail values."""
+    estimator = fit_survival_estimator([0.1, 0.2, 0.3, 0.4])
+    empirical = EmpiricalSurvivalEstimator([0.1, 0.2, 0.3, 0.4])
+
+    assert 0.0 < estimator.sf(0.35) <= 1.0
+    assert estimator.sf(0.2) >= estimator.sf(0.3)
+    assert empirical.sf(0.4) == pytest.approx(2.0 / 5.0)
+    assert empirical.sf(0.5) == pytest.approx(1.0 / 5.0)
+    np.testing.assert_allclose(bh_qvalues([0.03, 0.01, 0.02]), [0.03, 0.03, 0.03])
+
+
+def test_null_builder_and_annotation_add_significance_values():
+    """Null builder should score included targets and annotation should add p/E/q values."""
+    query = _make_shifted_core_pwm_model("q", 0)
+    target_a = _make_shifted_core_pwm_model("u1", 1)
+    target_b = _make_shifted_core_pwm_model("u2", 2)
+    config = create_comparator_config(metric="pcc")
+    relations = {"q": {"q", "u1", "u2"}}
+
+    built = build_null_distributions(
+        [query, target_a, target_b],
+        relations,
+        strategy="motif",
+        config=config,
+        min_null_targets=2,
+    )
+    entry = next(iter(built.artifact["entries"].values()))
+    results = [{"score": float(entry["raw_null_scores"][0])}, {"score": float(entry["raw_null_scores"][1])}]
+
+    annotate_results_with_nulls(results, artifact=built.artifact, query_model=query, effective_number_of_targets=2)
+
+    assert entry["included_target_names"] == ["u1", "u2"]
+    assert all("p-value" in result and "E-value" in result and "q-value" in result for result in results)
+
+
+def test_artifact_matching_rejects_incompatible_metric_and_query():
+    """Artifact compatibility should include metric/config and query fingerprint."""
+    query = _make_shifted_core_pwm_model("q", 0)
+    config = create_comparator_config(metric="pcc")
+    built = build_null_distributions(
+        [query, _make_shifted_core_pwm_model("u1", 1)],
+        {"q": {"u1"}},
+        strategy="motif",
+        config=config,
+    )
+
+    incompatible = create_comparator_config(metric="cosine")
+    other_query = _make_shifted_core_pwm_model("other", 0)
+
+    assert is_artifact_compatible(built.artifact, strategy="motif", config=config, query_model=query)
+    assert not is_artifact_compatible(built.artifact, strategy="motif", config=incompatible, query_model=query)
+    assert not is_artifact_compatible(built.artifact, strategy="motif", config=config, query_model=other_query)
+
+
+def test_save_null_artifact_roundtrip(tmp_path):
+    """Null artifacts should be saved as joblib payloads."""
+    path = tmp_path / "null.joblib"
+    artifact = {"metadata": {"format_version": 1}, "entries": {}}
+
+    save_null_artifact(artifact, path)
+
+    assert joblib.load(path) == artifact
 
 
 if __name__ == "__main__":

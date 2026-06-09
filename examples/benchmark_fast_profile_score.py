@@ -252,7 +252,6 @@ def main() -> None:
                     search_range=args.search_range,
                     metric=metric,
                     min_logfpr=threshold,
-                    n_permutations=0,
                 )
                 for num_threads in args.threads:
                     if mode == "pairwise":

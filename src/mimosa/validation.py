@@ -57,23 +57,6 @@ def validate_non_negative_int(name: str, value: int) -> int:
     return number
 
 
-def validate_kernel_size_range(min_kernel_size: int, max_kernel_size: int) -> tuple[int, int]:
-    """Validate surrogate-kernel bounds and require at least one odd width."""
-    minimum = validate_positive_int("min_kernel_size", min_kernel_size)
-    maximum = validate_positive_int("max_kernel_size", max_kernel_size)
-    if minimum > maximum:
-        raise ValueError(f"min_kernel_size ({minimum}) must be less than or equal to max_kernel_size ({maximum}).")
-
-    first_odd = minimum if minimum % 2 == 1 else minimum + 1
-    if first_odd > maximum:
-        raise ValueError(
-            "Kernel size range must include at least one odd value, "
-            "because surrogate convolution uses centered kernels."
-        )
-
-    return minimum, maximum
-
-
 def validate_pfm_top_fraction(value: Optional[float]) -> Optional[float]:
     """Validate the optional fraction of hits used for PFM reconstruction."""
     if value is None:

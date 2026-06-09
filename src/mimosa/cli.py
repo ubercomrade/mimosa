@@ -4,10 +4,29 @@ import logging
 import sys
 from typing import Any, Dict
 
+import numpy as np
+
 from mimosa.api import create_config, run_comparison
+from mimosa.batches import make_sequence_batch
 from mimosa.cache import clear_cache
-from mimosa.comparison import SUPPORTED_MOTIF_METRICS, SUPPORTED_PROFILE_METRICS, create_comparator_config
-from mimosa.validation import validate_file_exists
+from mimosa.comparison import (
+    SUPPORTED_MOTIF_METRICS,
+    SUPPORTED_PROFILE_METRICS,
+    _validate_metric,
+    create_comparator_config,
+)
+from mimosa.io import read_fasta
+from mimosa.models import read_models
+from mimosa.nulls import (
+    build_null_distributions,
+    file_fingerprint,
+    install_null_artifact,
+    parse_group_relations,
+    parse_pair_matrix_relations,
+    parse_pair_relations,
+    save_null_artifact,
+)
+from mimosa.validation import validate_file_exists, validate_positive_int
 
 PROFILE_MODEL_TYPES = ["scores", "pwm", "bamm", "sitega", "dimont", "slim"]
 MOTIF_MODEL_TYPES = ["pwm", "bamm", "sitega", "dimont", "slim"]
@@ -38,7 +57,11 @@ Examples:
   # Direct motif comparison (former tomtom-like mode)
   mimosa motif model1.meme model2.pfm \
     --model1-type pwm --model2-type pwm \
-    --metric pcc --permutations 1000 --permute-rows
+    --metric pcc
+
+  # Build query-specific null distributions from unrelated motifs
+  mimosa build-null motifs.meme --model-type pwm --groups groups.tsv \
+    --strategy motif --metric pcc --output motifs-pcc.null.joblib
 
         """,
     )
@@ -47,6 +70,7 @@ Examples:
 
     _add_profile_parser(subparsers)
     _add_motif_parser(subparsers)
+    _add_build_null_parser(subparsers)
     _add_cache_parser(subparsers)
 
     return parser
@@ -148,6 +172,31 @@ def _add_common_technical_arguments(
     return technical_group
 
 
+def _add_significance_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add stored-null-distribution comparison options."""
+    group = parser.add_argument_group("Significance Options")
+    group.add_argument(
+        "--pvalue",
+        action="store_true",
+        help="Annotate the result using a compatible stored null distribution.",
+    )
+    group.add_argument(
+        "--null-distribution",
+        help="Path to a null-distribution artifact built with 'mimosa build-null'.",
+    )
+    group.add_argument(
+        "--null-search-dir",
+        action="append",
+        dest="null_search_dirs",
+        help="Additional directory searched for compatible null-distribution artifacts.",
+    )
+    group.add_argument(
+        "--effective-number-of-targets",
+        type=int,
+        help="Override the target count used for E-value calculation.",
+    )
+
+
 def _add_profile_parser(subparsers: argparse._SubParsersAction) -> None:
     """Add the profile mode parser."""
     parser = subparsers.add_parser(
@@ -184,18 +233,6 @@ def _add_profile_parser(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     profile_group.add_argument(
-        "--permutations",
-        type=int,
-        default=0,
-        help="Number of permutations for p-value estimation. (default: %(default)s)",
-    )
-    profile_group.add_argument(
-        "--distortion",
-        type=float,
-        default=0.4,
-        help="Surrogate-profile distortion level in the 0.0-1.0 range. (default: %(default)s)",
-    )
-    profile_group.add_argument(
         "--search-range",
         type=int,
         default=10,
@@ -216,18 +253,6 @@ def _add_profile_parser(subparsers: argparse._SubParsersAction) -> None:
         ),
     )
     profile_group.add_argument(
-        "--min-kernel-size",
-        type=int,
-        default=3,
-        help="Minimum surrogate convolution kernel size. (default: %(default)s)",
-    )
-    profile_group.add_argument(
-        "--max-kernel-size",
-        type=int,
-        default=11,
-        help="Maximum surrogate convolution kernel size. (default: %(default)s)",
-    )
-    profile_group.add_argument(
         "--min-logfpr",
         type=float,
         default=None,
@@ -238,6 +263,7 @@ def _add_profile_parser(subparsers: argparse._SubParsersAction) -> None:
     )
 
     _add_common_technical_arguments(parser, include_cache=True)
+    _add_significance_arguments(parser)
 
 
 def _add_motif_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -270,17 +296,6 @@ def _add_motif_parser(subparsers: argparse._SubParsersAction) -> None:
         help=(f"Column-wise comparison metric. Choices: {', '.join(SUPPORTED_MOTIF_METRICS)}. (default: %(default)s)"),
     )
     motif_group.add_argument(
-        "--permutations",
-        type=int,
-        default=0,
-        help="Number of Monte Carlo permutations for p-value estimation. (default: %(default)s)",
-    )
-    motif_group.add_argument(
-        "--permute-rows",
-        action="store_true",
-        help="Shuffle matrix rows in addition to positions during permutation testing.",
-    )
-    motif_group.add_argument(
         "--pfm-mode",
         action="store_true",
         help="Force sequence-driven PFM reconstruction before direct motif comparison.",
@@ -291,6 +306,54 @@ def _add_motif_parser(subparsers: argparse._SubParsersAction) -> None:
         default=0.05,
         help="Fraction of top-scoring reconstructed sites used for cross-type PFM comparison. (default: %(default)s)",
     )
+
+    _add_common_technical_arguments(parser)
+    _add_significance_arguments(parser)
+
+
+def _add_build_null_parser(subparsers: argparse._SubParsersAction) -> None:
+    """Add the null-distribution builder parser."""
+    parser = subparsers.add_parser(
+        "build-null",
+        help="Build query-specific null distributions from unrelated target motifs.",
+    )
+    parser.add_argument("motifs", help="Motif collection: directory or multi-motif MEME file.")
+    parser.add_argument("--model-type", choices=MOTIF_MODEL_TYPES, required=True, help="Motif model format.")
+    parser.add_argument("--pattern", help="Glob pattern used when loading a directory collection.")
+
+    relation = parser.add_argument_group("Relation Options")
+    source = relation.add_mutually_exclusive_group(required=True)
+    source.add_argument("--groups", help="TSV/CSV with motif and group columns.")
+    source.add_argument("--pair-table", help="TSV/CSV with query, target, and include columns.")
+    source.add_argument("--pair-matrix", help="Square TSV/CSV matrix where truthy cells include null pairs.")
+    relation.add_argument("--name-column", default="motif", help="Motif-name column for --groups.")
+    relation.add_argument("--group-column", default="group", help="Group column for --groups.")
+    relation.add_argument("--query-column", default="query", help="Query column for --pair-table.")
+    relation.add_argument("--target-column", default="target", help="Target column for --pair-table.")
+    relation.add_argument("--include-column", default="include", help="Include column for --pair-table.")
+    relation.add_argument("--ignore-missing-relations", action="store_true", help="Ignore relation names not loaded.")
+
+    comparison = parser.add_argument_group("Comparison Options")
+    comparison.add_argument("--strategy", choices=["profile", "motif"], required=True)
+    comparison.add_argument("--metric", help="Comparison metric. Defaults to co for profile and pcc for motif.")
+    comparison.add_argument("--fasta", help="FASTA sequences used by profile mode or sequence-driven PFM mode.")
+    comparison.add_argument("--background", help="Optional FASTA background sequences for profile normalization.")
+    comparison.add_argument("--num-sequences", type=int, default=1000)
+    comparison.add_argument("--seq-length", type=int, default=200)
+    comparison.add_argument("--search-range", type=int, default=10)
+    comparison.add_argument("--window-radius", type=int, default=10)
+    comparison.add_argument("--realign-window", type=int, default=3)
+    comparison.add_argument("--min-logfpr", type=float, default=None)
+    comparison.add_argument("--pfm-mode", action="store_true")
+    comparison.add_argument("--pfm-top-fraction", type=float, default=0.05)
+    comparison.add_argument("--cache", choices=["off", "on"], default="off")
+    comparison.add_argument("--cache-dir", default=".mimosa-cache")
+
+    output = parser.add_argument_group("Output Options")
+    output.add_argument("--output", required=True, help="Path to write the joblib null-distribution artifact.")
+    output.add_argument("--install-cache", action="store_true", help="Also copy the artifact into the user cache.")
+    output.add_argument("--strict", action="store_true", help="Fail when a query lacks enough null targets.")
+    output.add_argument("--min-null-targets", type=int, default=1)
 
     _add_common_technical_arguments(parser)
 
@@ -314,11 +377,34 @@ def _add_cache_parser(subparsers: argparse._SubParsersAction) -> None:
     )
 
 
-def validate_inputs(args) -> None:
+def validate_inputs(args) -> None:  # noqa: C901
     """Validate input files and parameters."""
     logger = logging.getLogger(__name__)
 
     if args.mode == "cache":
+        return
+
+    if args.mode == "build-null":
+        file_checks = [(args.motifs, "Motif collection")]
+        for optional_path, label in (
+            (getattr(args, "groups", None), "Group relation file"),
+            (getattr(args, "pair_table", None), "Pair relation file"),
+            (getattr(args, "pair_matrix", None), "Pair matrix file"),
+            (getattr(args, "fasta", None), "FASTA file"),
+            (getattr(args, "background", None), "Background FASTA file"),
+        ):
+            if optional_path:
+                file_checks.append((optional_path, label))
+
+        try:
+            for path, label in file_checks:
+                validate_file_exists(path, label)
+            create_comparator_config(**map_args_to_comparator_kwargs(args))
+            _validate_build_null_metric(args)
+            validate_positive_int("min_null_targets", args.min_null_targets)
+        except (FileNotFoundError, ValueError) as exc:
+            logger.error("%s", exc)
+            sys.exit(1)
         return
 
     file_checks = [
@@ -329,6 +415,8 @@ def validate_inputs(args) -> None:
         file_checks.append((args.fasta, "FASTA file"))
     if getattr(args, "background", None):
         file_checks.append((args.background, "Background FASTA file"))
+    if getattr(args, "null_distribution", None):
+        file_checks.append((args.null_distribution, "Null-distribution artifact"))
 
     try:
         for path, label in file_checks:
@@ -345,32 +433,58 @@ def map_args_to_comparator_kwargs(args) -> Dict[str, Any]:
     if args.mode == "profile":
         return {
             "metric": args.metric,
-            "n_permutations": args.permutations,
-            "distortion_level": args.distortion,
             "n_jobs": args.jobs,
             "seed": args.seed,
             "search_range": args.search_range,
             "window_radius": args.window_radius,
             "realign_window": args.realign_window,
-            "min_kernel_size": args.min_kernel_size,
-            "max_kernel_size": args.max_kernel_size,
             "min_logfpr": args.min_logfpr,
             "cache_mode": args.cache,
             "cache_dir": args.cache_dir,
+            "pvalue": args.pvalue,
+            "null_distribution": args.null_distribution,
+            "null_search_dirs": args.null_search_dirs,
+            "effective_number_of_targets": args.effective_number_of_targets,
         }
 
     if args.mode == "motif":
         return {
             "metric": args.metric,
-            "n_permutations": args.permutations,
-            "permute_rows": args.permute_rows,
             "n_jobs": args.jobs,
             "seed": args.seed,
             "pfm_mode": args.pfm_mode,
             "pfm_top_fraction": args.pfm_top_fraction,
+            "pvalue": args.pvalue,
+            "null_distribution": args.null_distribution,
+            "null_search_dirs": args.null_search_dirs,
+            "effective_number_of_targets": args.effective_number_of_targets,
+        }
+
+    if args.mode == "build-null":
+        metric = args.metric or ("co" if args.strategy == "profile" else "pcc")
+        return {
+            "metric": _validate_metric(metric),
+            "n_jobs": args.jobs,
+            "seed": args.seed,
+            "search_range": args.search_range,
+            "window_radius": args.window_radius,
+            "realign_window": args.realign_window,
+            "min_logfpr": args.min_logfpr,
+            "pfm_mode": args.pfm_mode,
+            "pfm_top_fraction": args.pfm_top_fraction,
+            "cache_mode": args.cache,
+            "cache_dir": args.cache_dir,
+            "pvalue": False,
         }
 
     return {}
+
+
+def _validate_build_null_metric(args) -> None:
+    metric = args.metric or ("co" if args.strategy == "profile" else "pcc")
+    allowed = SUPPORTED_PROFILE_METRICS if args.strategy == "profile" else SUPPORTED_MOTIF_METRICS
+    if metric not in allowed:
+        raise ValueError(f"Strategy '{args.strategy}' requires one of: {', '.join(allowed)}")
 
 
 def build_comparison_config_from_args(args):
@@ -424,6 +538,79 @@ def run_cache_command_from_args(args) -> None:
     raise ValueError(f"Unknown cache action: {args.cache_action}")
 
 
+def run_build_null_from_args(args) -> None:
+    """Build and save a null-distribution artifact from CLI arguments."""
+    models = read_models(args.motifs, args.model_type, pattern=args.pattern)
+    known_names = {model.name for model in models}
+    relation_path = args.groups or args.pair_table or args.pair_matrix
+    relation_fingerprint = file_fingerprint(relation_path)
+    if args.groups:
+        relations = parse_group_relations(
+            args.groups,
+            name_column=args.name_column,
+            group_column=args.group_column,
+            ignore_missing=args.ignore_missing_relations,
+            known_names=known_names,
+        )
+    elif args.pair_table:
+        relations = parse_pair_relations(
+            args.pair_table,
+            query_column=args.query_column,
+            target_column=args.target_column,
+            include_column=args.include_column,
+            ignore_missing=args.ignore_missing_relations,
+            known_names=known_names,
+        )
+    else:
+        relations = parse_pair_matrix_relations(
+            args.pair_matrix,
+            ignore_missing=args.ignore_missing_relations,
+            known_names=known_names,
+        )
+
+    comparator = create_comparator_config(**map_args_to_comparator_kwargs(args))
+    sequences = _resolve_build_null_sequences(args, comparator)
+    background = read_fasta(args.background) if args.background else None
+    built = build_null_distributions(
+        models,
+        relations,
+        strategy=args.strategy,
+        config=comparator,
+        sequences=sequences,
+        background=background,
+        min_null_targets=args.min_null_targets,
+        strict=args.strict,
+        relation_fingerprint=relation_fingerprint,
+    )
+    artifact_path = save_null_artifact(built.artifact, args.output)
+    cache_path = install_null_artifact(artifact_path) if args.install_cache else None
+    summary = {
+        "artifact": str(artifact_path),
+        "cache_path": str(cache_path) if cache_path else None,
+        "number_of_motifs": len(models),
+        "number_of_query_distributions_built": len(built.artifact["entries"]),
+        "skipped_queries": built.skipped,
+        "total_comparisons_run": built.total_comparisons,
+        "config_signature": built.artifact["metadata"]["config_signature"],
+    }
+    print(json.dumps(summary))
+
+
+def _resolve_build_null_sequences(args, comparator):
+    """Resolve sequences for null building when the selected score path needs them."""
+    needs_sequences = args.strategy == "profile" or bool(comparator["pfm_mode"])
+    if not needs_sequences:
+        return None
+    if args.fasta:
+        return read_fasta(args.fasta)
+
+    num_sequences = validate_positive_int("num_sequences", args.num_sequences)
+    seq_length = validate_positive_int("seq_length", args.seq_length)
+    rng = np.random.default_rng(args.seed)
+    rows = [rng.integers(0, 4, size=seq_length, dtype=np.int8) for _ in range(num_sequences)]
+    return make_sequence_batch(rows)
+
+
 def main_cli() -> None:
     """Main CLI entry point."""
     parser = create_arg_parser()
@@ -437,6 +624,8 @@ def main_cli() -> None:
     validate_inputs(args)
     if args.mode == "cache":
         run_cache_command_from_args(args)
+    elif args.mode == "build-null":
+        run_build_null_from_args(args)
     else:
         run_comparison_from_args(args)
 

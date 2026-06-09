@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
 import joblib
@@ -37,6 +38,7 @@ from mimosa.io import (
     read_bamm,
     read_dimont,
     read_meme,
+    read_meme_many,
     read_pfm,
     read_scores,
     read_sitega,
@@ -147,6 +149,44 @@ def read_model(path: str, model_type: str, **kwargs) -> GenericModel:
     """Factory function for creating models from files."""
     handler = _get_model_handler(model_type)
     return handler["load"](path, kwargs)
+
+
+def read_models(
+    path: str | Path,
+    model_type: str,
+    pattern: str | None = None,
+    *,
+    allow_duplicate_names: bool = False,
+    **kwargs,
+) -> list[GenericModel]:
+    """Read a deterministic motif collection from a directory or multi-motif MEME file."""
+    source = Path(path)
+    if source.is_dir():
+        paths = sorted(p for p in source.glob(pattern or "*") if p.is_file())
+        models = [read_model(str(item), model_type, **kwargs) for item in paths]
+    elif model_type == "pwm" and source.suffix.lower() == ".meme":
+        models = [_pwm_model_from_pfm(pfm, name, length) for pfm, (name, length) in read_meme_many(source)]
+    else:
+        raise ValueError("Collection loading requires a directory or a multi-motif MEME file with model_type='pwm'.")
+
+    _validate_unique_model_names(models, allow_duplicate_names=allow_duplicate_names)
+    return models
+
+
+def _validate_unique_model_names(models: list[GenericModel], *, allow_duplicate_names: bool) -> None:
+    if allow_duplicate_names:
+        return
+
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for model in models:
+        if model.name in seen:
+            duplicates.add(model.name)
+        seen.add(model.name)
+
+    if duplicates:
+        names = ", ".join(sorted(duplicates))
+        raise ValueError(f"Duplicate motif names are not allowed: {names}")
 
 
 def get_score_bounds(model: GenericModel) -> tuple[float, float]:
@@ -644,6 +684,13 @@ def _write_pwm(model: GenericModel, path: str) -> None:
     write_pfm(np.asarray(pfm, dtype=np.float32), model.name, model.length, path)
 
 
+def _pwm_model_from_pfm(pfm: np.ndarray, name: str, length: int) -> GenericModel:
+    """Build the internal PWM model representation from one PFM."""
+    pwm = pfm_to_pwm(pfm)
+    pwm_ext = np.concatenate((pwm, np.min(pwm, axis=0, keepdims=True)), axis=0).astype(np.float32, copy=False)
+    return GenericModel("pwm", name, pwm_ext, int(length), {"kmer": 1, "_source_pfm": pfm})
+
+
 def _load_pwm(path: str, kwargs: dict) -> GenericModel:
     _, ext = os.path.splitext(path.lower())
 
@@ -662,9 +709,7 @@ def _load_pwm(path: str, kwargs: dict) -> GenericModel:
     else:
         raise ValueError(f"Unsupported PWM format: {path}")
 
-    pwm = pfm_to_pwm(pfm)
-    pwm_ext = np.concatenate((pwm, np.min(pwm, axis=0, keepdims=True)), axis=0).astype(np.float32, copy=False)
-    return GenericModel("pwm", name, pwm_ext, int(length), {"kmer": 1, "_source_pfm": pfm})
+    return _pwm_model_from_pfm(pfm, name, int(length))
 
 
 def _scan_sitega(model: GenericModel, sequences, strand: StrandMode):

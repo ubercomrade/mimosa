@@ -17,6 +17,7 @@ from mimosa.batches import make_score_batch, make_sequence_batch
 _JSTACS_NUMERIC_RE = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[Ee][-+]?\d+)?")
 _LOG_UNIFORM_BASE = float(np.log(4.0))
 _SITEGA_EPS = 1e-9
+_MEME_MIN_MOTIF_FIELDS = 2
 
 
 def read_fasta(path: str | Path):
@@ -132,6 +133,30 @@ def read_meme(path: str, index: int = 0) -> Tuple[np.ndarray, Tuple[str, int], i
         raise ValueError(f"Malformed MEME file {path}: motif metadata is missing.")
 
     return target_motif, target_info, motif_count
+
+
+def read_meme_many(path: str | Path) -> list[tuple[np.ndarray, tuple[str, int]]]:
+    """Read all motifs from one MEME file in file order."""
+    motifs: list[tuple[np.ndarray, tuple[str, int]]] = []
+
+    with open(path) as handle:
+        line = handle.readline()
+        while line:
+            if line.startswith("MOTIF"):
+                parts = line.strip().split()
+                if len(parts) < _MEME_MIN_MOTIF_FIELDS:
+                    raise ValueError(f"Malformed MEME file {path}: MOTIF line has no name.")
+                name = parts[1]
+                length = _meme_length_from_header(handle.readline())
+                if length <= 0:
+                    raise ValueError(f"Malformed MEME file {path}: motif {name!r} has invalid length.")
+                matrix = np.array(_read_meme_matrix_rows(handle, length), dtype=np.float32).T
+                motifs.append((matrix, (name, length)))
+            line = handle.readline()
+
+    if not motifs:
+        raise ValueError(f"No motifs found in {path}")
+    return motifs
 
 
 def read_sitega(path: str) -> tuple[np.ndarray, str, int, float, float]:

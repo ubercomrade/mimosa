@@ -3,21 +3,18 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable, Literal, Optional, TypedDict
+from pathlib import Path
+from typing import Any, Callable, Literal, Optional, TypedDict
 
 import numpy as np
 from joblib import Parallel, delayed
 from numba import njit
-from scipy.ndimage import convolve1d
 
 from mimosa.batches import (
     MINUS_STRAND,
     PLUS_STRAND,
-    SCORE_PADDING,
     SequenceBatch,
     flatten_profile_bundle,
-    pack_profile_bundle,
-    profile_view,
 )
 from mimosa.cache import ProfileCacheSpec, fingerprint_batch, fingerprint_model, load_profile_cache, store_profile_cache
 from mimosa.functions import (
@@ -29,7 +26,6 @@ from mimosa.functions import (
     rowwise_co,
     rowwise_cosine,
     rowwise_dice,
-    scores_to_empirical_log_tail_bundle,
 )
 from mimosa.models import (
     GenericModel,
@@ -38,7 +34,6 @@ from mimosa.models import (
 )
 from mimosa.validation import (
     validate_cache_mode,
-    validate_kernel_size_range,
     validate_non_negative,
     validate_non_negative_int,
     validate_optional_thread_count,
@@ -55,16 +50,11 @@ _ALL_METRICS = frozenset((*SUPPORTED_PROFILE_METRICS, *SUPPORTED_MOTIF_METRICS))
 
 class ComparatorConfig(TypedDict):
     metric: MetricName
-    n_permutations: int
     seed: Optional[int]
     n_jobs: Optional[int]
-    permute_rows: bool
     pfm_mode: bool
     pfm_top_fraction: float
-    distortion_level: float
     search_range: int
-    min_kernel_size: int
-    max_kernel_size: int
     min_logfpr: Optional[float]
     window_radius: int
     realign_window: int
@@ -72,6 +62,10 @@ class ComparatorConfig(TypedDict):
     cache_mode: str
     cache_dir: str
     background: Optional[SequenceBatch]
+    pvalue: bool
+    null_distribution: Optional[str | Path | dict[str, Any]]
+    null_search_dirs: Optional[list[str | Path]]
+    effective_number_of_targets: Optional[int]
 
 
 class ComparisonResult(TypedDict, total=False):
@@ -89,9 +83,6 @@ NUCLEOTIDE_CARDINALITY = 4
 AMBIGUOUS_STATE_CARDINALITY = 5
 MATRIX_RANK = 2
 SIMILARITY_EPS = 1e-9
-SURROGATE_SMOOTH_FILTER = np.array([0.25, 0.5, 0.25], dtype=np.float32)
-SURROGATE_SIGN_FLIP_PROBABILITY = 0.5
-
 PROFILE_ORIENTATION_PAIRS = (
     ("++", PLUS_STRAND, PLUS_STRAND),
     ("--", MINUS_STRAND, MINUS_STRAND),
@@ -125,16 +116,11 @@ def create_comparator_config(**kwargs) -> ComparatorConfig:
     """Build one validated comparison options dictionary."""
     defaults: ComparatorConfig = {
         "metric": "pcc",
-        "n_permutations": 0,
         "seed": None,
         "n_jobs": None,
-        "permute_rows": False,
         "pfm_mode": False,
         "pfm_top_fraction": 0.05,
-        "distortion_level": 0.4,
         "search_range": 10,
-        "min_kernel_size": 3,
-        "max_kernel_size": 11,
         "min_logfpr": None,
         "window_radius": 10,
         "realign_window": 3,
@@ -142,15 +128,21 @@ def create_comparator_config(**kwargs) -> ComparatorConfig:
         "cache_mode": "off",
         "cache_dir": ".mimosa-cache",
         "background": None,
+        "pvalue": False,
+        "null_distribution": None,
+        "null_search_dirs": None,
+        "effective_number_of_targets": None,
     }
+    unknown_keys = set(kwargs).difference(defaults).difference({"promoters"})
+    if unknown_keys:
+        options = ", ".join(sorted(unknown_keys))
+        raise ValueError(f"Unknown comparator option(s): {options}")
+
     config = {**defaults, **kwargs}
     legacy_background = config.pop("promoters", None)
     if "background" not in kwargs and legacy_background is not None:
         config["background"] = legacy_background
     config["metric"] = _validate_metric(config["metric"])
-    min_kernel_size, max_kernel_size = validate_kernel_size_range(config["min_kernel_size"], config["max_kernel_size"])
-    config["min_kernel_size"] = min_kernel_size
-    config["max_kernel_size"] = max_kernel_size
     config["min_logfpr"] = validate_non_negative("min_logfpr", config.get("min_logfpr"))
     config["window_radius"] = validate_non_negative_int("window_radius", config.get("window_radius", 10))
     config["realign_window"] = validate_non_negative_int("realign_window", config.get("realign_window", 3))
@@ -748,120 +740,6 @@ def _build_profile_result(query_name: str, target_name: str, best: dict, metric:
     }
 
 
-def _attach_profile_null_statistics(
-    result: dict,
-    query_bundle: dict,
-    target_bundle: dict,
-    best_target_strand: int,
-    cfg: ComparatorConfig,
-) -> None:
-    """Attach Monte Carlo statistics for one profile comparison result."""
-    if cfg["n_permutations"] <= 0:
-        return
-
-    obs_score = float(result["score"])
-    best_target_profile = profile_view(target_bundle, best_target_strand)
-
-    orientation_pairs = (
-        [("++", PLUS_STRAND, 0), ("-+", MINUS_STRAND, 0)]
-        if best_target_strand == PLUS_STRAND
-        else [("+-", PLUS_STRAND, 0), ("--", MINUS_STRAND, 0)]
-    )
-
-    def surrogate_gen(rng):
-        surrogate_bundle = _create_surrogate_bundle(best_target_profile, rng, cfg)
-        candidates = _score_profile_candidates(query_bundle, surrogate_bundle, orientation_pairs, cfg)
-        return float(_select_best_orientation(candidates)["score"])
-
-    nulls, null_mean, null_std = run_montecarlo(
-        lambda value: value,
-        surrogate_gen,
-        cfg["n_permutations"],
-        cfg["seed"],
-    )
-    _update_result_with_null_statistics(result, obs_score, (nulls, null_mean, null_std), cfg["n_permutations"])
-
-
-def _create_surrogate_bundle(profile, rng: np.random.Generator, cfg: ComparatorConfig):
-    """Generate one surrogate single-profile bundle by vectorized convolution and renormalization."""
-    min_kernel_size = int(cfg["min_kernel_size"])
-    max_kernel_size = int(cfg["max_kernel_size"])
-    first_odd = min_kernel_size if min_kernel_size % 2 == 1 else min_kernel_size + 1
-    n_odd = ((max_kernel_size - first_odd) // 2) + 1
-    kernel_size = int(first_odd + 2 * int(rng.integers(0, n_odd)))
-    center = kernel_size // 2
-
-    identity_kernel = np.zeros(kernel_size, dtype=np.float32)
-    identity_kernel[center] = 1.0
-    alpha = float(np.clip(cfg["distortion_level"], 0.0, 1.0))
-    kernel = rng.normal(0.0, 1.0, size=kernel_size).astype(np.float32)
-    if kernel_size >= len(SURROGATE_SMOOTH_FILTER):
-        kernel = np.convolve(kernel, SURROGATE_SMOOTH_FILTER, mode="same").astype(np.float32)
-    kernel /= np.linalg.norm(kernel) + 1e-8
-    final_kernel = (1.0 - alpha) * identity_kernel + alpha * kernel
-    if rng.uniform() < SURROGATE_SIGN_FLIP_PROBABILITY:
-        final_kernel = -final_kernel
-    final_kernel /= np.linalg.norm(final_kernel) + 1e-8
-
-    values = np.asarray(profile["values"], dtype=np.float32)
-    convolved = convolve1d(values, final_kernel, axis=1, mode="constant", cval=0.0)
-    mask = (
-        np.arange(convolved.shape[1], dtype=np.int32)[None, :]
-        < np.asarray(
-            profile["lengths"],
-            dtype=np.int32,
-        )[:, None]
-    )
-    convolved = np.asarray(convolved, dtype=np.float32)
-    convolved[~mask] = SCORE_PADDING
-
-    surrogate = pack_profile_bundle(convolved[None, ...], profile["lengths"], SCORE_PADDING)
-    if cfg["profile_normalization"] != "empirical_log_tail":
-        raise ValueError(f"Unsupported profile normalization: {cfg['profile_normalization']}")
-    return scores_to_empirical_log_tail_bundle(surrogate)
-
-
-def run_montecarlo(obs_score_func: Callable, surrogate_generator_func: Callable, n_permutations: int, seed, *args):
-    """Run a Monte Carlo workflow sequentially while compiled kernels handle parallel work."""
-    if n_permutations <= 0:
-        return np.array([]), 0.0, 0.0
-
-    base_rng = np.random.default_rng(seed)
-    seeds = base_rng.integers(0, 2**31, size=n_permutations)
-    results = []
-    for seed_value in seeds:
-        rng = np.random.default_rng(int(seed_value))
-        surrogate = surrogate_generator_func(rng, *args)
-        result = obs_score_func(surrogate)
-        if result is not None:
-            results.append(result)
-
-    null_scores = np.asarray(results, dtype=np.float32)
-    if null_scores.size == 0:
-        return null_scores, 0.0, 0.0
-    return null_scores, float(np.mean(null_scores)), float(np.std(null_scores))
-
-
-def _update_result_with_null_statistics(
-    result: dict, obs_score: float, stats: tuple[np.ndarray, float, float], n_permutations: int
-) -> None:
-    """Attach Monte Carlo summary statistics to one result payload."""
-    null_scores, null_mean, null_std = stats
-    if null_scores.size == 0:
-        return
-
-    z_score = (obs_score - null_mean) / (null_std + SIMILARITY_EPS)
-    p_value = (int(np.sum(null_scores >= obs_score)) + 1.0) / (n_permutations + 1.0)
-    result.update(
-        {
-            "p-value": float(p_value),
-            "z-score": float(z_score),
-            "null_mean": null_mean,
-            "null_std": null_std,
-        }
-    )
-
-
 def _is_power_of_four(value: int) -> bool:
     """Return True when the provided value is a positive power of four."""
     if value < 1:
@@ -996,11 +874,6 @@ def _score_motif_candidates(query: dict, target: dict, metric: str) -> list[dict
     return candidates
 
 
-def _best_motif_score(query: dict, target: dict, metric: str) -> float:
-    """Return the best orientation score for one motif pair."""
-    return float(_select_best_orientation(_score_motif_candidates(query, target, metric))["score"])
-
-
 def _resolve_motif_matrix(
     model: GenericModel,
     sequences,
@@ -1048,21 +921,6 @@ def _prepare_motif_model(
     return state
 
 
-def _permute_motif_matrix(matrix: np.ndarray, rng: np.random.Generator, permute_rows: bool) -> np.ndarray:
-    """Shuffle motif columns and optionally nucleotide axes for null generation."""
-    permuted = np.array(matrix, copy=True)
-    column_order = np.arange(permuted.shape[-1])
-    rng.shuffle(column_order)
-    permuted = permuted[..., column_order]
-    if not permute_rows:
-        return permuted
-
-    row_order = rng.permutation(permuted.shape[0])
-    for axis in range(permuted.ndim - 1):
-        permuted = np.take(permuted, row_order, axis=axis)
-    return permuted
-
-
 def _score_prepared_motif_pair(query: dict, target: dict, metric: str) -> dict:
     """Score one prepared motif pair and return the best orientation candidate."""
     return _select_best_orientation(_score_motif_candidates(query, target, metric))
@@ -1080,39 +938,15 @@ def _build_motif_result(query_name: str, target_name: str, best: dict, metric: s
     }
 
 
-def _attach_motif_null_statistics(
-    result: dict, prepared_query: dict, target_matrix: np.ndarray, cfg: ComparatorConfig
-) -> None:
-    """Attach Monte Carlo statistics for one motif comparison result."""
-    if cfg["n_permutations"] <= 0:
-        return
-
-    obs_score = float(result["score"])
-
-    def gen_surrogate(rng):
-        surrogate = _permute_motif_matrix(target_matrix, rng, cfg["permute_rows"])
-        return _best_motif_score(prepared_query, _prepare_motif(surrogate), cfg["metric"])
-
-    nulls, null_mean, null_std = run_montecarlo(
-        lambda value: value,
-        gen_surrogate,
-        cfg["n_permutations"],
-        cfg["seed"],
-    )
-    _update_result_with_null_statistics(result, obs_score, (nulls, null_mean, null_std), cfg["n_permutations"])
-
-
 @_register_comparison_strategy("motif")
 def strategy_motif(model1: GenericModel, model2: GenericModel, sequences, cfg: ComparatorConfig) -> ComparisonResult:
     """Matrix-based comparison strategy (PCC/ED/Cosine)."""
     runtime_cache = {}
     use_pfm_mode = cfg["pfm_mode"] or (model1.type_key != model2.type_key)
     _query_matrix, prepared1 = _prepare_motif_model(model1, sequences, cfg, use_pfm_mode, runtime_cache)
-    matrix2, prepared2 = _prepare_motif_model(model2, sequences, cfg, use_pfm_mode, runtime_cache)
+    _matrix2, prepared2 = _prepare_motif_model(model2, sequences, cfg, use_pfm_mode, runtime_cache)
     best = _score_prepared_motif_pair(prepared1, prepared2, cfg["metric"])
-    result = _build_motif_result(model1.name, model2.name, best, cfg["metric"])
-    _attach_motif_null_statistics(result, prepared1, matrix2, cfg)
-    return result
+    return _build_motif_result(model1.name, model2.name, best, cfg["metric"])
 
 
 @_register_comparison_strategy("profile")
@@ -1123,15 +957,7 @@ def strategy_profile(model1: GenericModel, model2: GenericModel, sequences, cfg:
     bundle1 = _prepare_profile_model(model1, sequences, background_sequences, cfg, runtime_cache)
     bundle2 = _prepare_profile_model(model2, sequences, background_sequences, cfg, runtime_cache)
     best = _select_best_orientation(_score_profile_candidates(bundle1, bundle2, PROFILE_ORIENTATION_PAIRS, cfg))
-    result = _build_profile_result(model1.name, model2.name, best, cfg["metric"])
-    _attach_profile_null_statistics(
-        result,
-        bundle1,
-        bundle2,
-        int(best["target_strand"]),
-        cfg,
-    )
-    return result
+    return _build_profile_result(model1.name, model2.name, best, cfg["metric"])
 
 
 def _compare_motif_one_to_many(
@@ -1159,7 +985,7 @@ def _compare_motif_one_to_many(
         try:
             use_pfm_mode = bool(cfg["pfm_mode"] or (query_model.type_key != target_model.type_key))
             prepared_query = prepared_query_by_mode[use_pfm_mode]
-            target_matrix, prepared_target = _prepare_motif_model(
+            _target_matrix, prepared_target = _prepare_motif_model(
                 target_model,
                 sequences,
                 cfg,
@@ -1167,9 +993,7 @@ def _compare_motif_one_to_many(
                 target_cache,
             )
             best = _score_prepared_motif_pair(prepared_query, prepared_target, cfg["metric"])
-            result = _build_motif_result(query_model.name, target_model.name, best, cfg["metric"])
-            _attach_motif_null_statistics(result, prepared_query, target_matrix, cfg)
-            return result
+            return _build_motif_result(query_model.name, target_model.name, best, cfg["metric"])
         finally:
             target_cache.clear()
 
@@ -1207,15 +1031,7 @@ def _compare_profile_one_to_many(
             best = _select_best_orientation(
                 _score_profile_candidates(query_bundle, target_bundle, PROFILE_ORIENTATION_PAIRS, cfg)
             )
-            result = _build_profile_result(query_model.name, target_model.name, best, cfg["metric"])
-            _attach_profile_null_statistics(
-                result,
-                query_bundle,
-                target_bundle,
-                int(best["target_strand"]),
-                cfg,
-            )
-            return result
+            return _build_profile_result(query_model.name, target_model.name, best, cfg["metric"])
         finally:
             target_cache.clear()
 
@@ -1257,7 +1073,17 @@ def compare(
     effective_config = dict(config)
     if background is not None:
         effective_config["background"] = background
-    return strategy_fn(model1, model2, sequences, effective_config)
+    result = strategy_fn(model1, model2, sequences, effective_config)
+    _maybe_annotate_significance(
+        [result],
+        query_model=model1,
+        strategy=strategy,
+        config=effective_config,
+        sequences=sequences,
+        background=background,
+        default_effective_number_of_targets=1,
+    )
+    return result
 
 
 def compare_one_to_many(
@@ -1274,8 +1100,64 @@ def compare_one_to_many(
         effective_config["background"] = background
 
     if strategy == "profile":
-        return _compare_profile_one_to_many(query_model, target_models, sequences, effective_config)
+        results = _compare_profile_one_to_many(query_model, target_models, sequences, effective_config)
+        _maybe_annotate_significance(
+            results,
+            query_model=query_model,
+            strategy=strategy,
+            config=effective_config,
+            sequences=sequences,
+            background=background,
+            default_effective_number_of_targets=len(results),
+        )
+        return results
     if strategy == "motif":
-        return _compare_motif_one_to_many(query_model, target_models, sequences, effective_config)
+        results = _compare_motif_one_to_many(query_model, target_models, sequences, effective_config)
+        _maybe_annotate_significance(
+            results,
+            query_model=query_model,
+            strategy=strategy,
+            config=effective_config,
+            sequences=sequences,
+            background=background,
+            default_effective_number_of_targets=len(results),
+        )
+        return results
     available = ", ".join(sorted(registry))
     raise ValueError(f"Strategy '{strategy}' not found. Available: {available}")
+
+
+def _maybe_annotate_significance(
+    results: list[dict],
+    *,
+    query_model: GenericModel,
+    strategy: str,
+    config: ComparatorConfig,
+    sequences=None,
+    background=None,
+    default_effective_number_of_targets: int,
+) -> None:
+    """Annotate results from a compatible stored null distribution when requested."""
+    if not config.get("pvalue") or not results:
+        return
+
+    from mimosa.nulls import annotate_results_with_nulls, load_compatible_null_artifact
+
+    artifact = load_compatible_null_artifact(
+        strategy=strategy,
+        config=config,
+        query_model=query_model,
+        sequences=sequences,
+        background=background,
+    )
+    if artifact is None:
+        logger.warning("No compatible null distribution found; returning score-only result.")
+        return
+
+    effective_number = config.get("effective_number_of_targets") or default_effective_number_of_targets
+    annotate_results_with_nulls(
+        results,
+        artifact=artifact,
+        query_model=query_model,
+        effective_number_of_targets=effective_number,
+    )

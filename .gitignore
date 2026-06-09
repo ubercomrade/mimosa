@@ -131,6 +131,7 @@ obj/
 .mimosa*
 examples/benchmark_fast_profile_score.py
 examples/benchmark_profile_one_to_many.py
+.hocomoco
 
 # Compiled files
 *.o
