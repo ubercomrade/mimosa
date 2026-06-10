@@ -87,12 +87,19 @@ def test_null_builder_and_annotation_add_significance_values():
         min_null_targets=2,
     )
     entry = next(iter(built.artifact["entries"].values()))
-    results = [{"score": float(entry["raw_null_scores"][0])}, {"score": float(entry["raw_null_scores"][1])}]
-
-    annotate_results_with_nulls(results, artifact=built.artifact, query_model=query, effective_number_of_targets=2)
+    results = [
+        ComparisonResult(query="q", target="u1", score=float(entry["raw_null_scores"][0]), offset=0, orientation="++", metric="pcc"),
+        ComparisonResult(query="q", target="u2", score=float(entry["raw_null_scores"][1]), offset=0, orientation="++", metric="pcc"),
+    ]
+    annotated = annotate_results_with_nulls(
+        results,
+        artifact=built.artifact,
+        query_model=query,
+        effective_number_of_targets=2,
+    )
 
     assert entry["included_target_names"] == ["u1", "u2"]
-    assert all("p-value" in result and "E-value" in result and "q-value" in result for result in results)
+    assert all("p-value" in result and "E-value" in result and "q-value" in result for result in annotated)
 
 
 def test_artifact_matching_rejects_incompatible_metric_and_query():

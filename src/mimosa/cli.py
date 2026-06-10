@@ -4,10 +4,8 @@ import logging
 import sys
 from typing import Any, Dict
 
-import numpy as np
-
-from mimosa.api import create_config, run_comparison
-from mimosa.batches import make_sequence_batch
+from mimosa.api import create_one_to_one_config, run_one_to_one
+from mimosa.batches import make_random_sequence_batch
 from mimosa.cache import clear_cache
 from mimosa.comparison import (
     SUPPORTED_MOTIF_METRICS,
@@ -491,18 +489,18 @@ def _validate_build_null_metric(args) -> None:
 
 
 def build_comparison_config_from_args(args):
-    """Build ComparisonConfig from parsed CLI args."""
+    """Build OneToOneConfig from parsed CLI args."""
     comparator_kwargs = map_args_to_comparator_kwargs(args)
     comparator = create_comparator_config(**comparator_kwargs)
 
     sequences = getattr(args, "fasta", None)
     background = getattr(args, "background", None)
 
-    return create_config(
-        model1=args.model1,
-        model2=args.model2,
-        model1_type=args.model1_type,
-        model2_type=args.model2_type,
+    return create_one_to_one_config(
+        query=args.model1,
+        target=args.model2,
+        query_type=args.model1_type,
+        target_type=args.model2_type,
         strategy=args.mode,
         sequences=sequences,
         background=background,
@@ -520,9 +518,9 @@ def run_comparison_from_args(args) -> None:
 
     try:
         config = build_comparison_config_from_args(args)
-        result = run_comparison(config)
+        result = run_one_to_one(config)
         logger.info("Comparison completed successfully")
-        print(json.dumps(result))
+        print(json.dumps(result.to_dict()))
     except Exception as exc:
         logger.error("Comparison execution failed: %s", exc)
         raise
@@ -609,9 +607,7 @@ def _resolve_build_null_sequences(args, comparator):
 
     num_sequences = validate_positive_int("num_sequences", args.num_sequences)
     seq_length = validate_positive_int("seq_length", args.seq_length)
-    rng = np.random.default_rng(args.seed)
-    rows = [rng.integers(0, 4, size=seq_length, dtype=np.int8) for _ in range(num_sequences)]
-    return make_sequence_batch(rows)
+    return make_random_sequence_batch(num_sequences, seq_length, args.seed)
 
 
 def main_cli() -> None:

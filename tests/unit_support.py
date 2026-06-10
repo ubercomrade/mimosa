@@ -23,10 +23,10 @@ import mimosa.api as api_module
 from mimosa.api import (
     compare_motifs,
     compare_one_to_many,
-    create_config,
-    create_many_config,
-    run_comparison,
+    create_one_to_many_config,
+    create_one_to_one_config,
     run_one_to_many,
+    run_one_to_one,
 )
 from mimosa.batches import (
     MINUS_STRAND,
@@ -105,6 +105,7 @@ from mimosa.nulls import (
     parse_pair_relations,
     save_null_artifact,
 )
+from mimosa.types import ComparisonResult
 
 FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures" / "models"
 EXAMPLES_ROOT = Path(__file__).resolve().parents[1] / "examples"

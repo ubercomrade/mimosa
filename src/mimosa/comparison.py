@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, TypedDict, TypeVar, cast
+from typing import Callable, Literal, Optional, TypeVar
 
 import numpy as np
 from joblib import Parallel, delayed
@@ -32,6 +33,7 @@ from mimosa.models import (
     get_pfm,
     scan_model_strands,
 )
+from mimosa.types import ComparatorConfig, ComparisonResult
 from mimosa.validation import (
     validate_cache_mode,
     validate_non_negative,
@@ -47,36 +49,6 @@ SUPPORTED_MOTIF_METRICS = ("pcc", "ed", "cosine")
 MetricName = Literal["co", "co_rowwise", "dice", "dice_rowwise", "pcc", "ed", "cosine"]
 _ALL_METRICS = frozenset((*SUPPORTED_PROFILE_METRICS, *SUPPORTED_MOTIF_METRICS))
 _ComparisonJobResult = TypeVar("_ComparisonJobResult")
-
-
-class ComparatorConfig(TypedDict):
-    metric: MetricName
-    seed: Optional[int]
-    n_jobs: Optional[int]
-    pfm_mode: bool
-    pfm_top_fraction: float
-    search_range: int
-    min_logfpr: Optional[float]
-    window_radius: int
-    realign_window: int
-    profile_normalization: str
-    cache_mode: str
-    cache_dir: str
-    background: Optional[SequenceBatch]
-    pvalue: bool
-    null_distribution: Optional[str | Path | dict[str, Any]]
-    null_search_dirs: Optional[list[str | Path]]
-    effective_number_of_targets: Optional[int]
-
-
-class ComparisonResult(TypedDict, total=False):
-    query: str
-    target: str
-    score: float
-    offset: int
-    orientation: str
-    metric: str
-    n_sites: int
 
 
 ORIENTATION_TIEBREAK = {"++": 0, "+-": 1, "-+": 2, "--": 3}
@@ -118,32 +90,16 @@ _validate_metric = validate_metric
 
 
 def create_comparator_config(**kwargs) -> ComparatorConfig:
-    """Build one validated comparison options dictionary."""
-    defaults: ComparatorConfig = {
-        "metric": "pcc",
-        "seed": None,
-        "n_jobs": None,
-        "pfm_mode": False,
-        "pfm_top_fraction": 0.05,
-        "search_range": 10,
-        "min_logfpr": None,
-        "window_radius": 10,
-        "realign_window": 3,
-        "profile_normalization": "empirical_log_tail",
-        "cache_mode": "off",
-        "cache_dir": ".mimosa-cache",
-        "background": None,
-        "pvalue": False,
-        "null_distribution": None,
-        "null_search_dirs": None,
-        "effective_number_of_targets": None,
-    }
-    unknown_keys = set(kwargs).difference(defaults).difference({"promoters"})
+    """Build one validated immutable comparison config."""
+    defaults = ComparatorConfig()
+    allowed_keys = {field_name for field_name in defaults}
+    unknown_keys = set(kwargs).difference(allowed_keys).difference({"promoters"})
     if unknown_keys:
         options = ", ".join(sorted(unknown_keys))
         raise ValueError(f"Unknown comparator option(s): {options}")
 
-    config = {**defaults, **kwargs}
+    config = defaults.to_dict()
+    config.update(kwargs)
     legacy_background = config.pop("promoters", None)
     if "background" not in kwargs and legacy_background is not None:
         config["background"] = legacy_background
@@ -157,15 +113,13 @@ def create_comparator_config(**kwargs) -> ComparatorConfig:
     )
     config["n_jobs"] = validate_optional_thread_count("n_jobs", config.get("n_jobs"))
     config["pfm_top_fraction"] = (
-        validate_pfm_top_fraction(config.get("pfm_top_fraction")) or defaults["pfm_top_fraction"]
+        validate_pfm_top_fraction(config.get("pfm_top_fraction")) or defaults.pfm_top_fraction
     )
     config["cache_mode"] = validate_cache_mode(config.get("cache_mode", "off"))
-    return cast(ComparatorConfig, config)
-
-
-def _copy_comparator_config(config: ComparatorConfig) -> ComparatorConfig:
-    """Return a mutable copy while preserving the public TypedDict contract."""
-    return cast(ComparatorConfig, dict(config))
+    null_search_dirs = config.get("null_search_dirs")
+    if null_search_dirs is not None:
+        config["null_search_dirs"] = tuple(null_search_dirs)
+    return ComparatorConfig(**config)
 
 
 def _select_best_orientation(candidates):
@@ -739,15 +693,15 @@ def _score_profile_candidates(query_bundle: dict, target_bundle: dict, pair_spec
 
 def _build_profile_result(query_name: str, target_name: str, best: dict, metric: str) -> ComparisonResult:
     """Build one profile comparison result payload from the best candidate."""
-    return {
-        "query": query_name,
-        "target": target_name,
-        "score": float(best["score"]),
-        "offset": int(best["shift"]),
-        "orientation": best["orientation"],
-        "metric": metric,
-        "n_sites": int(best["n_sites"]),
-    }
+    return ComparisonResult(
+        query=query_name,
+        target=target_name,
+        score=float(best["score"]),
+        offset=int(best["shift"]),
+        orientation=best["orientation"],
+        metric=metric,
+        n_sites=int(best["n_sites"]),
+    )
 
 
 def _is_power_of_four(value: int) -> bool:
@@ -938,14 +892,14 @@ def _score_prepared_motif_pair(query: dict, target: dict, metric: str) -> dict:
 
 def _build_motif_result(query_name: str, target_name: str, best: dict, metric: str) -> ComparisonResult:
     """Build one motif comparison result payload from the best candidate."""
-    return {
-        "query": query_name,
-        "target": target_name,
-        "score": float(best["score"]),
-        "offset": int(best["offset"]),
-        "orientation": best["orientation"],
-        "metric": metric,
-    }
+    return ComparisonResult(
+        query=query_name,
+        target=target_name,
+        score=float(best["score"]),
+        offset=int(best["offset"]),
+        orientation=best["orientation"],
+        metric=metric,
+    )
 
 
 @_register_comparison_strategy("motif")
@@ -1084,20 +1038,8 @@ def compare(
         available = ", ".join(sorted(registry))
         raise ValueError(f"Strategy '{strategy}' not found. Available: {available}") from exc
 
-    effective_config = _copy_comparator_config(config)
-    if background is not None:
-        effective_config["background"] = background
-    result = strategy_fn(model1, model2, sequences, effective_config)
-    _maybe_annotate_significance(
-        [result],
-        query_model=model1,
-        strategy=strategy,
-        config=effective_config,
-        sequences=sequences,
-        background=background,
-        default_effective_number_of_targets=1,
-    )
-    return result
+    effective_config = replace(config, background=background) if background is not None else config
+    return strategy_fn(model1, model2, sequences, effective_config)
 
 
 def compare_one_to_many(
@@ -1109,69 +1051,11 @@ def compare_one_to_many(
     background=None,
 ) -> list[ComparisonResult]:
     """Main entry point for one-vs-many motif comparison."""
-    effective_config = _copy_comparator_config(config)
-    if background is not None:
-        effective_config["background"] = background
+    effective_config = replace(config, background=background) if background is not None else config
 
     if strategy == "profile":
-        results = _compare_profile_one_to_many(query_model, target_models, sequences, effective_config)
-        _maybe_annotate_significance(
-            results,
-            query_model=query_model,
-            strategy=strategy,
-            config=effective_config,
-            sequences=sequences,
-            background=background,
-            default_effective_number_of_targets=len(results),
-        )
-        return results
+        return _compare_profile_one_to_many(query_model, target_models, sequences, effective_config)
     if strategy == "motif":
-        results = _compare_motif_one_to_many(query_model, target_models, sequences, effective_config)
-        _maybe_annotate_significance(
-            results,
-            query_model=query_model,
-            strategy=strategy,
-            config=effective_config,
-            sequences=sequences,
-            background=background,
-            default_effective_number_of_targets=len(results),
-        )
-        return results
+        return _compare_motif_one_to_many(query_model, target_models, sequences, effective_config)
     available = ", ".join(sorted(registry))
     raise ValueError(f"Strategy '{strategy}' not found. Available: {available}")
-
-
-def _maybe_annotate_significance(
-    results: list[ComparisonResult],
-    *,
-    query_model: GenericModel,
-    strategy: str,
-    config: ComparatorConfig,
-    sequences=None,
-    background=None,
-    default_effective_number_of_targets: int,
-) -> None:
-    """Annotate results from a compatible stored null distribution when requested."""
-    if not config.get("pvalue") or not results:
-        return
-
-    from mimosa.nulls import annotate_results_with_nulls, load_compatible_null_artifact
-
-    artifact = load_compatible_null_artifact(
-        strategy=strategy,
-        config=config,
-        query_model=query_model,
-        sequences=sequences,
-        background=background,
-    )
-    if artifact is None:
-        logger.warning("No compatible null distribution found; returning score-only result.")
-        return
-
-    effective_number = config.get("effective_number_of_targets") or default_effective_number_of_targets
-    annotate_results_with_nulls(
-        cast(list[dict[str, Any]], results),
-        artifact=artifact,
-        query_model=query_model,
-        effective_number_of_targets=effective_number,
-    )

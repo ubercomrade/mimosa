@@ -1243,13 +1243,13 @@ def test_clear_cache_removes_cached_profiles(tmp_path):
     assert not tmp_path.exists()
 
 
-def test_create_config_builds_unified_config():
+def test_create_one_to_one_config_builds_unified_config():
     """Unified config builder should create comparator config from kwargs."""
-    config = create_config(
-        model1="a.meme",
-        model2="b.pfm",
-        model1_type="pwm",
-        model2_type="pwm",
+    config = create_one_to_one_config(
+        query="a.meme",
+        target="b.pfm",
+        query_type="pwm",
+        target_type="pwm",
         strategy="profile",
         metric="co",
         n_jobs=2,
@@ -1262,9 +1262,9 @@ def test_create_config_builds_unified_config():
     assert config["seed"] == 99
 
 
-def test_create_many_config_builds_unified_config():
+def test_create_one_to_many_config_builds_unified_config():
     """Unified one-vs-many config builder should create comparator config from kwargs."""
-    config = create_many_config(
+    config = create_one_to_many_config(
         query="query.meme",
         targets=["target_a.pfm", "target_b.pfm"],
         query_type="pwm",
@@ -1278,12 +1278,12 @@ def test_create_many_config_builds_unified_config():
     assert config["strategy"] == "profile"
     assert config["comparator"]["metric"] == "co"
     assert config["comparator"]["n_jobs"] == 3
-    assert config["targets"] == ["target_a.pfm", "target_b.pfm"]
+    assert config["targets"] == ("target_a.pfm", "target_b.pfm")
     assert config["seed"] == 11
 
 
-def test_run_comparison_with_unified_config_and_models():
-    """run_comparison should work with preloaded GenericModel objects."""
+def test_run_one_to_one_with_unified_config_and_models():
+    """run_one_to_one should work with preloaded GenericModel objects."""
     representation = np.array(
         [
             [0.2, 0.3, 0.1],
@@ -1303,15 +1303,15 @@ def test_run_comparison_with_unified_config_and_models():
         ]
     )
 
-    config = create_config(
-        model1=model1,
-        model2=model2,
+    config = create_one_to_one_config(
+        query=model1,
+        target=model2,
         strategy="profile",
         sequences=sequences,
         metric="co",
         seed=7,
     )
-    result = run_comparison(config)
+    result = run_one_to_one(config)
 
     assert "score" in result
     assert "offset" in result
@@ -1351,7 +1351,7 @@ def test_run_one_to_many_matches_pairwise_profile_results():
         config={"scores_data": target_b_scores},
     )
 
-    config = create_many_config(
+    config = create_one_to_many_config(
         query=query,
         targets=[target_a, target_b],
         strategy="profile",
@@ -1359,8 +1359,8 @@ def test_run_one_to_many_matches_pairwise_profile_results():
     )
     results = run_one_to_many(config)
 
-    expected_a = run_comparison(create_config(model1=query, model2=target_a, strategy="profile", metric="co"))
-    expected_b = run_comparison(create_config(model1=query, model2=target_b, strategy="profile", metric="co"))
+    expected_a = run_one_to_one(create_one_to_one_config(query=query, target=target_a, strategy="profile", metric="co"))
+    expected_b = run_one_to_one(create_one_to_one_config(query=query, target=target_b, strategy="profile", metric="co"))
 
     assert [result["target"] for result in results] == ["target_a", "target_b"]
     for result, expected in zip(results, [expected_a, expected_b], strict=False):
@@ -1395,21 +1395,21 @@ def test_run_one_to_many_passes_targets_lazily(monkeypatch):
         length=0,
         config={"scores_data": target_scores},
     )
-    config = create_many_config(query=query, targets=[target], strategy="profile", metric="co")
+    config = create_one_to_many_config(query=query, targets=[target], strategy="profile", metric="co")
     observed = {}
 
     def fake_compare_one_to_many_models(query_model, target_models, strategy, config, sequences=None, background=None):
         observed["is_list"] = isinstance(target_models, list)
         materialized = list(target_models)
         observed["count"] = len(materialized)
-        return [{"query": query_model.name, "target": materialized[0].name, "score": 1.0}]
+        return [ComparisonResult(query=query_model.name, target=materialized[0].name, score=1.0, offset=0, orientation="++", metric="co")]
 
     monkeypatch.setattr(api_module, "compare_one_to_many_models", fake_compare_one_to_many_models)
 
     results = run_one_to_many(config)
 
     assert observed == {"is_list": False, "count": 1}
-    assert results == [{"query": "query", "target": "target", "score": 1.0}]
+    assert results == [ComparisonResult(query="query", target="target", score=1.0, offset=0, orientation="++", metric="co")]
 
 
 def test_run_one_to_many_preserves_generator_targets():
@@ -1430,28 +1430,19 @@ def test_run_one_to_many_preserves_generator_targets():
     target_a = GenericModel("scores", "target_a", None, 0, {"scores_data": target_a_scores})
     target_b = GenericModel("scores", "target_b", None, 0, {"scores_data": target_b_scores})
 
-    config = {
-        "query": query,
-        "targets": (target for target in (target_a, target_b)),
-        "query_type": None,
-        "target_type": None,
-        "strategy": "profile",
-        "sequences": None,
-        "background": None,
-        "num_sequences": 1000,
-        "seq_length": 200,
-        "seed": 127,
-        "comparator": create_comparator_config(metric="co"),
-        "query_kwargs": {},
-        "target_kwargs": {},
-    }
-    results = run_one_to_many(config)  # type: ignore[arg-type]
+    config = create_one_to_many_config(
+        query=query,
+        targets=[target_a, target_b],
+        strategy="profile",
+        metric="co",
+    )
+    results = run_one_to_many(config)
 
     assert [item["target"] for item in results] == ["target_a", "target_b"]
 
 
 @pytest.mark.parametrize("metric", ["corr", "cj", "l1sim"])
-def test_run_comparison_rejects_removed_profile_metrics(metric):
+def test_run_one_to_one_rejects_removed_profile_metrics(metric):
     """Profile mode should reject unsupported legacy metrics."""
     representation = np.array(
         [
@@ -1468,15 +1459,15 @@ def test_run_comparison_rejects_removed_profile_metrics(metric):
     sequences = make_sequence_batch([np.array([0, 1, 2, 3, 2, 1, 0], dtype=np.int8)])
 
     with pytest.raises(ValueError, match="metric"):
-        config = create_config(
-            model1=model1,
-            model2=model2,
+        config = create_one_to_one_config(
+            query=model1,
+            target=model2,
             strategy="profile",
             sequences=sequences,
             metric=metric,
             seed=7,
         )
-        run_comparison(config)
+        run_one_to_one(config)
 
 
 def test_strategy_profile_accepts_background_configuration():
@@ -1549,72 +1540,72 @@ def test_strategy_profile_handles_all_positions_masked_by_threshold(metric):
     assert result["n_sites"] == 0
 
 
-def test_run_comparison_supports_dice_for_profile():
+def test_run_one_to_one_supports_dice_for_profile():
     """Unified API should expose the Dice profile metric."""
     scores_1 = _score_batch_from_flat(np.array([0.1, 0.5, 1.0], dtype=np.float32), np.array([0, 3], dtype=np.int64))
     scores_2 = _score_batch_from_flat(np.array([0.1, 0.5, 0.9], dtype=np.float32), np.array([0, 3], dtype=np.int64))
     model1 = GenericModel(type_key="scores", name="s1", representation=None, length=0, config={"scores_data": scores_1})
     model2 = GenericModel(type_key="scores", name="s2", representation=None, length=0, config={"scores_data": scores_2})
 
-    config = create_config(model1=model1, model2=model2, strategy="profile", metric="dice", seed=7)
-    result = run_comparison(config)
+    config = create_one_to_one_config(query=model1, target=model2, strategy="profile", metric="dice", seed=7)
+    result = run_one_to_one(config)
 
     assert result["metric"] == "dice"
     assert 0.0 <= result["score"] <= 1.0
 
 
-def test_run_comparison_supports_dice_rowwise_for_profile():
+def test_run_one_to_one_supports_dice_rowwise_for_profile():
     """Unified API should expose the window-averaged rowwise Dice profile metric."""
     model1 = _make_scores_model("s1", [[0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
     model2 = _make_scores_model("s2", [[0.0, 1.0, 0.0], [2.0, 0.0, 0.0]])
 
-    config = create_config(
-        model1=model1,
-        model2=model2,
+    config = create_one_to_one_config(
+        query=model1,
+        target=model2,
         strategy="profile",
         metric="dice_rowwise",
         seed=7,
         window_radius=1,
     )
-    result = run_comparison(config)
+    result = run_one_to_one(config)
 
     assert result["metric"] == "dice_rowwise"
     assert 0.0 <= result["score"] <= 1.0
 
 
-def test_run_comparison_supports_cosine_for_profile():
+def test_run_one_to_one_supports_cosine_for_profile():
     """Unified API should expose the window-averaged cosine profile metric."""
     model1 = _make_scores_model("s1", [[0.0, 1.0, 0.0], [0.0, 1.0, 1.0]])
     model2 = _make_scores_model("s2", [[0.0, 1.0, 0.0], [0.0, 1.0, -1.0]])
 
-    config = create_config(
-        model1=model1,
-        model2=model2,
+    config = create_one_to_one_config(
+        query=model1,
+        target=model2,
         strategy="profile",
         metric="cosine",
         seed=7,
         window_radius=1,
     )
-    result = run_comparison(config)
+    result = run_one_to_one(config)
 
     assert result["metric"] == "cosine"
     assert 0.0 <= result["score"] <= 1.0
 
 
-def test_run_comparison_supports_co_rowwise_for_profile():
+def test_run_one_to_one_supports_co_rowwise_for_profile():
     """Unified API should expose the window-averaged rowwise CO profile metric."""
     model1 = _make_scores_model("s1", [[0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
     model2 = _make_scores_model("s2", [[0.0, 1.0, 0.0], [2.0, 0.0, 0.0]])
 
-    config = create_config(
-        model1=model1,
-        model2=model2,
+    config = create_one_to_one_config(
+        query=model1,
+        target=model2,
         strategy="profile",
         metric="co_rowwise",
         seed=7,
         window_radius=1,
     )
-    result = run_comparison(config)
+    result = run_one_to_one(config)
 
     assert result["metric"] == "co_rowwise"
     assert 0.0 <= result["score"] <= 1.0

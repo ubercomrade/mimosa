@@ -1,17 +1,17 @@
 """Public package API."""
 
 from mimosa.api import (
-    ComparisonConfig,
     OneToManyConfig,
+    OneToOneConfig,
     compare_motifs,
     compare_one_to_many,
-    create_config,
-    create_many_config,
-    run_comparison,
+    create_one_to_many_config,
+    create_one_to_one_config,
+    run_one_to_one,
     run_one_to_many,
 )
 from mimosa.cache import clear_cache
-from mimosa.comparison import ComparatorConfig, compare, create_comparator_config, validate_metric
+from mimosa.comparison import compare, create_comparator_config, validate_metric
 from mimosa.models import (
     GenericModel,
     StrandMode,
@@ -32,11 +32,13 @@ from mimosa.nulls import (
     parse_pair_relations,
     save_null_artifact,
 )
+from mimosa.types import ComparatorConfig, ComparisonResult
 
 __all__ = [
     "ComparatorConfig",
-    "ComparisonConfig",
+    "ComparisonResult",
     "OneToManyConfig",
+    "OneToOneConfig",
     "GenericModel",
     "StrandMode",
     "clear_cache",
@@ -44,8 +46,8 @@ __all__ = [
     "compare_motifs",
     "compare_one_to_many",
     "create_comparator_config",
-    "create_config",
-    "create_many_config",
+    "create_one_to_many_config",
+    "create_one_to_one_config",
     "get_frequencies",
     "get_pfm",
     "get_scores",
@@ -58,7 +60,7 @@ __all__ = [
     "read_model",
     "read_models",
     "register_model_handler",
-    "run_comparison",
+    "run_one_to_one",
     "run_one_to_many",
     "scan_model",
     "save_null_artifact",

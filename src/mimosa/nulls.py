@@ -7,7 +7,7 @@ import hashlib
 import json
 import logging
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from importlib import metadata as package_metadata
 from pathlib import Path
@@ -19,8 +19,8 @@ import pandas as pd
 from scipy.stats import gaussian_kde
 
 from mimosa.cache import fingerprint_batch, fingerprint_model
-from mimosa.comparison import ComparatorConfig
 from mimosa.models import GenericModel
+from mimosa.types import ComparatorConfig, ComparisonResult
 
 logger = logging.getLogger(__name__)
 
@@ -356,8 +356,7 @@ def build_null_distributions(  # noqa: PLR0913
     entries: dict[str, NullArtifactEntry] = {}
     skipped: list[dict[str, Any]] = []
     total_comparisons = 0
-    score_only_config = cast(ComparatorConfig, dict(config))
-    score_only_config["pvalue"] = False
+    score_only_config = replace(config, pvalue=False)
 
     for query in models:
         target_names = sorted(
@@ -540,13 +539,13 @@ def _compatibility_problems(  # noqa: PLR0913
 
 
 def annotate_results_with_nulls(
-    results: list[dict[str, Any]],
+    results: list[ComparisonResult],
     *,
     artifact: NullArtifact,
     query_model: GenericModel,
     effective_number_of_targets: int | None = None,
-) -> None:
-    """Attach p-value, E-value, and BH-FDR q-value to comparison results in place."""
+) -> list[ComparisonResult]:
+    """Return comparison results enriched with p-value, E-value, and BH-FDR q-value."""
     entry = artifact["entries"][fingerprint_model(query_model)]
     estimator = estimator_from_entry(entry)
     n_null = int(entry.get("n_null", estimator.n))
@@ -560,25 +559,26 @@ def annotate_results_with_nulls(
     effective = effective_number_of_targets or len(results) or int(entry.get("effective_number_of_targets", 1))
 
     pvalues: list[float] = []
+    annotated_results = list(results)
     valid_indices: list[int] = []
     for idx, result in enumerate(results):
         if "score" not in result:
             continue
         pvalue = estimator.sf(float(result["score"]))
-        result.update(
-            {
-                "p-value": pvalue,
-                "E-value": float(pvalue * effective),
-                "null_id": null_id,
-                "null_n": n_null,
-                "null_estimator": entry.get("estimator_type", estimator.estimator_type),
-            }
+        annotated_results[idx] = replace(
+            result,
+            p_value=pvalue,
+            e_value=float(pvalue * effective),
+            null_id=null_id,
+            null_n=n_null,
+            null_estimator=str(entry.get("estimator_type", estimator.estimator_type)),
         )
         pvalues.append(pvalue)
         valid_indices.append(idx)
 
     for idx, qvalue in zip(valid_indices, bh_qvalues(pvalues), strict=False):
-        results[idx]["q-value"] = qvalue
+        annotated_results[idx] = replace(annotated_results[idx], q_value=qvalue)
+    return annotated_results
 
 
 def bh_qvalues(pvalues: Iterable[float]) -> list[float]:

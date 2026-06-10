@@ -159,6 +159,13 @@ def make_sequence_batch(rows: Iterable[np.ndarray]) -> SequenceBatch:
     }
 
 
+def make_random_sequence_batch(num_sequences: int, seq_length: int, seed: int) -> SequenceBatch:
+    """Build a padded batch of random integer-encoded A/C/G/T sequences."""
+    rng = np.random.default_rng(seed)
+    rows = [rng.integers(0, 4, size=seq_length, dtype=np.int8) for _ in range(num_sequences)]
+    return make_sequence_batch(rows)
+
+
 def make_score_batch(rows: Iterable[np.ndarray]) -> MaskedBatch:
     """Build a dense masked batch for score profiles."""
     return make_masked_batch(rows, dtype=np.float32, padding_value=SCORE_PADDING)
