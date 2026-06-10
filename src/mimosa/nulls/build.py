@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import Any, cast
 
 import numpy as np
+from tqdm import tqdm
 
 from mimosa.cache import fingerprint_model
 from mimosa.models import GenericModel
@@ -59,7 +60,7 @@ def build_null_distributions(  # noqa: PLR0913
     total_comparisons = 0
     score_only_config = replace(config, pvalue=False)
 
-    for query in models:
+    for query in tqdm(models):
         target_names = sorted(
             name for name in relations.get(query.name, set()) if name in by_name and name != query.name
         )
