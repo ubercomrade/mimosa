@@ -17,15 +17,28 @@ from mimosa.comparison import (
     compare_one_to_many as compare_one_to_many_models,
 )
 from mimosa.io import read_fasta
-from mimosa.models import GenericModel, read_model
-from mimosa.nulls import annotate_results_with_nulls, load_compatible_null_distribution_file
+from mimosa.models import GenericModel, read_model, read_models
+from mimosa.nulls import (
+    NullBuildRequest,
+    NullBuildSummary,
+    annotate_results_with_nulls,
+    file_fingerprint,
+    load_compatible_null_distribution_file,
+    parse_group_relations,
+    parse_pair_matrix_relations,
+    parse_pair_relations,
+    run_build_null_request,
+    stable_hash,
+)
 from mimosa.types import ComparatorConfig, ComparisonResult, OneToManyConfig, OneToOneConfig
 from mimosa.validation import validate_file_exists, validate_positive_int
 
 logger = logging.getLogger(__name__)
 
 ModelRef = GenericModel | str | Path
+ModelCollectionRef = Iterable[ModelRef] | str | Path
 SequenceRef = SequenceBatch | str | Path
+RelationRef = Mapping[str, Iterable[str]]
 
 _STRATEGY_ALIASES = {
     "profile": "profile",
@@ -203,6 +216,153 @@ def compare_one_to_many(
     return run_one_to_many(config)
 
 
+def create_null_distribution_config(  # noqa: PLR0913
+    models: ModelCollectionRef,
+    *,
+    output: str | Path,
+    model_type: str | None = None,
+    pattern: str | None = None,
+    relations: RelationRef | None = None,
+    groups: str | Path | None = None,
+    pair_table: str | Path | None = None,
+    pair_matrix: str | Path | None = None,
+    name_column: str = "motif",
+    group_column: str = "group",
+    query_column: str = "query",
+    target_column: str = "target",
+    include_column: str = "include",
+    ignore_missing_relations: bool = False,
+    strategy: str = "motif",
+    sequences: SequenceRef | None = None,
+    background: SequenceRef | None = None,
+    num_sequences: int = 1000,
+    seq_length: int = 200,
+    seed: int = 127,
+    comparator: ComparatorConfig | None = None,
+    model_kwargs: Mapping[str, Any] | None = None,
+    min_null_targets: int = 1,
+    strict: bool = False,
+    install_cache: bool = False,
+    **comparator_kwargs: Any,
+) -> NullBuildRequest:
+    """Build a resolved null-distribution request for interactive API use."""
+    normalized_strategy = _normalize_strategy(strategy)
+    if comparator is not None and comparator_kwargs:
+        raise ValueError("Use either 'comparator' or comparator kwargs, not both.")
+
+    effective_kwargs = dict(comparator_kwargs)
+    default_metric = _DEFAULT_METRICS.get(normalized_strategy)
+    if comparator is None and default_metric is not None and "metric" not in effective_kwargs:
+        effective_kwargs["metric"] = default_metric
+    resolved_comparator = comparator or create_comparator_config(**effective_kwargs)
+    _validate_comparator_for_strategy(normalized_strategy, resolved_comparator)
+
+    resolved_models = _resolve_model_collection(models, model_type, pattern, model_kwargs)
+    known_names = {model.name for model in resolved_models}
+    resolved_relations, relation_fingerprint = _resolve_null_relations(
+        relations=relations,
+        groups=groups,
+        pair_table=pair_table,
+        pair_matrix=pair_matrix,
+        known_names=known_names,
+        ignore_missing=ignore_missing_relations,
+        name_column=name_column,
+        group_column=group_column,
+        query_column=query_column,
+        target_column=target_column,
+        include_column=include_column,
+    )
+    resolved_sequences = _resolve_null_build_sequences(
+        sequences,
+        strategy=normalized_strategy,
+        comparator=resolved_comparator,
+        num_sequences=num_sequences,
+        seq_length=seq_length,
+        seed=seed,
+    )
+    resolved_background = _resolve_sequence_ref(background, num_sequences, seq_length, seed) if background else None
+
+    return NullBuildRequest(
+        models=resolved_models,
+        relations=resolved_relations,
+        strategy=normalized_strategy,
+        config=resolved_comparator,
+        output=output,
+        sequences=resolved_sequences,
+        background=resolved_background,
+        min_null_targets=validate_positive_int("min_null_targets", min_null_targets),
+        strict=strict,
+        relation_fingerprint=relation_fingerprint,
+        install_cache=install_cache,
+    )
+
+
+def create_null_distribution(  # noqa: PLR0913
+    models: ModelCollectionRef,
+    *,
+    output: str | Path,
+    model_type: str | None = None,
+    pattern: str | None = None,
+    relations: RelationRef | None = None,
+    groups: str | Path | None = None,
+    pair_table: str | Path | None = None,
+    pair_matrix: str | Path | None = None,
+    name_column: str = "motif",
+    group_column: str = "group",
+    query_column: str = "query",
+    target_column: str = "target",
+    include_column: str = "include",
+    ignore_missing_relations: bool = False,
+    strategy: str = "motif",
+    sequences: SequenceRef | None = None,
+    background: SequenceRef | None = None,
+    num_sequences: int = 1000,
+    seq_length: int = 200,
+    seed: int = 127,
+    comparator: ComparatorConfig | None = None,
+    model_kwargs: Mapping[str, Any] | None = None,
+    min_null_targets: int = 1,
+    strict: bool = False,
+    install_cache: bool = False,
+    **comparator_kwargs: Any,
+) -> NullBuildSummary:
+    """Build and persist one null distribution from model and relation inputs."""
+    config = create_null_distribution_config(
+        models=models,
+        output=output,
+        model_type=model_type,
+        pattern=pattern,
+        relations=relations,
+        groups=groups,
+        pair_table=pair_table,
+        pair_matrix=pair_matrix,
+        name_column=name_column,
+        group_column=group_column,
+        query_column=query_column,
+        target_column=target_column,
+        include_column=include_column,
+        ignore_missing_relations=ignore_missing_relations,
+        strategy=strategy,
+        sequences=sequences,
+        background=background,
+        num_sequences=num_sequences,
+        seq_length=seq_length,
+        seed=seed,
+        comparator=comparator,
+        model_kwargs=model_kwargs,
+        min_null_targets=min_null_targets,
+        strict=strict,
+        install_cache=install_cache,
+        **comparator_kwargs,
+    )
+    return run_null_distribution(config)
+
+
+def run_null_distribution(config: NullBuildRequest) -> NullBuildSummary:
+    """Execute a resolved null-distribution build request."""
+    return run_build_null_request(config)
+
+
 def run_one_to_one(config: OneToOneConfig) -> ComparisonResult:
     """Execute one comparison from a one-vs-one config."""
     strategy = _normalize_strategy(config.strategy)
@@ -293,6 +453,28 @@ def _resolve_model(model: ModelRef, model_type: str | None, kwargs: Mapping[str,
     raise TypeError(f"Unsupported model reference type: {type(model)!r}")
 
 
+def _resolve_model_collection(
+    models: ModelCollectionRef,
+    model_type: str | None,
+    pattern: str | None,
+    kwargs: Mapping[str, Any] | None,
+) -> list[GenericModel]:
+    """Resolve a motif collection from in-memory models, paths, or a collection source."""
+    effective_kwargs = dict(kwargs or {})
+    if isinstance(models, (str, Path)):
+        if model_type is None:
+            raise ValueError("model_type is required when models are provided as a collection path.")
+        return read_models(models, model_type, pattern=pattern, **effective_kwargs)
+
+    if isinstance(models, GenericModel):
+        raise TypeError("models must be a collection of model references, not a single model.")
+
+    resolved = [_resolve_model(model, model_type, effective_kwargs) for model in models]
+    if not resolved:
+        raise ValueError("models must contain at least one model.")
+    return resolved
+
+
 def _normalize_targets(targets: Iterable[ModelRef]) -> list[ModelRef]:
     """Normalize one targets collection and reject scalar inputs."""
     if isinstance(targets, (str, Path, GenericModel)):
@@ -359,6 +541,128 @@ def _resolve_sequences(source: SequenceRef | None, config: OneToOneConfig | OneT
         path = validate_file_exists(source, "Sequence file")
         return read_fasta(path)
     raise TypeError(f"Unsupported sequence source type: {type(source)!r}")
+
+
+def _resolve_sequence_ref(
+    source: SequenceRef | None,
+    num_sequences: int,
+    seq_length: int,
+    seed: int,
+) -> SequenceBatch:
+    """Resolve one sequence source for null-distribution building."""
+    if source is None:
+        resolved_num_sequences = validate_positive_int("num_sequences", num_sequences)
+        resolved_seq_length = validate_positive_int("seq_length", seq_length)
+        return make_random_sequence_batch(resolved_num_sequences, resolved_seq_length, seed)
+    if isinstance(source, dict):
+        return source
+    if isinstance(source, (str, Path)):
+        path = validate_file_exists(source, "Sequence file")
+        return read_fasta(path)
+    raise TypeError(f"Unsupported sequence source type: {type(source)!r}")
+
+
+def _resolve_null_build_sequences(
+    source: SequenceRef | None,
+    *,
+    strategy: str,
+    comparator: ComparatorConfig,
+    num_sequences: int,
+    seq_length: int,
+    seed: int,
+) -> SequenceBatch | None:
+    """Resolve sequences only when the null-build scoring path needs them."""
+    needs_sequences = strategy == "profile" or bool(comparator["pfm_mode"])
+    if not needs_sequences:
+        return None
+    return _resolve_sequence_ref(source, num_sequences, seq_length, seed)
+
+
+def _resolve_null_relations(  # noqa: PLR0913
+    *,
+    relations: RelationRef | None,
+    groups: str | Path | None,
+    pair_table: str | Path | None,
+    pair_matrix: str | Path | None,
+    known_names: set[str],
+    ignore_missing: bool,
+    name_column: str,
+    group_column: str,
+    query_column: str,
+    target_column: str,
+    include_column: str,
+) -> tuple[dict[str, set[str]], str]:
+    """Resolve null-pair relations from exactly one in-memory or file source."""
+    source_count = sum(source is not None for source in (relations, groups, pair_table, pair_matrix))
+    if source_count != 1:
+        raise ValueError("Provide exactly one relation source: relations, groups, pair_table, or pair_matrix.")
+
+    if relations is not None:
+        normalized = _normalize_relation_mapping(relations, known_names, ignore_missing)
+        return normalized, stable_hash({query: sorted(targets) for query, targets in sorted(normalized.items())})
+
+    if groups is not None:
+        path = validate_file_exists(groups, "Group relation file")
+        return (
+            parse_group_relations(
+                path,
+                name_column=name_column,
+                group_column=group_column,
+                ignore_missing=ignore_missing,
+                known_names=known_names,
+            ),
+            file_fingerprint(path),
+        )
+
+    if pair_table is not None:
+        path = validate_file_exists(pair_table, "Pair relation file")
+        return (
+            parse_pair_relations(
+                path,
+                query_column=query_column,
+                target_column=target_column,
+                include_column=include_column,
+                ignore_missing=ignore_missing,
+                known_names=known_names,
+            ),
+            file_fingerprint(path),
+        )
+
+    if pair_matrix is not None:
+        path = validate_file_exists(pair_matrix, "Pair matrix file")
+        return (
+            parse_pair_matrix_relations(path, ignore_missing=ignore_missing, known_names=known_names),
+            file_fingerprint(path),
+        )
+
+    raise AssertionError("unreachable relation source state")
+
+
+def _normalize_relation_mapping(
+    relations: RelationRef,
+    known_names: set[str],
+    ignore_missing: bool,
+) -> dict[str, set[str]]:
+    """Normalize and validate an in-memory null relation mapping."""
+    normalized: dict[str, set[str]] = {}
+    seen_names: set[str] = set()
+    for query, targets in relations.items():
+        query_name = str(query)
+        target_names = {str(target) for target in targets}
+        seen_names.add(query_name)
+        seen_names.update(target_names)
+        normalized[query_name] = {target for target in target_names if target != query_name}
+
+    missing = seen_names.difference(known_names)
+    if missing and not ignore_missing:
+        raise ValueError(f"Relation input references unknown motifs: {', '.join(sorted(missing))}")
+    if ignore_missing:
+        return {
+            query: {target for target in targets if target in known_names}
+            for query, targets in normalized.items()
+            if query in known_names
+        }
+    return normalized
 
 
 def _annotate_results_if_requested(

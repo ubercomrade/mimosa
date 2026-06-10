@@ -1,12 +1,17 @@
 """Public package API."""
 
 from mimosa.api import (
+    NullBuildRequest,
+    NullBuildSummary,
     OneToManyConfig,
     OneToOneConfig,
     compare_one_to_many,
     compare_one_to_one,
+    create_null_distribution,
+    create_null_distribution_config,
     create_one_to_many_config,
     create_one_to_one_config,
+    run_null_distribution,
     run_one_to_many,
     run_one_to_one,
 )
@@ -38,6 +43,8 @@ from mimosa.types import ComparatorConfig, ComparisonResult
 __all__ = [
     "ComparatorConfig",
     "ComparisonResult",
+    "NullBuildRequest",
+    "NullBuildSummary",
     "OneToManyConfig",
     "OneToOneConfig",
     "GenericModel",
@@ -47,6 +54,8 @@ __all__ = [
     "compare_one_to_one",
     "compare_one_to_many",
     "create_comparator_config",
+    "create_null_distribution",
+    "create_null_distribution_config",
     "create_one_to_many_config",
     "create_one_to_one_config",
     "get_frequencies",
@@ -61,6 +70,7 @@ __all__ = [
     "read_model",
     "read_models",
     "register_model_handler",
+    "run_null_distribution",
     "run_one_to_one",
     "run_one_to_many",
     "scan_model",

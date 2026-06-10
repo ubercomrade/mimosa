@@ -177,6 +177,59 @@ def test_build_null_request_from_args_runs_without_subprocess(tmp_path):
     assert summary.total_comparisons_run == 2
 
 
+def test_create_null_distribution_api_builds_from_in_memory_models(tmp_path):
+    """Interactive null API should accept preloaded models and in-memory relations."""
+    query = _make_shifted_core_pwm_model("q", 0)
+    target_a = _make_shifted_core_pwm_model("u1", 1)
+    target_b = _make_shifted_core_pwm_model("u2", 2)
+    output = tmp_path / "interactive.null.joblib"
+
+    request = create_null_distribution_config(
+        [query, target_a, target_b],
+        relations={"q": {"q", "u1", "u2"}},
+        strategy="motif",
+        metric="pcc",
+        output=output,
+        min_null_targets=2,
+    )
+    summary = run_null_distribution(request)
+
+    assert output.exists()
+    assert request.relations["q"] == {"u1", "u2"}
+    assert summary.null_distribution_file == output
+    assert summary.number_of_motifs == 3
+    assert summary.number_of_queries_used == 1
+    assert summary.total_comparisons_run == 2
+
+
+def test_create_null_distribution_shortcut_builds_from_collection_path(tmp_path):
+    """One-shot null API should load a collection path and group relations."""
+    motif_dir = tmp_path / "motifs"
+    motif_dir.mkdir()
+    (motif_dir / "q.pfm").write_text(">q\n0.7 0.1 0.1 0.1\n0.1 0.7 0.1 0.1\n", encoding="utf-8")
+    (motif_dir / "t1.pfm").write_text(">t1\n0.1 0.7 0.1 0.1\n0.7 0.1 0.1 0.1\n", encoding="utf-8")
+    (motif_dir / "t2.pfm").write_text(">t2\n0.1 0.1 0.7 0.1\n0.1 0.7 0.1 0.1\n", encoding="utf-8")
+    groups = tmp_path / "groups.tsv"
+    groups.write_text("motif\tgroup\nq\tA\nt1\tB\nt2\tB\n", encoding="utf-8")
+    output = tmp_path / "shortcut.null.joblib"
+
+    summary = create_null_distribution(
+        motif_dir,
+        model_type="pwm",
+        pattern="*.pfm",
+        groups=groups,
+        strategy="motif",
+        metric="pcc",
+        output=output,
+        min_null_targets=2,
+    )
+
+    assert output.exists()
+    assert summary.number_of_motifs == 3
+    assert summary.number_of_queries_used == 1
+    assert summary.total_comparisons_run == 2
+
+
 def test_null_distribution_file_matching_rejects_incompatible_metric_but_not_query():
     """Pooled null distribution compatibility should not depend on the query fingerprint."""
     query = _make_shifted_core_pwm_model("q", 0)
