@@ -23,7 +23,6 @@ from mimosa.scanning import StrandMode, calculate_threshold_table, resolve_stran
 from mimosa.validation import validate_site_mode
 
 _SEQ_DECODER = np.array(["A", "C", "G", "T", "N"], dtype="U1")
-_RC_TABLE = np.array([3, 2, 1, 0, 4], dtype=np.int8)
 _NUCLEOTIDE_CARDINALITY = 4
 
 
@@ -268,7 +267,14 @@ def _extract_site_matrix(
     if strand_indices is not None:
         minus_mask = strand_indices == 1
         if np.any(minus_mask):
-            sites[minus_mask] = _RC_TABLE[sites[minus_mask, ::-1]]
+            reversed_sites = sites[minus_mask, ::-1]
+            padding_value = _NUCLEOTIDE_CARDINALITY
+            complement_offset = _NUCLEOTIDE_CARDINALITY - 1
+            sites[minus_mask] = np.where(
+                reversed_sites == padding_value,
+                padding_value,
+                complement_offset - reversed_sites,
+            )
 
     return sites
 

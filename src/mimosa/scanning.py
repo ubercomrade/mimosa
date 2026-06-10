@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal, Optional, cast, get_args
 
 import numpy as np
 
 from mimosa.batches import (
-    SCORE_PADDING,
     flatten_profile_bundle,
     flatten_valid,
     make_strand_bundle,
@@ -23,16 +22,16 @@ from mimosa.functions import (
 from mimosa.models import GenericModel, get_model_handler
 
 StrandMode = Literal["best", "+", "-", "both"]
-_STRAND_MODES = frozenset(("best", "+", "-", "both"))
 
 
 def resolve_strand_mode(strand: Optional[StrandMode], default: StrandMode = "best") -> StrandMode:
     """Normalize and validate one public strand mode."""
     normalized = str(strand or default).lower()
-    if normalized not in _STRAND_MODES:
-        available = ", ".join(sorted(_STRAND_MODES))
+    allowed_modes = get_args(StrandMode)
+    if normalized not in allowed_modes:
+        available = ", ".join(sorted(allowed_modes))
         raise ValueError(f"strand must be one of: {available}")
-    return normalized  # type: ignore[return-value]
+    return cast(StrandMode, normalized)
 
 
 def scan_model(model: GenericModel, sequences=None, strand: Optional[StrandMode] = None):
@@ -105,9 +104,10 @@ def scan_with_batch_kernel(model: GenericModel, sequences, strand: StrandMode, *
         return batch_all_scores(sequences, representation, kmer=kmer, is_revcomp=True, with_context=with_context)
     if strand == "best":
         sf, sr = batch_all_scores_strands(sequences, representation, kmer=kmer, with_context=with_context)
-        values = np.full(sf["values"].shape, SCORE_PADDING, dtype=np.float32)
+        padding_value = sf["padding_value"]
+        values = np.full(sf["values"].shape, padding_value, dtype=np.float32)
         values[sf["mask"]] = np.maximum(sf["values"][sf["mask"]], sr["values"][sr["mask"]])
-        return pack_batch(values, sf["mask"], sf["lengths"], SCORE_PADDING)
+        return pack_batch(values, sf["mask"], sf["lengths"], padding_value)
     if strand == "both":
         sf, sr = batch_all_scores_strands(sequences, representation, kmer=kmer, with_context=with_context)
         return make_strand_bundle(sf, sr)
