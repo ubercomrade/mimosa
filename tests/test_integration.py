@@ -1,5 +1,7 @@
 """Integration tests for the public CLI modes of mimosa."""
 
+import json
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +13,25 @@ def run_cli(cmd: list[str]) -> subprocess.CompletedProcess:
     """Run CLI through current Python env to avoid global PATH contamination."""
     args = cmd[1:] if cmd and cmd[0] == "mimosa" else cmd
     return subprocess.run([sys.executable, "-m", "mimosa.cli", *args], capture_output=True, text=True)
+
+
+def cli_json(result: subprocess.CompletedProcess) -> dict:
+    """Parse one successful CLI JSON response."""
+    return json.loads(result.stdout)
+
+
+def assert_comparison_output(output: dict, *, metric: str, has_sites: bool = False) -> None:
+    """Assert common invariants for one comparison JSON payload."""
+    assert isinstance(output["query"], str)
+    assert isinstance(output["target"], str)
+    assert output["metric"] == metric
+    assert output["orientation"] in {"++", "+-", "-+", "--"}
+    assert isinstance(output["offset"], int)
+    assert isinstance(output["score"], int | float)
+    assert math.isfinite(float(output["score"]))
+    if has_sites:
+        assert isinstance(output["n_sites"], int)
+        assert output["n_sites"] >= 0
 
 
 @pytest.fixture
@@ -43,13 +64,7 @@ def test_profile_comparison_bamm_vs_pwm(examples_dir, temp_dir):
     result = run_cli(cmd)
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
-    # Verify output contains expected keys
-    import json
-
-    output = json.loads(result.stdout)
-    expected_keys = ["query", "target", "score", "offset", "orientation", "metric"]
-    for key in expected_keys:
-        assert key in output, f"Missing key '{key}' in output"
+    assert_comparison_output(cli_json(result), metric="co", has_sites=True)
 
 
 def test_profile_comparison_bamm_vs_bamm(examples_dir, temp_dir):
@@ -70,13 +85,7 @@ def test_profile_comparison_bamm_vs_bamm(examples_dir, temp_dir):
     result = run_cli(cmd)
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
-    # Verify output contains expected keys
-    import json
-
-    output = json.loads(result.stdout)
-    expected_keys = ["query", "target", "score", "offset", "orientation", "metric"]
-    for key in expected_keys:
-        assert key in output, f"Missing key '{key}' in output"
+    assert_comparison_output(cli_json(result), metric="co", has_sites=True)
 
 
 def test_motif_comparison_pwm_vs_pwm(examples_dir, temp_dir):
@@ -97,13 +106,7 @@ def test_motif_comparison_pwm_vs_pwm(examples_dir, temp_dir):
     result = run_cli(cmd)
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
-    # Verify output contains expected keys
-    import json
-
-    output = json.loads(result.stdout)
-    expected_keys = ["query", "target", "score", "offset", "orientation", "metric"]
-    for key in expected_keys:
-        assert key in output, f"Missing key '{key}' in output"
+    assert_comparison_output(cli_json(result), metric="ed")
 
 
 def test_motif_comparison_bamm_vs_bamm(examples_dir, temp_dir):
@@ -125,13 +128,7 @@ def test_motif_comparison_bamm_vs_bamm(examples_dir, temp_dir):
     result = run_cli(cmd)
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
-    # Verify output contains expected keys
-    import json
-
-    output = json.loads(result.stdout)
-    expected_keys = ["query", "target", "score", "offset", "orientation", "metric"]
-    for key in expected_keys:
-        assert key in output, f"Missing key '{key}' in output"
+    assert_comparison_output(cli_json(result), metric="ed")
 
 
 def test_profile_comparison_sitega_vs_pwm(examples_dir, temp_dir):
@@ -309,13 +306,7 @@ def test_profile_comparison_basic(examples_dir, temp_dir):
     result = run_cli(cmd)
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
-    # Verify output contains expected keys
-    import json
-
-    output = json.loads(result.stdout)
-    expected_keys = ["query", "target", "score", "offset", "orientation", "metric", "n_sites"]
-    for key in expected_keys:
-        assert key in output, f"Missing key '{key}' in output"
+    assert_comparison_output(cli_json(result), metric="co", has_sites=True)
 
 
 def test_profile_comparison_accepts_dice_metric(examples_dir, temp_dir):
@@ -336,11 +327,7 @@ def test_profile_comparison_accepts_dice_metric(examples_dir, temp_dir):
     result = run_cli(cmd)
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
-    import json
-
-    output = json.loads(result.stdout)
-    assert output["metric"] == "dice"
-    assert "score" in output
+    assert_comparison_output(cli_json(result), metric="dice", has_sites=True)
 
 
 def test_profile_comparison_accepts_dice_rowwise_metric(examples_dir, temp_dir):
@@ -363,12 +350,7 @@ def test_profile_comparison_accepts_dice_rowwise_metric(examples_dir, temp_dir):
     result = run_cli(cmd)
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
-    import json
-
-    output = json.loads(result.stdout)
-    assert output["metric"] == "dice_rowwise"
-    assert "score" in output
-    assert "n_sites" in output
+    assert_comparison_output(cli_json(result), metric="dice_rowwise", has_sites=True)
 
 
 def test_profile_comparison_accepts_cosine_metric(examples_dir, temp_dir):
@@ -393,12 +375,7 @@ def test_profile_comparison_accepts_cosine_metric(examples_dir, temp_dir):
     result = run_cli(cmd)
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
-    import json
-
-    output = json.loads(result.stdout)
-    assert output["metric"] == "cosine"
-    assert "score" in output
-    assert "n_sites" in output
+    assert_comparison_output(cli_json(result), metric="cosine", has_sites=True)
 
 
 def test_profile_comparison_accepts_co_rowwise_metric(examples_dir, temp_dir):
@@ -421,12 +398,7 @@ def test_profile_comparison_accepts_co_rowwise_metric(examples_dir, temp_dir):
     result = run_cli(cmd)
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
-    import json
-
-    output = json.loads(result.stdout)
-    assert output["metric"] == "co_rowwise"
-    assert "score" in output
-    assert "n_sites" in output
+    assert_comparison_output(cli_json(result), metric="co_rowwise", has_sites=True)
 
 
 def test_profile_comparison_rejects_removed_l1sim_metric(examples_dir, temp_dir):
@@ -475,12 +447,7 @@ def test_profile_comparison_with_empirical_logfpr_thresholding(examples_dir, tem
     result = run_cli(cmd)
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
-    import json
-
-    output = json.loads(result.stdout)
-    assert output["metric"] == "co"
-    assert "score" in output
-    assert "n_sites" in output
+    assert_comparison_output(cli_json(result), metric="co", has_sites=True)
 
 
 def test_profile_comparison_accepts_background_argument(examples_dir, temp_dir):
@@ -635,9 +602,8 @@ def test_build_null_and_motif_pvalue_annotation(tmp_path):
     )
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
-    import json
-
-    output = json.loads(result.stdout)
+    output = cli_json(result)
+    assert_comparison_output(output, metric="pcc")
     assert "p-value" in output
     assert "E-value" in output
     assert "q-value" in output

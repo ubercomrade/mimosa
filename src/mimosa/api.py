@@ -12,6 +12,7 @@ from mimosa.comparison import (
     SUPPORTED_MOTIF_METRICS,
     SUPPORTED_PROFILE_METRICS,
     ComparatorConfig,
+    ComparisonResult,
     compare,
     create_comparator_config,
 )
@@ -132,7 +133,7 @@ def compare_motifs(
     model1_kwargs: Optional[Dict[str, Any]] = None,
     model2_kwargs: Optional[Dict[str, Any]] = None,
     **comparator_kwargs,
-) -> dict:
+) -> ComparisonResult:
     """Single-call entry point for motif comparison."""
     config = create_config(
         model1=model1,
@@ -212,7 +213,7 @@ def compare_one_to_many(
     query_kwargs: Optional[Dict[str, Any]] = None,
     target_kwargs: Optional[Dict[str, Any]] = None,
     **comparator_kwargs,
-) -> List[dict]:
+) -> list[ComparisonResult]:
     """Single-call entry point for one-vs-many motif comparison."""
     config = create_many_config(
         query=query,
@@ -233,7 +234,7 @@ def compare_one_to_many(
     return run_one_to_many(config)
 
 
-def run_comparison(config: ComparisonConfig) -> dict:
+def run_comparison(config: ComparisonConfig) -> ComparisonResult:
     """Execute one comparison using the unified config."""
     strategy = _normalize_strategy(config["strategy"])
     model1 = _resolve_model(config["model1"], config.get("model1_type"), config.get("model1_kwargs", {}))
@@ -258,7 +259,7 @@ def run_comparison(config: ComparisonConfig) -> dict:
     )
 
 
-def run_one_to_many(config: OneToManyConfig) -> List[dict]:
+def run_one_to_many(config: OneToManyConfig) -> list[ComparisonResult]:
     """Execute one comparison of a single query against many targets."""
     strategy = _normalize_strategy(config["strategy"])
     query_model = _resolve_model(config["query"], config.get("query_type"), config.get("query_kwargs", {}))

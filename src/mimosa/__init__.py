@@ -11,7 +11,7 @@ from mimosa.api import (
     run_one_to_many,
 )
 from mimosa.cache import clear_cache
-from mimosa.comparison import ComparatorConfig, compare, create_comparator_config
+from mimosa.comparison import ComparatorConfig, compare, create_comparator_config, validate_metric
 from mimosa.models import (
     GenericModel,
     StrandMode,
@@ -62,4 +62,5 @@ __all__ = [
     "run_one_to_many",
     "scan_model",
     "save_null_artifact",
+    "validate_metric",
 ]

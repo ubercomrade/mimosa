@@ -104,10 +104,6 @@ coverage.xml
 .env
 .env.local
 .env.*.local
-./uv.lock
-uv.lock
-.uv.lock
-*.lock
 
 # Certificate and security files
 *.key
@@ -129,8 +125,6 @@ out/
 bin/
 obj/
 .mimosa*
-examples/benchmark_fast_profile_score.py
-examples/benchmark_profile_one_to_many.py
 .hocomoco
 
 # Compiled files
@@ -150,6 +144,7 @@ logs/
 # Python caches
 .pytest_cache/
 .mypy_cache/
+.pyscn/
 .tox/
 .cache/
 .ruff_cache

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib import metadata as package_metadata
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, TypedDict, cast
 
 import joblib
 import numpy as np
@@ -39,11 +39,43 @@ _SCORE_CONFIG_KEYS = (
 )
 
 
+class NullArtifactMetadata(TypedDict):
+    format_version: int
+    created_at: str
+    strategy: str
+    metric: str
+    config_signature: dict[str, Any]
+    config_signature_hash: str
+    sequence_fingerprint: str
+    background_fingerprint: str
+    model_collection_fingerprint: str | None
+    relation_fingerprint: str | None
+    package_version: str
+
+
+class NullArtifactEntry(TypedDict, total=False):
+    estimator_type: str
+    sorted_scores: np.ndarray
+    parameters: dict[str, Any]
+    query_name: str
+    query_fingerprint: str
+    included_target_names: list[str]
+    included_target_fingerprints: list[str]
+    effective_number_of_targets: int
+    raw_null_scores: np.ndarray
+    n_null: int
+
+
+class NullArtifact(TypedDict):
+    metadata: NullArtifactMetadata
+    entries: dict[str, NullArtifactEntry]
+
+
 @dataclass
 class NullBuildResult:
     """Summary returned after building one null-distribution artifact."""
 
-    artifact: dict[str, Any]
+    artifact: NullArtifact
     skipped: list[dict[str, Any]]
     total_comparisons: int
 
@@ -83,7 +115,7 @@ def environment_metadata(  # noqa: PLR0913
 ) -> dict[str, Any]:
     """Build the compatibility metadata stored in each null artifact."""
     try:
-        version = package_metadata.version("mimosa")
+        version = package_metadata.version("mimosa-tool")
     except package_metadata.PackageNotFoundError:
         version = "0+unknown"
 
@@ -166,7 +198,7 @@ def fit_survival_estimator(scores: Iterable[float]) -> EmpiricalSurvivalEstimato
         return EmpiricalSurvivalEstimator(values)
 
 
-def estimator_from_entry(entry: dict[str, Any]) -> EmpiricalSurvivalEstimator:
+def estimator_from_entry(entry: NullArtifactEntry) -> EmpiricalSurvivalEstimator:
     """Rehydrate an estimator from one artifact entry."""
     scores = np.asarray(entry["sorted_scores"], dtype=np.float64)
     if entry.get("estimator_type") == "kde":
@@ -321,10 +353,10 @@ def build_null_distributions(  # noqa: PLR0913
         model_collection_fingerprint=collection_fp,
         relation_fingerprint=relation_fingerprint,
     )
-    entries: dict[str, dict[str, Any]] = {}
+    entries: dict[str, NullArtifactEntry] = {}
     skipped: list[dict[str, Any]] = []
     total_comparisons = 0
-    score_only_config = dict(config)
+    score_only_config = cast(ComparatorConfig, dict(config))
     score_only_config["pvalue"] = False
 
     for query in models:
@@ -351,7 +383,7 @@ def build_null_distributions(  # noqa: PLR0913
         )
         scores = np.asarray([float(result["score"]) for result in results], dtype=np.float64)
         estimator = fit_survival_estimator(scores)
-        entry = estimator.to_entry()
+        entry = cast(NullArtifactEntry, estimator.to_entry())
         entry.update(
             {
                 "query_name": query.name,
@@ -366,11 +398,11 @@ def build_null_distributions(  # noqa: PLR0913
         entries[entry["query_fingerprint"]] = entry
         total_comparisons += len(results)
 
-    artifact = {"metadata": metadata_block, "entries": entries}
+    artifact: NullArtifact = {"metadata": cast(NullArtifactMetadata, metadata_block), "entries": entries}
     return NullBuildResult(artifact=artifact, skipped=skipped, total_comparisons=total_comparisons)
 
 
-def save_null_artifact(artifact: dict[str, Any], path: str | Path) -> Path:
+def save_null_artifact(artifact: NullArtifact, path: str | Path) -> Path:
     """Persist one null-distribution artifact."""
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -387,11 +419,11 @@ def install_null_artifact(path: str | Path, cache_dir: str | Path = NULL_CACHE_D
     return destination
 
 
-def load_null_artifact(source: str | Path | dict[str, Any]) -> dict[str, Any]:
-    """Load a null-distribution artifact from a path or return an in-memory artifact."""
+def load_null_artifact(source: str | Path | dict[str, Any]) -> NullArtifact:
+    """Load a trusted null-distribution artifact from a path or return an in-memory artifact."""
     if isinstance(source, dict):
-        return source
-    return joblib.load(source)
+        return cast(NullArtifact, source)
+    return cast(NullArtifact, joblib.load(source))
 
 
 def load_compatible_null_artifact(
@@ -401,7 +433,7 @@ def load_compatible_null_artifact(
     query_model: GenericModel,
     sequences=None,
     background=None,
-) -> dict[str, Any] | None:
+) -> NullArtifact | None:
     """Load the explicit or first searched compatible null artifact for one query/config."""
     explicit = config.get("null_distribution")
     if explicit is not None:
@@ -436,7 +468,7 @@ def load_compatible_null_artifact(
 
 
 def validate_artifact_compatible(  # noqa: PLR0913
-    artifact: dict[str, Any],
+    artifact: NullArtifact,
     *,
     strategy: str,
     config: ComparatorConfig,
@@ -458,7 +490,7 @@ def validate_artifact_compatible(  # noqa: PLR0913
 
 
 def is_artifact_compatible(  # noqa: PLR0913
-    artifact: dict[str, Any],
+    artifact: NullArtifact,
     *,
     strategy: str,
     config: ComparatorConfig,
@@ -478,7 +510,7 @@ def is_artifact_compatible(  # noqa: PLR0913
 
 
 def _compatibility_problems(  # noqa: PLR0913
-    artifact: dict[str, Any],
+    artifact: NullArtifact,
     *,
     strategy: str,
     config: ComparatorConfig,
@@ -510,7 +542,7 @@ def _compatibility_problems(  # noqa: PLR0913
 def annotate_results_with_nulls(
     results: list[dict[str, Any]],
     *,
-    artifact: dict[str, Any],
+    artifact: NullArtifact,
     query_model: GenericModel,
     effective_number_of_targets: int | None = None,
 ) -> None:

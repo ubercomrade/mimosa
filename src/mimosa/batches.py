@@ -6,8 +6,8 @@ from typing import Iterable, TypedDict
 
 import numpy as np
 
-NUCLEOTIDE_PADDING = np.int8(4)
-SCORE_PADDING = np.float32(0.0)
+NUCLEOTIDE_PADDING = 4
+SCORE_PADDING = 0.0
 BATCH_NDIM = 2
 PROFILE_BUNDLE_NDIM = 3
 PLUS_STRAND = 0

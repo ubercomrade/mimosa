@@ -7,6 +7,7 @@ from numba import njit
 
 from mimosa.batches import (
     SCORE_PADDING,
+    ProfileBundle,
     batch_with_values,
     flatten_profile_bundle,
     flatten_valid,
@@ -650,7 +651,7 @@ def scores_to_empirical_log_tail(score_batch):
     return apply_score_log_tail_table(score_batch, table)
 
 
-def prepare_profile_bundle(bundle: dict) -> dict:
+def prepare_profile_bundle(bundle: dict) -> ProfileBundle:
     """Return one contiguous profile bundle with explicit float32 values."""
     values = np.ascontiguousarray(bundle["values"], dtype=np.float32)
     lengths = np.ascontiguousarray(bundle["lengths"], dtype=np.int64)

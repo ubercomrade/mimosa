@@ -12,8 +12,8 @@ from mimosa.cache import clear_cache
 from mimosa.comparison import (
     SUPPORTED_MOTIF_METRICS,
     SUPPORTED_PROFILE_METRICS,
-    _validate_metric,
     create_comparator_config,
+    validate_metric,
 )
 from mimosa.io import read_fasta
 from mimosa.models import read_models
@@ -182,7 +182,10 @@ def _add_significance_arguments(parser: argparse.ArgumentParser) -> None:
     )
     group.add_argument(
         "--null-distribution",
-        help="Path to a null-distribution artifact built with 'mimosa build-null'.",
+        help=(
+            "Path to a trusted null-distribution artifact built with 'mimosa build-null'. "
+            "Joblib artifacts must not be loaded from untrusted sources."
+        ),
     )
     group.add_argument(
         "--null-search-dir",
@@ -350,7 +353,7 @@ def _add_build_null_parser(subparsers: argparse._SubParsersAction) -> None:
     comparison.add_argument("--cache-dir", default=".mimosa-cache")
 
     output = parser.add_argument_group("Output Options")
-    output.add_argument("--output", required=True, help="Path to write the joblib null-distribution artifact.")
+    output.add_argument("--output", required=True, help="Path to write the trusted joblib null-distribution artifact.")
     output.add_argument("--install-cache", action="store_true", help="Also copy the artifact into the user cache.")
     output.add_argument("--strict", action="store_true", help="Fail when a query lacks enough null targets.")
     output.add_argument("--min-null-targets", type=int, default=1)
@@ -463,7 +466,7 @@ def map_args_to_comparator_kwargs(args) -> Dict[str, Any]:
     if args.mode == "build-null":
         metric = args.metric or ("co" if args.strategy == "profile" else "pcc")
         return {
-            "metric": _validate_metric(metric),
+            "metric": validate_metric(metric),
             "n_jobs": args.jobs,
             "seed": args.seed,
             "search_range": args.search_range,

@@ -33,7 +33,7 @@ def _hash_array(array: np.ndarray) -> bytes:
     hasher = hashlib.blake2b(digest_size=16)
     hasher.update(contiguous.dtype.str.encode("ascii"))
     hasher.update(shape.tobytes())
-    hasher.update(contiguous.view(np.uint8))
+    hasher.update(contiguous.view(np.uint8).tobytes())
     return hasher.digest()
 
 

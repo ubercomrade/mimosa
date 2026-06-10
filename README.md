@@ -168,6 +168,11 @@ Notes:
 - heterogeneous `motif` comparisons automatically switch to sequence-driven PFM reconstruction
 - BaMM loading uses a uniform background model; a separate background file is not required
 
+### Security note
+
+MIMOSA can load `.pkl` model files and `.joblib` null-distribution artifacts. These formats use Python
+pickle/joblib serialization and may execute arbitrary code when loaded. Only load such files from trusted sources.
+
 ## Installation
 
 MIMOSA requires Python `3.10+`.

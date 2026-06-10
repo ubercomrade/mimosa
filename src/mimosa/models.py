@@ -6,7 +6,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Callable, Literal, Optional, TypedDict
 
 import joblib
 import numpy as np
@@ -66,17 +66,34 @@ class GenericModel:
     config: dict
 
 
-registry: Dict[str, dict] = {}
+class ModelHandler(TypedDict):
+    scan: Callable[..., Any]
+    scan_both: Callable[..., Any] | None
+    load: Callable[..., GenericModel]
+    write: Callable[[GenericModel, str], None]
+    score_bounds: Callable[[GenericModel], tuple[float, float]]
+
+
+registry: dict[str, ModelHandler] = {}
 
 
 def _load_pickled_generic_model(path: str, model_type: str) -> GenericModel:
+    """Load a trusted joblib/pickle payload and validate its public model type."""
     model = joblib.load(path)
     if not isinstance(model, GenericModel):
         raise TypeError(f"Unsupported {model_type} pickle payload: expected GenericModel, got {type(model)!r}")
     return model
 
 
-def _register_model_handler(key: str, *, scan, load, write, score_bounds, scan_both=None) -> None:
+def _register_model_handler(
+    key: str,
+    *,
+    scan: Callable[..., Any],
+    load: Callable[..., GenericModel],
+    write: Callable[[GenericModel, str], None],
+    score_bounds: Callable[[GenericModel], tuple[float, float]],
+    scan_both: Callable[..., Any] | None = None,
+) -> None:
     """Register one model handler bundle."""
     registry[key] = {
         "scan": scan,
@@ -87,7 +104,15 @@ def _register_model_handler(key: str, *, scan, load, write, score_bounds, scan_b
     }
 
 
-def register_model_handler(key: str, *, scan, load, write, score_bounds, scan_both=None) -> None:
+def register_model_handler(
+    key: str,
+    *,
+    scan: Callable[..., Any],
+    load: Callable[..., GenericModel],
+    write: Callable[[GenericModel, str], None],
+    score_bounds: Callable[[GenericModel], tuple[float, float]],
+    scan_both: Callable[..., Any] | None = None,
+) -> None:
     """Register one public model handler bundle."""
     _register_model_handler(
         key,
@@ -99,7 +124,7 @@ def register_model_handler(key: str, *, scan, load, write, score_bounds, scan_bo
     )
 
 
-def _get_model_handler(key: str) -> dict:
+def _get_model_handler(key: str) -> ModelHandler:
     """Return one registered handler bundle."""
     try:
         return registry[key]
@@ -392,6 +417,8 @@ def _collect_hits(
     score_bundle = _scan_bundle_for_strand(model, sequences, strand)
     if mode == "best":
         return _collect_best_hits(score_bundle, strand)
+    if score_threshold is None:
+        raise ValueError("score_threshold is required in threshold mode")
     return _collect_threshold_hits(score_bundle, float(score_threshold), strand)
 
 
@@ -435,6 +462,8 @@ def _resolve_hits(model: GenericModel, sequences, selection: dict, *, include_th
         )
 
     if mode == "threshold":
+        if threshold_table is None:
+            raise ValueError("threshold_table is required in threshold mode")
         score_threshold = lookup_score_for_tail_probability(threshold_table, float(selection["fpr_threshold"]))
         logging.getLogger(__name__).info(
             "FPR threshold: %s -> score threshold: %.4f", selection["fpr_threshold"], score_threshold
@@ -539,6 +568,8 @@ def _build_sites_frame(
     model: GenericModel, sequences, hit_arrays: dict[str, np.ndarray], threshold_table: np.ndarray
 ) -> pd.DataFrame:
     """Build the public site table from resolved hits."""
+    if threshold_table is None:
+        raise ValueError("threshold_table is required to annotate sites with log-tail values")
     if hit_arrays["score"].size == 0:
         return _empty_sites_frame()
 

@@ -21,10 +21,8 @@ jobs:
       - name: Build wheel and sdist
         run: uv build
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/*
+      - name: Check distribution metadata
+        run: uvx twine check dist/*
 
       - name: Test sdist installation
         run: |
@@ -32,7 +30,13 @@ jobs:
           source test_env/bin/activate
           uv pip install dist/*.tar.gz
           uv pip install pytest numpy numba scipy pandas joblib
+          python -c "import mimosa; print(mimosa.__all__)"
           pytest tests
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
 
   publish:
     name: Publish to PyPI
@@ -60,4 +64,4 @@ jobs:
         run: uvx twine check dist/*
 
       - name: Publish to PyPI
-        run: uv publish 
+        run: uv publish

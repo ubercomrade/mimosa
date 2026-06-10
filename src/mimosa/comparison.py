@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, TypedDict
+from typing import Any, Callable, Literal, Optional, TypedDict, TypeVar, cast
 
 import numpy as np
 from joblib import Parallel, delayed
@@ -46,6 +46,7 @@ SUPPORTED_PROFILE_METRICS = ("co", "co_rowwise", "dice", "dice_rowwise", "cosine
 SUPPORTED_MOTIF_METRICS = ("pcc", "ed", "cosine")
 MetricName = Literal["co", "co_rowwise", "dice", "dice_rowwise", "pcc", "ed", "cosine"]
 _ALL_METRICS = frozenset((*SUPPORTED_PROFILE_METRICS, *SUPPORTED_MOTIF_METRICS))
+_ComparisonJobResult = TypeVar("_ComparisonJobResult")
 
 
 class ComparatorConfig(TypedDict):
@@ -104,12 +105,16 @@ def _register_comparison_strategy(name: str):
     return decorator
 
 
-def _validate_metric(metric: str) -> MetricName:
+def validate_metric(metric: str) -> MetricName:
+    """Normalize and validate one public metric name."""
     normalized = str(metric).lower()
     if normalized not in _ALL_METRICS:
         options = ", ".join(sorted(_ALL_METRICS))
         raise ValueError(f"metric must be one of: {options}")
     return normalized  # type: ignore[return-value]
+
+
+_validate_metric = validate_metric
 
 
 def create_comparator_config(**kwargs) -> ComparatorConfig:
@@ -155,7 +160,12 @@ def create_comparator_config(**kwargs) -> ComparatorConfig:
         validate_pfm_top_fraction(config.get("pfm_top_fraction")) or defaults["pfm_top_fraction"]
     )
     config["cache_mode"] = validate_cache_mode(config.get("cache_mode", "off"))
-    return config
+    return cast(ComparatorConfig, config)
+
+
+def _copy_comparator_config(config: ComparatorConfig) -> ComparatorConfig:
+    """Return a mutable copy while preserving the public TypedDict contract."""
+    return cast(ComparatorConfig, dict(config))
 
 
 def _select_best_orientation(candidates):
@@ -941,7 +951,7 @@ def _build_motif_result(query_name: str, target_name: str, best: dict, metric: s
 @_register_comparison_strategy("motif")
 def strategy_motif(model1: GenericModel, model2: GenericModel, sequences, cfg: ComparatorConfig) -> ComparisonResult:
     """Matrix-based comparison strategy (PCC/ED/Cosine)."""
-    runtime_cache = {}
+    runtime_cache: dict[Any, Any] = {}
     use_pfm_mode = cfg["pfm_mode"] or (model1.type_key != model2.type_key)
     _query_matrix, prepared1 = _prepare_motif_model(model1, sequences, cfg, use_pfm_mode, runtime_cache)
     _matrix2, prepared2 = _prepare_motif_model(model2, sequences, cfg, use_pfm_mode, runtime_cache)
@@ -952,7 +962,7 @@ def strategy_motif(model1: GenericModel, model2: GenericModel, sequences, cfg: C
 @_register_comparison_strategy("profile")
 def strategy_profile(model1: GenericModel, model2: GenericModel, sequences, cfg: ComparatorConfig) -> ComparisonResult:
     """Window-based profile comparison strategy (CO/rowwise-CO/Dice/Cosine similarity)."""
-    runtime_cache = {}
+    runtime_cache: dict[Any, Any] = {}
     background_sequences = _get_profile_background_sequences(sequences, cfg)
     bundle1 = _prepare_profile_model(model1, sequences, background_sequences, cfg, runtime_cache)
     bundle2 = _prepare_profile_model(model2, sequences, background_sequences, cfg, runtime_cache)
@@ -965,23 +975,23 @@ def _compare_motif_one_to_many(
     target_models,
     sequences,
     cfg: ComparatorConfig,
-) -> list[dict]:
+) -> list[ComparisonResult]:
     """Compare one motif query against many targets while reusing prepared query state."""
     target_list = list(target_models)
     if not target_list:
         return []
 
-    query_cache = {}
+    query_cache: dict[Any, Any] = {}
     use_pfm_modes = {
         bool(cfg["pfm_mode"] or (query_model.type_key != target_model.type_key)) for target_model in target_list
     }
-    prepared_query_by_mode = {}
+    prepared_query_by_mode: dict[bool, Any] = {}
     for use_pfm_mode in use_pfm_modes:
         _query_matrix, prepared_query = _prepare_motif_model(query_model, sequences, cfg, use_pfm_mode, query_cache)
         prepared_query_by_mode[use_pfm_mode] = prepared_query
 
-    def _score_target(target_model: GenericModel) -> dict:
-        target_cache = {}
+    def _score_target(target_model: GenericModel) -> ComparisonResult:
+        target_cache: dict[Any, Any] = {}
         try:
             use_pfm_mode = bool(cfg["pfm_mode"] or (query_model.type_key != target_model.type_key))
             prepared_query = prepared_query_by_mode[use_pfm_mode]
@@ -1002,13 +1012,13 @@ def _compare_motif_one_to_many(
 
 def _compare_profile_one_to_many(
     query_model: GenericModel, target_models, sequences, cfg: ComparatorConfig
-) -> list[dict]:
+) -> list[ComparisonResult]:
     """Compare one profile query against many targets while reusing normalized query profiles."""
     target_list = list(target_models)
     if not target_list:
         return []
 
-    query_cache = {}
+    query_cache: dict[Any, Any] = {}
     background_sequences = _get_profile_background_sequences(sequences, cfg)
     query_bundle = _prepare_profile_model(
         query_model,
@@ -1018,8 +1028,8 @@ def _compare_profile_one_to_many(
         query_cache,
     )
 
-    def _score_target(target_model: GenericModel) -> dict:
-        target_cache = {}
+    def _score_target(target_model: GenericModel) -> ComparisonResult:
+        target_cache: dict[Any, Any] = {}
         try:
             target_bundle = _prepare_profile_model(
                 target_model,
@@ -1043,7 +1053,11 @@ def _resolve_target_job_count(n_jobs: int | None) -> int:
     return -1 if n_jobs is None else int(n_jobs)
 
 
-def _run_target_comparisons(target_models: list[GenericModel], n_jobs: int | None, worker: Callable) -> list[dict]:
+def _run_target_comparisons(
+    target_models: list[GenericModel],
+    n_jobs: int | None,
+    worker: Callable[[GenericModel], _ComparisonJobResult],
+) -> list[_ComparisonJobResult]:
     """Execute one worker across targets sequentially or with joblib threads."""
     if not target_models:
         return []
@@ -1062,7 +1076,7 @@ def compare(
     config: ComparatorConfig,
     sequences=None,
     background=None,
-) -> dict:
+) -> ComparisonResult:
     """Main entry point for motif comparison."""
     try:
         strategy_fn = registry[strategy]
@@ -1070,7 +1084,7 @@ def compare(
         available = ", ".join(sorted(registry))
         raise ValueError(f"Strategy '{strategy}' not found. Available: {available}") from exc
 
-    effective_config = dict(config)
+    effective_config = _copy_comparator_config(config)
     if background is not None:
         effective_config["background"] = background
     result = strategy_fn(model1, model2, sequences, effective_config)
@@ -1093,9 +1107,9 @@ def compare_one_to_many(
     config: ComparatorConfig,
     sequences=None,
     background=None,
-) -> list[dict]:
+) -> list[ComparisonResult]:
     """Main entry point for one-vs-many motif comparison."""
-    effective_config = dict(config)
+    effective_config = _copy_comparator_config(config)
     if background is not None:
         effective_config["background"] = background
 
@@ -1128,7 +1142,7 @@ def compare_one_to_many(
 
 
 def _maybe_annotate_significance(
-    results: list[dict],
+    results: list[ComparisonResult],
     *,
     query_model: GenericModel,
     strategy: str,
@@ -1156,7 +1170,7 @@ def _maybe_annotate_significance(
 
     effective_number = config.get("effective_number_of_targets") or default_effective_number_of_targets
     annotate_results_with_nulls(
-        results,
+        cast(list[dict[str, Any]], results),
         artifact=artifact,
         query_model=query_model,
         effective_number_of_targets=effective_number,

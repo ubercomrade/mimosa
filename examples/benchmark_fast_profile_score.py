@@ -18,7 +18,12 @@ import numpy as np
 from numba import get_num_threads, set_num_threads
 
 from mimosa.batches import make_score_batch, make_strand_bundle
-from mimosa.comparison import PROFILE_ORIENTATION_PAIRS, _score_profile_candidates, _select_best_orientation, create_comparator_config
+from mimosa.comparison import (
+    PROFILE_ORIENTATION_PAIRS,
+    _score_profile_candidates,
+    _select_best_orientation,
+    create_comparator_config,
+)
 from mimosa.functions import prepare_profile_bundle
 
 
@@ -232,7 +237,9 @@ def main() -> None:
     pairwise_left_raw, pairwise_right_raw = _generate_pairwise_profiles(args.num_rows, args.row_length, args.seed)
     pairwise_left = prepare_profile_bundle(make_strand_bundle(pairwise_left_raw, pairwise_left_raw))
     pairwise_right = prepare_profile_bundle(make_strand_bundle(pairwise_right_raw, pairwise_right_raw))
-    orientation_left_raw, orientation_right_raw = _generate_orientation_bundles(args.num_rows, args.row_length, args.seed)
+    orientation_left_raw, orientation_right_raw = _generate_orientation_bundles(
+        args.num_rows, args.row_length, args.seed
+    )
     orientation_left = prepare_profile_bundle(orientation_left_raw)
     orientation_right = prepare_profile_bundle(orientation_right_raw)
 
