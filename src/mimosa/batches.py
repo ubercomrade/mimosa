@@ -193,15 +193,6 @@ def row_values(batch, row_index: int) -> np.ndarray:
     return batch["values"][row_index, :length]
 
 
-def profile_view(bundle: ProfileBundle, profile_index: int) -> SequenceBatch:
-    """Return one lightweight 2D profile view from a 3D bundle."""
-    return {
-        "values": bundle["values"][profile_index],
-        "lengths": bundle["lengths"],
-        "padding_value": bundle["padding_value"],
-    }
-
-
 def profile_row_values(bundle, profile_index: int, row_index: int) -> np.ndarray:
     """Return the valid values of one row for one profile inside a bundle."""
     length = int(bundle["lengths"][row_index])

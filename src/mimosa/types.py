@@ -7,8 +7,6 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Iterator, Mapping
 
-import numpy as np
-
 from mimosa.batches import SequenceBatch
 
 
@@ -164,29 +162,3 @@ class OneToManyConfig(_FrozenRecord):
         object.__setattr__(self, "targets", tuple(self.targets))
         object.__setattr__(self, "query_kwargs", _freeze_mapping(self.query_kwargs))
         object.__setattr__(self, "target_kwargs", _freeze_mapping(self.target_kwargs))
-
-
-def result_from_payload(payload: Mapping[str, Any]) -> ComparisonResult:
-    """Build a typed result object from a mapping-like payload."""
-    return ComparisonResult(
-        query=str(payload["query"]),
-        target=str(payload["target"]),
-        score=float(payload["score"]),
-        offset=int(payload["offset"]),
-        orientation=str(payload["orientation"]),
-        metric=str(payload["metric"]),
-        n_sites=int(payload["n_sites"]) if payload.get("n_sites") is not None else None,
-        p_value=float(payload["p-value"]) if payload.get("p-value") is not None else None,
-        e_value=float(payload["E-value"]) if payload.get("E-value") is not None else None,
-        q_value=float(payload["q-value"]) if payload.get("q-value") is not None else None,
-        null_id=str(payload["null_id"]) if payload.get("null_id") is not None else None,
-        null_n=int(payload["null_n"]) if payload.get("null_n") is not None else None,
-        null_estimator=str(payload["null_estimator"]) if payload.get("null_estimator") is not None else None,
-    )
-
-
-def batch_to_rows(batch: SequenceBatch) -> list[np.ndarray]:
-    """Materialize sequence rows from a padded batch payload."""
-    values = np.asarray(batch["values"])
-    lengths = np.asarray(batch["lengths"], dtype=np.int64)
-    return [values[index, : int(lengths[index])].copy() for index in range(values.shape[0])]

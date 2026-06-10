@@ -3,7 +3,6 @@ Pytest configuration and common fixtures for unimotifcomparator tests.
 """
 
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -13,13 +12,6 @@ import pytest
 project_root = str(Path(__file__).parent.parent.absolute())
 if project_root in sys.path:
     sys.path.remove(project_root)
-
-
-@pytest.fixture
-def temp_dir():
-    """Create a temporary directory for tests."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
 
 
 @pytest.fixture

@@ -40,13 +40,7 @@ def examples_dir():
     return Path(__file__).parent.parent / "examples"
 
 
-@pytest.fixture
-def temp_dir(tmp_path):
-    """Temporary directory for test outputs."""
-    return tmp_path
-
-
-def test_profile_comparison_bamm_vs_pwm(examples_dir, temp_dir):
+def test_profile_comparison_bamm_vs_pwm(examples_dir):
     """Profile mode should compare bamm vs pwm via scanned profiles."""
     cmd = [
         "mimosa",
@@ -67,7 +61,7 @@ def test_profile_comparison_bamm_vs_pwm(examples_dir, temp_dir):
     assert_comparison_output(cli_json(result), metric="co", has_sites=True)
 
 
-def test_profile_comparison_bamm_vs_bamm(examples_dir, temp_dir):
+def test_profile_comparison_bamm_vs_bamm(examples_dir):
     """Profile mode should compare bamm vs bamm via scanned profiles."""
     cmd = [
         "mimosa",
@@ -88,7 +82,7 @@ def test_profile_comparison_bamm_vs_bamm(examples_dir, temp_dir):
     assert_comparison_output(cli_json(result), metric="co", has_sites=True)
 
 
-def test_motif_comparison_pwm_vs_pwm(examples_dir, temp_dir):
+def test_motif_comparison_pwm_vs_pwm(examples_dir):
     """Motif mode should compare pwm vs pwm directly."""
     cmd = [
         "mimosa",
@@ -109,7 +103,7 @@ def test_motif_comparison_pwm_vs_pwm(examples_dir, temp_dir):
     assert_comparison_output(cli_json(result), metric="ed")
 
 
-def test_motif_comparison_bamm_vs_bamm(examples_dir, temp_dir):
+def test_motif_comparison_bamm_vs_bamm(examples_dir):
     """Motif mode should compare bamm vs bamm directly."""
     cmd = [
         "mimosa",
@@ -131,7 +125,7 @@ def test_motif_comparison_bamm_vs_bamm(examples_dir, temp_dir):
     assert_comparison_output(cli_json(result), metric="ed")
 
 
-def test_profile_comparison_sitega_vs_pwm(examples_dir, temp_dir):
+def test_profile_comparison_sitega_vs_pwm(examples_dir):
     """Profile mode should compare sitega vs pwm via scanned profiles."""
     cmd = [
         "mimosa",
@@ -150,7 +144,7 @@ def test_profile_comparison_sitega_vs_pwm(examples_dir, temp_dir):
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
 
-def test_motif_comparison_sitega_vs_pwm(examples_dir, temp_dir):
+def test_motif_comparison_sitega_vs_pwm(examples_dir):
     """Motif mode should compare sitega vs pwm directly."""
     cmd = [
         "mimosa",
@@ -169,7 +163,7 @@ def test_motif_comparison_sitega_vs_pwm(examples_dir, temp_dir):
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
 
-def test_motif_comparison_sitega_vs_pwm_pcc(examples_dir, temp_dir):
+def test_motif_comparison_sitega_vs_pwm_pcc(examples_dir):
     """Motif mode should support PFM-based sitega vs pwm comparison."""
     cmd = [
         "mimosa",
@@ -189,7 +183,7 @@ def test_motif_comparison_sitega_vs_pwm_pcc(examples_dir, temp_dir):
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
 
-def test_profile_comparison_sitega_vs_pwm_second_case(examples_dir, temp_dir):
+def test_profile_comparison_sitega_vs_pwm_second_case(examples_dir):
     """Profile mode should handle a second sitega vs pwm example."""
     cmd = [
         "mimosa",
@@ -208,7 +202,7 @@ def test_profile_comparison_sitega_vs_pwm_second_case(examples_dir, temp_dir):
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
 
-def test_motif_comparison_sitega_vs_sitega_1(examples_dir, temp_dir):
+def test_motif_comparison_sitega_vs_sitega_1(examples_dir):
     """Motif mode should compare sitega vs sitega in the first scenario."""
     cmd = [
         "mimosa",
@@ -228,7 +222,7 @@ def test_motif_comparison_sitega_vs_sitega_1(examples_dir, temp_dir):
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
 
-def test_motif_comparison_sitega_vs_sitega_2(examples_dir, temp_dir):
+def test_motif_comparison_sitega_vs_sitega_2(examples_dir):
     """Motif mode should compare sitega vs sitega in the second scenario."""
     cmd = [
         "mimosa",
@@ -248,7 +242,7 @@ def test_motif_comparison_sitega_vs_sitega_2(examples_dir, temp_dir):
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
 
-def test_motif_comparison_sitega_vs_sitega_3(examples_dir, temp_dir):
+def test_motif_comparison_sitega_vs_sitega_3(examples_dir):
     """Motif mode should compare sitega vs sitega in the third scenario."""
     cmd = [
         "mimosa",
@@ -268,7 +262,7 @@ def test_motif_comparison_sitega_vs_sitega_3(examples_dir, temp_dir):
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
 
-def test_motif_comparison_pwm_vs_sitega(examples_dir, temp_dir):
+def test_motif_comparison_pwm_vs_sitega(examples_dir):
     """Motif mode should compare pwm vs sitega directly."""
     cmd = [
         "mimosa",
@@ -288,7 +282,7 @@ def test_motif_comparison_pwm_vs_sitega(examples_dir, temp_dir):
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
 
 
-def test_profile_comparison_basic(examples_dir, temp_dir):
+def test_profile_comparison_basic(examples_dir):
     """Profile mode should compare two precomputed score profiles."""
     cmd = [
         "mimosa",
@@ -309,7 +303,7 @@ def test_profile_comparison_basic(examples_dir, temp_dir):
     assert_comparison_output(cli_json(result), metric="co", has_sites=True)
 
 
-def test_profile_comparison_accepts_dice_metric(examples_dir, temp_dir):
+def test_profile_comparison_accepts_dice_metric(examples_dir):
     """Profile mode should expose the Dice metric through CLI."""
     cmd = [
         "mimosa",
@@ -330,7 +324,7 @@ def test_profile_comparison_accepts_dice_metric(examples_dir, temp_dir):
     assert_comparison_output(cli_json(result), metric="dice", has_sites=True)
 
 
-def test_profile_comparison_accepts_dice_rowwise_metric(examples_dir, temp_dir):
+def test_profile_comparison_accepts_dice_rowwise_metric(examples_dir):
     """Profile CLI should expose the window-averaged rowwise Dice metric."""
     cmd = [
         "mimosa",
@@ -353,7 +347,7 @@ def test_profile_comparison_accepts_dice_rowwise_metric(examples_dir, temp_dir):
     assert_comparison_output(cli_json(result), metric="dice_rowwise", has_sites=True)
 
 
-def test_profile_comparison_accepts_cosine_metric(examples_dir, temp_dir):
+def test_profile_comparison_accepts_cosine_metric(examples_dir):
     """Profile CLI should expose the window-averaged cosine metric."""
     cmd = [
         "mimosa",
@@ -378,7 +372,7 @@ def test_profile_comparison_accepts_cosine_metric(examples_dir, temp_dir):
     assert_comparison_output(cli_json(result), metric="cosine", has_sites=True)
 
 
-def test_profile_comparison_accepts_co_rowwise_metric(examples_dir, temp_dir):
+def test_profile_comparison_accepts_co_rowwise_metric(examples_dir):
     """Profile CLI should expose the window-averaged rowwise CO metric."""
     cmd = [
         "mimosa",
@@ -401,7 +395,7 @@ def test_profile_comparison_accepts_co_rowwise_metric(examples_dir, temp_dir):
     assert_comparison_output(cli_json(result), metric="co_rowwise", has_sites=True)
 
 
-def test_profile_comparison_rejects_removed_l1sim_metric(examples_dir, temp_dir):
+def test_profile_comparison_rejects_removed_l1sim_metric(examples_dir):
     """Profile CLI should reject removed metrics before running a comparison."""
     cmd = [
         "mimosa",
@@ -421,7 +415,7 @@ def test_profile_comparison_rejects_removed_l1sim_metric(examples_dir, temp_dir)
     assert "invalid choice" in result.stderr
 
 
-def test_profile_comparison_with_empirical_logfpr_thresholding(examples_dir, temp_dir):
+def test_profile_comparison_with_empirical_logfpr_thresholding(examples_dir):
     """Profile mode should use threshold-selected site windows on empirically normalized profiles."""
     cmd = [
         "mimosa",
@@ -450,7 +444,7 @@ def test_profile_comparison_with_empirical_logfpr_thresholding(examples_dir, tem
     assert_comparison_output(cli_json(result), metric="co", has_sites=True)
 
 
-def test_profile_comparison_accepts_background_argument(examples_dir, temp_dir):
+def test_profile_comparison_accepts_background_argument(examples_dir):
     """Profile CLI should accept explicit background calibration sequences."""
     cmd = [
         "mimosa",
@@ -472,7 +466,7 @@ def test_profile_comparison_accepts_background_argument(examples_dir, temp_dir):
 
 
 @pytest.mark.parametrize("removed_flag", ["--permutations", "--distortion", "--min-kernel-size", "--max-kernel-size"])
-def test_profile_comparison_rejects_removed_null_flags(examples_dir, temp_dir, removed_flag):
+def test_profile_comparison_rejects_removed_null_flags(examples_dir, removed_flag):
     """Profile mode should reject removed Monte Carlo flags in argparse."""
     cmd = [
         "mimosa",
@@ -492,7 +486,7 @@ def test_profile_comparison_rejects_removed_null_flags(examples_dir, temp_dir, r
     assert "unrecognized arguments" in result.stderr.lower()
 
 
-def test_motif_comparison_rejects_removed_null_flags(examples_dir, temp_dir):
+def test_motif_comparison_rejects_removed_null_flags(examples_dir):
     """Motif mode should reject removed permutation flags in argparse."""
     cmd = [
         "mimosa",
@@ -531,7 +525,7 @@ def test_pipeline_with_missing_files():
     assert "file not found" in result.stderr.lower(), "Should mention missing file"
 
 
-def test_profile_comparison_rejects_corr_metric(examples_dir, temp_dir):
+def test_profile_comparison_rejects_corr_metric(examples_dir):
     """Profile CLI should reject the removed Pearson metric."""
     cmd = [
         "mimosa",

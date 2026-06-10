@@ -20,16 +20,6 @@ registry: dict[str, Callable] = {
 }
 
 
-def _register_comparison_strategy(name: str):
-    """Register one comparison strategy."""
-
-    def decorator(fn):
-        registry[name] = fn
-        return fn
-
-    return decorator
-
-
 def _resolve_target_job_count(n_jobs: int | None) -> int:
     """Resolve one target-level worker count from the compatibility config key."""
     return -1 if n_jobs is None else int(n_jobs)
