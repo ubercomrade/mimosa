@@ -189,9 +189,9 @@ class OneToOneConfig:
 - `api._generate_random_sequences()` можно удалить;
 - `cli._resolve_build_null_sequences()` будет вызывать общий helper.
 
-### [ ] 6. `models.py` стал модулем с несколькими responsibilities
+### [x] 6. `models.py` стал модулем с несколькими responsibilities
 
-Файл: `src/mimosa/models.py`, 935 строк.
+Было: `src/mimosa/models.py`, 935 строк.
 
 Сейчас в одном модуле находятся:
 
@@ -214,6 +214,8 @@ class OneToOneConfig:
 - `sites.py` - `get_sites`, hit extraction, PFM reconstruction.
 
 Такой split не обязан менять public API: `models.py` может продолжить реэкспортировать функции.
+
+Выполнено без реэкспорта функций через `models.py`: registry/read/write facade остался в `models.py`, concrete handlers перенесены в `handlers.py`, scan dispatch и score helpers - в `scanning.py`, site extraction и PFM reconstruction - в `sites.py`.
 
 ### [ ] 7. `comparison.py` тоже стоит разделить по стратегиям
 

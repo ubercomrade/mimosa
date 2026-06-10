@@ -48,7 +48,10 @@ class _FrozenRecord(Mapping[str, Any]):
             value = getattr(self, field_info.name)
             if field_info.name in self._OMIT_NONE_FIELDS and value is None:
                 continue
-            yield next((key for key, name in self._PUBLIC_KEY_OVERRIDES.items() if name == field_info.name), field_info.name)
+            yield next(
+                (key for key, name in self._PUBLIC_KEY_OVERRIDES.items() if name == field_info.name),
+                field_info.name,
+            )
 
     def __len__(self) -> int:
         return sum(1 for _ in self)

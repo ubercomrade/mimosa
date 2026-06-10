@@ -1402,14 +1402,25 @@ def test_run_one_to_many_passes_targets_lazily(monkeypatch):
         observed["is_list"] = isinstance(target_models, list)
         materialized = list(target_models)
         observed["count"] = len(materialized)
-        return [ComparisonResult(query=query_model.name, target=materialized[0].name, score=1.0, offset=0, orientation="++", metric="co")]
+        return [
+            ComparisonResult(
+                query=query_model.name,
+                target=materialized[0].name,
+                score=1.0,
+                offset=0,
+                orientation="++",
+                metric="co",
+            )
+        ]
 
     monkeypatch.setattr(api_module, "compare_one_to_many_models", fake_compare_one_to_many_models)
 
     results = run_one_to_many(config)
 
     assert observed == {"is_list": False, "count": 1}
-    assert results == [ComparisonResult(query="query", target="target", score=1.0, offset=0, orientation="++", metric="co")]
+    assert results == [
+        ComparisonResult(query="query", target="target", score=1.0, offset=0, orientation="++", metric="co")
+    ]
 
 
 def test_run_one_to_many_preserves_generator_targets():

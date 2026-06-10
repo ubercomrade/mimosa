@@ -40,7 +40,7 @@ from mimosa.batches import (
     row_values,
 )
 from mimosa.cache import clear_cache
-from mimosa.cli import map_args_to_comparator_kwargs
+from mimosa.cli import build_null_request_from_args, map_args_to_comparator_kwargs
 from mimosa.comparison import (
     compare,
     create_comparator_config,
@@ -80,21 +80,12 @@ from mimosa.io import (
     read_slim,
     write_dist,
 )
-from mimosa.models import (
-    GenericModel,
-    calculate_threshold_table,
-    get_frequencies,
-    get_pfm,
-    get_sites,
-    read_model,
-    read_models,
-    scan_model,
-    scan_model_strands,
-    write_model,
-)
+from mimosa.models import GenericModel, read_model, read_models, write_model
 from mimosa.models import registry as model_registry
 from mimosa.nulls import (
     EmpiricalSurvivalEstimator,
+    NullBuildRequest,
+    NullBuildSummary,
     annotate_results_with_nulls,
     bh_qvalues,
     build_null_distributions,
@@ -103,8 +94,11 @@ from mimosa.nulls import (
     is_artifact_compatible,
     parse_group_relations,
     parse_pair_relations,
+    run_build_null_request,
     save_null_artifact,
 )
+from mimosa.scanning import calculate_threshold_table, get_frequencies, scan_model, scan_model_strands
+from mimosa.sites import get_pfm, get_sites
 from mimosa.types import ComparisonResult
 
 FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures" / "models"

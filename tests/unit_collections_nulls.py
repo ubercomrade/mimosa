@@ -88,8 +88,22 @@ def test_null_builder_and_annotation_add_significance_values():
     )
     entry = next(iter(built.artifact["entries"].values()))
     results = [
-        ComparisonResult(query="q", target="u1", score=float(entry["raw_null_scores"][0]), offset=0, orientation="++", metric="pcc"),
-        ComparisonResult(query="q", target="u2", score=float(entry["raw_null_scores"][1]), offset=0, orientation="++", metric="pcc"),
+        ComparisonResult(
+            query="q",
+            target="u1",
+            score=float(entry["raw_null_scores"][0]),
+            offset=0,
+            orientation="++",
+            metric="pcc",
+        ),
+        ComparisonResult(
+            query="q",
+            target="u2",
+            score=float(entry["raw_null_scores"][1]),
+            offset=0,
+            orientation="++",
+            metric="pcc",
+        ),
     ]
     annotated = annotate_results_with_nulls(
         results,
@@ -100,6 +114,63 @@ def test_null_builder_and_annotation_add_significance_values():
 
     assert entry["included_target_names"] == ["u1", "u2"]
     assert all("p-value" in result and "E-value" in result and "q-value" in result for result in annotated)
+
+
+def test_build_null_request_from_args_runs_without_subprocess(tmp_path):
+    """CLI build-null orchestration should be testable through request objects."""
+    motif_dir = tmp_path / "motifs"
+    motif_dir.mkdir()
+    (motif_dir / "q.pfm").write_text(">q\n0.7 0.1 0.1 0.1\n0.1 0.7 0.1 0.1\n", encoding="utf-8")
+    (motif_dir / "t1.pfm").write_text(">t1\n0.1 0.7 0.1 0.1\n0.7 0.1 0.1 0.1\n", encoding="utf-8")
+    (motif_dir / "t2.pfm").write_text(">t2\n0.1 0.1 0.7 0.1\n0.1 0.7 0.1 0.1\n", encoding="utf-8")
+    groups = tmp_path / "groups.tsv"
+    groups.write_text("motif\tgroup\nq\tA\nt1\tB\nt2\tB\n", encoding="utf-8")
+    output = tmp_path / "motif-pcc.null.joblib"
+    args = SimpleNamespace(
+        mode="build-null",
+        motifs=motif_dir,
+        model_type="pwm",
+        pattern="*.pfm",
+        groups=groups,
+        pair_table=None,
+        pair_matrix=None,
+        name_column="motif",
+        group_column="group",
+        query_column="query",
+        target_column="target",
+        include_column="include",
+        ignore_missing_relations=False,
+        strategy="motif",
+        metric="pcc",
+        fasta=None,
+        background=None,
+        num_sequences=1000,
+        seq_length=200,
+        search_range=10,
+        window_radius=10,
+        realign_window=3,
+        min_logfpr=None,
+        pfm_mode=False,
+        pfm_top_fraction=0.05,
+        cache="off",
+        cache_dir=".mimosa-cache",
+        output=output,
+        install_cache=False,
+        strict=False,
+        min_null_targets=2,
+        jobs=None,
+        seed=127,
+    )
+
+    request = build_null_request_from_args(args)
+    summary = run_build_null_request(request)
+
+    assert output.exists()
+    assert request.relations["q"] == {"t1", "t2"}
+    assert summary.to_dict()["artifact"] == str(output)
+    assert summary.number_of_motifs == 3
+    assert summary.number_of_query_distributions_built == 1
+    assert summary.total_comparisons_run == 2
 
 
 def test_artifact_matching_rejects_incompatible_metric_and_query():

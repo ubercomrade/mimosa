@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import gaussian_kde
 
+from mimosa.batches import SequenceBatch
 from mimosa.cache import fingerprint_batch, fingerprint_model
 from mimosa.models import GenericModel
 from mimosa.types import ComparatorConfig, ComparisonResult
@@ -78,6 +79,48 @@ class NullBuildResult:
     artifact: NullArtifact
     skipped: list[dict[str, Any]]
     total_comparisons: int
+
+
+@dataclass(frozen=True, slots=True)
+class NullBuildRequest:
+    """Resolved inputs required to build and persist one null-distribution artifact."""
+
+    models: list[GenericModel]
+    relations: dict[str, set[str]]
+    strategy: str
+    config: ComparatorConfig
+    output: str | Path
+    sequences: SequenceBatch | None = None
+    background: SequenceBatch | None = None
+    min_null_targets: int = 1
+    strict: bool = False
+    relation_fingerprint: str | None = None
+    install_cache: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class NullBuildSummary:
+    """Serializable summary for one null-distribution build."""
+
+    artifact: Path
+    cache_path: Path | None
+    number_of_motifs: int
+    number_of_query_distributions_built: int
+    skipped_queries: list[dict[str, Any]]
+    total_comparisons_run: int
+    config_signature: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the public JSON-compatible payload used by the CLI."""
+        return {
+            "artifact": str(self.artifact),
+            "cache_path": str(self.cache_path) if self.cache_path else None,
+            "number_of_motifs": self.number_of_motifs,
+            "number_of_query_distributions_built": self.number_of_query_distributions_built,
+            "skipped_queries": self.skipped_queries,
+            "total_comparisons_run": self.total_comparisons_run,
+            "config_signature": self.config_signature,
+        }
 
 
 def stable_json_dumps(value: Any) -> str:
@@ -416,6 +459,32 @@ def install_null_artifact(path: str | Path, cache_dir: str | Path = NULL_CACHE_D
     destination = cache / Path(path).name
     shutil.copy2(path, destination)
     return destination
+
+
+def run_build_null_request(request: NullBuildRequest) -> NullBuildSummary:
+    """Build, save, and optionally install one null-distribution artifact."""
+    built = build_null_distributions(
+        request.models,
+        request.relations,
+        strategy=request.strategy,
+        config=request.config,
+        sequences=request.sequences,
+        background=request.background,
+        min_null_targets=request.min_null_targets,
+        strict=request.strict,
+        relation_fingerprint=request.relation_fingerprint,
+    )
+    artifact_path = save_null_artifact(built.artifact, request.output)
+    cache_path = install_null_artifact(artifact_path) if request.install_cache else None
+    return NullBuildSummary(
+        artifact=artifact_path,
+        cache_path=cache_path,
+        number_of_motifs=len(request.models),
+        number_of_query_distributions_built=len(built.artifact["entries"]),
+        skipped_queries=built.skipped,
+        total_comparisons_run=built.total_comparisons,
+        config_signature=built.artifact["metadata"]["config_signature"],
+    )
 
 
 def load_null_artifact(source: str | Path | dict[str, Any]) -> NullArtifact:

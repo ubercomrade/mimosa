@@ -11,8 +11,10 @@ from mimosa.comparison import (
     SUPPORTED_MOTIF_METRICS,
     SUPPORTED_PROFILE_METRICS,
     compare,
-    compare_one_to_many as compare_one_to_many_models,
     create_comparator_config,
+)
+from mimosa.comparison import (
+    compare_one_to_many as compare_one_to_many_models,
 )
 from mimosa.io import read_fasta
 from mimosa.models import GenericModel, read_model

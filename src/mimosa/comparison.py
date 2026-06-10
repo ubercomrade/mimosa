@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from pathlib import Path
-from typing import Callable, Literal, Optional, TypeVar
+from typing import Any, Callable, Literal, TypeVar
 
 import numpy as np
 from joblib import Parallel, delayed
@@ -14,7 +13,6 @@ from numba import njit
 from mimosa.batches import (
     MINUS_STRAND,
     PLUS_STRAND,
-    SequenceBatch,
     flatten_profile_bundle,
 )
 from mimosa.cache import ProfileCacheSpec, fingerprint_batch, fingerprint_model, load_profile_cache, store_profile_cache
@@ -28,11 +26,9 @@ from mimosa.functions import (
     rowwise_cosine,
     rowwise_dice,
 )
-from mimosa.models import (
-    GenericModel,
-    get_pfm,
-    scan_model_strands,
-)
+from mimosa.models import GenericModel
+from mimosa.scanning import scan_model_strands
+from mimosa.sites import get_pfm
 from mimosa.types import ComparatorConfig, ComparisonResult
 from mimosa.validation import (
     validate_cache_mode,
@@ -112,9 +108,7 @@ def create_comparator_config(**kwargs) -> ComparatorConfig:
         SUPPORTED_PROFILE_NORMALIZATIONS,
     )
     config["n_jobs"] = validate_optional_thread_count("n_jobs", config.get("n_jobs"))
-    config["pfm_top_fraction"] = (
-        validate_pfm_top_fraction(config.get("pfm_top_fraction")) or defaults.pfm_top_fraction
-    )
+    config["pfm_top_fraction"] = validate_pfm_top_fraction(config.get("pfm_top_fraction")) or defaults.pfm_top_fraction
     config["cache_mode"] = validate_cache_mode(config.get("cache_mode", "off"))
     null_search_dirs = config.get("null_search_dirs")
     if null_search_dirs is not None:

@@ -16,13 +16,12 @@ from mimosa.comparison import (
 from mimosa.io import read_fasta
 from mimosa.models import read_models
 from mimosa.nulls import (
-    build_null_distributions,
+    NullBuildRequest,
     file_fingerprint,
-    install_null_artifact,
     parse_group_relations,
     parse_pair_matrix_relations,
     parse_pair_relations,
-    save_null_artifact,
+    run_build_null_request,
 )
 from mimosa.validation import validate_file_exists, validate_positive_int
 
@@ -539,8 +538,8 @@ def run_cache_command_from_args(args) -> None:
     raise ValueError(f"Unknown cache action: {args.cache_action}")
 
 
-def run_build_null_from_args(args) -> None:
-    """Build and save a null-distribution artifact from CLI arguments."""
+def build_null_request_from_args(args) -> NullBuildRequest:
+    """Resolve parsed CLI arguments into a null-distribution build request."""
     models = read_models(args.motifs, args.model_type, pattern=args.pattern)
     known_names = {model.name for model in models}
     relation_path = args.groups or args.pair_table or args.pair_matrix
@@ -572,29 +571,26 @@ def run_build_null_from_args(args) -> None:
     comparator = create_comparator_config(**map_args_to_comparator_kwargs(args))
     sequences = _resolve_build_null_sequences(args, comparator)
     background = read_fasta(args.background) if args.background else None
-    built = build_null_distributions(
-        models,
-        relations,
+    return NullBuildRequest(
+        models=models,
+        relations=relations,
         strategy=args.strategy,
         config=comparator,
+        output=args.output,
         sequences=sequences,
         background=background,
         min_null_targets=args.min_null_targets,
         strict=args.strict,
         relation_fingerprint=relation_fingerprint,
+        install_cache=args.install_cache,
     )
-    artifact_path = save_null_artifact(built.artifact, args.output)
-    cache_path = install_null_artifact(artifact_path) if args.install_cache else None
-    summary = {
-        "artifact": str(artifact_path),
-        "cache_path": str(cache_path) if cache_path else None,
-        "number_of_motifs": len(models),
-        "number_of_query_distributions_built": len(built.artifact["entries"]),
-        "skipped_queries": built.skipped,
-        "total_comparisons_run": built.total_comparisons,
-        "config_signature": built.artifact["metadata"]["config_signature"],
-    }
-    print(json.dumps(summary))
+
+
+def run_build_null_from_args(args) -> None:
+    """Build and save a null-distribution artifact from CLI arguments."""
+    request = build_null_request_from_args(args)
+    summary = run_build_null_request(request)
+    print(json.dumps(summary.to_dict()))
 
 
 def _resolve_build_null_sequences(args, comparator):

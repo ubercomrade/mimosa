@@ -67,6 +67,7 @@ ignore = []
 "src/mimosa/comparison.py" = ["PLR0913"]
 "src/mimosa/functions.py" = ["PLR0913"]
 "src/mimosa/models.py" = ["PLR0913"]
+"src/mimosa/sites.py" = ["PLR0913"]
 "examples/*.py" = ["PLR0913"]
 "tests/*.py" = ["ARG001", "C901", "PLR0913", "PLR2004"]
 
