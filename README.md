@@ -299,6 +299,52 @@ Clear cached normalized profiles:
 mimosa cache clear --cache-dir .mimosa-cache
 ```
 
+## Python API
+
+Use the top-level `mimosa` package for library integration. The stable public API includes model loading,
+scanning, comparison, and model-handler registration:
+
+```python
+from mimosa import compare_one_to_one, read_model, scan_model
+
+query = read_model("query.meme", "pwm")
+target = read_model("target.xml", "dimont")
+
+scores = scan_model(query, sequences, strand="best")
+result = compare_one_to_one(query, target, strategy="profile", sequences=sequences)
+```
+
+MIMOSA accepts either paths plus model-type keys or preloaded `GenericModel` instances:
+
+```python
+from mimosa import GenericModel, compare_one_to_many
+
+query = GenericModel("pwm", "query", representation, length, {"kmer": 1, "_source_pfm": pfm})
+results = compare_one_to_many(query, targets, strategy="profile", sequences=sequences)
+```
+
+External model families should be integrated through `register_model_handler`. A handler is an adapter bundle with
+`scan`, optional `scan_both`, `load`, `write`, and `score_bounds` callables. Functions in `mimosa.handlers` whose
+names start with `_` are internal implementation details and should not be imported by downstream projects.
+
+```python
+from mimosa import GenericModel, register_model_handler
+
+
+def load_custom(path: str, kwargs: dict) -> GenericModel:
+    return GenericModel("custom", "custom_name", representation, length, {"kmer": 1})
+
+
+register_model_handler(
+    "custom",
+    scan=scan_custom,
+    scan_both=None,
+    load=load_custom,
+    write=write_custom,
+    score_bounds=custom_score_bounds,
+)
+```
+
 ## CLI Overview
 
 The CLI exposes four top-level commands:

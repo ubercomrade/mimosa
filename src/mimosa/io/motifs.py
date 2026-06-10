@@ -275,7 +275,7 @@ def read_bamm(motif_path: str, target_order: int) -> np.ndarray:
 
 def write_sitega(model, path: str) -> None:
     """Write SiteGA motif to a .mat file."""
-    from .scanning import get_score_bounds
+    from mimosa.scanning import get_score_bounds
 
     sitega_matrix = model.representation
     minimum, maximum = get_score_bounds(model)

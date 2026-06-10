@@ -80,7 +80,7 @@ from mimosa.io import (
     read_slim,
     write_dist,
 )
-from mimosa.models import GenericModel, read_model, read_models, write_model
+from mimosa.models import GenericModel, ModelHandler, read_model, read_models, write_model
 from mimosa.models import registry as model_registry
 from mimosa.nulls import (
     EmpiricalSurvivalEstimator,

@@ -102,6 +102,11 @@ def test_model_registry():
     # Test that we can get registered strategies
     pwm_strategy = model_registry.get("pwm")
     assert pwm_strategy is not None
+    assert isinstance(pwm_strategy, ModelHandler)
+    assert callable(pwm_strategy.scan)
+    assert callable(pwm_strategy.load)
+    assert callable(pwm_strategy.write)
+    assert callable(pwm_strategy.score_bounds)
 
     bamm_strategy = model_registry.get("bamm")
     assert bamm_strategy is not None

@@ -41,24 +41,24 @@ def scan_model(model: GenericModel, sequences=None, strand: Optional[StrandMode]
     strand_mode = resolve_strand_mode(strand, model.config.get("strand_mode", "best"))
     if strand_mode == "both":
         return scan_model_strands(model, sequences)
-    return handler["scan"](model, sequences, strand_mode)
+    return handler.scan(model, sequences, strand_mode)
 
 
 def scan_model_strands(model: GenericModel, sequences=None):
     """Scan one model on both strands, using a shared backend call when available."""
     handler = get_model_handler(model.type_key)
-    scan_both = handler.get("scan_both")
+    scan_both = handler.scan_both
     if scan_both is not None:
         plus_scores, minus_scores = scan_both(model, sequences)
     else:
-        plus_scores = handler["scan"](model, sequences, "+")
-        minus_scores = handler["scan"](model, sequences, "-")
+        plus_scores = handler.scan(model, sequences, "+")
+        minus_scores = handler.scan(model, sequences, "-")
     return make_strand_bundle(plus_scores, minus_scores)
 
 
 def get_score_bounds(model: GenericModel) -> tuple[float, float]:
     """Return theoretical minimum and maximum scores for a model."""
-    return get_model_handler(model.type_key)["score_bounds"](model)
+    return get_model_handler(model.type_key).score_bounds(model)
 
 
 def score_bounds_from_representation(representation: np.ndarray) -> tuple[float, float]:

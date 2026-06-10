@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, TypedDict
+from typing import Any, Callable
 
 from mimosa.io import read_meme_many
 
@@ -21,7 +21,14 @@ class GenericModel:
     config: dict
 
 
-class ModelHandler(TypedDict):
+@dataclass(frozen=True)
+class ModelHandler:
+    """Adapter bundle for one model family.
+
+    The registry stores explicit handler objects rather than dictionaries so the
+    extension contract is visible to users and type checkers.
+    """
+
     scan: Callable[..., Any]
     scan_both: Callable[..., Any] | None
     load: Callable[..., GenericModel]
@@ -42,13 +49,13 @@ def register_model_handler(
     scan_both: Callable[..., Any] | None = None,
 ) -> None:
     """Register one public model handler bundle."""
-    registry[key] = {
-        "scan": scan,
-        "scan_both": scan_both,
-        "load": load,
-        "write": write,
-        "score_bounds": score_bounds,
-    }
+    registry[key] = ModelHandler(
+        scan=scan,
+        scan_both=scan_both,
+        load=load,
+        write=write,
+        score_bounds=score_bounds,
+    )
 
 
 def get_model_handler(key: str) -> ModelHandler:
@@ -64,13 +71,13 @@ def write_model(model: GenericModel, path: str) -> None:
     """Universal write function that dispatches to the appropriate handler."""
     handler = get_model_handler(model.type_key)
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    handler["write"](model, path)
+    handler.write(model, path)
 
 
 def read_model(path: str, model_type: str, **kwargs) -> GenericModel:
     """Factory function for creating models from files."""
     handler = get_model_handler(model_type)
-    return handler["load"](path, kwargs)
+    return handler.load(path, kwargs)
 
 
 def read_models(
