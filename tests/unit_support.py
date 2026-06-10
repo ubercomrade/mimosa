@@ -29,8 +29,6 @@ from mimosa.api import (
     run_one_to_one,
 )
 from mimosa.batches import (
-    MINUS_STRAND,
-    PLUS_STRAND,
     flatten_profile_bundle,
     flatten_valid,
     make_score_batch,
@@ -103,6 +101,8 @@ from mimosa.types import ComparisonResult
 
 FIXTURES_ROOT = Path(__file__).resolve().parent / "fixtures" / "models"
 EXAMPLES_ROOT = Path(__file__).resolve().parents[1] / "examples"
+PLUS_STRAND = 0
+MINUS_STRAND = 1
 _DNA_TO_INT = {"A": 0, "C": 1, "G": 2, "T": 3}
 _RC_TABLE = np.array([3, 2, 1, 0, 4], dtype=np.int8)
 _JSTACS_NUMERIC_RE = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[Ee][-+]?\d+)?")

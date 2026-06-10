@@ -11,7 +11,7 @@ from typing import TypedDict
 
 import numpy as np
 
-from mimosa.batches import SCORE_PADDING, ProfileBundle, pack_profile_bundle
+from mimosa.batches import ProfileBundle, pack_profile_bundle
 from mimosa.models import GenericModel
 
 CACHE_VERSION = "v8"
@@ -97,7 +97,7 @@ def load_profile_cache(spec: ProfileCacheSpec) -> ProfileBundle | None:
         path.unlink(missing_ok=True)
         return None
 
-    return pack_profile_bundle(values, lengths, SCORE_PADDING)
+    return pack_profile_bundle(values, lengths, 0.0)
 
 
 def store_profile_cache(spec: ProfileCacheSpec, profile: ProfileBundle) -> Path:

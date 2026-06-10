@@ -9,9 +9,6 @@ import numpy as np
 import pandas as pd
 
 from mimosa.batches import (
-    MINUS_STRAND,
-    PLUS_STRAND,
-    SCORE_PADDING,
     make_strand_bundle,
     pack_batch,
     profile_row_values,
@@ -38,19 +35,22 @@ def _empty_hit_arrays() -> dict[str, np.ndarray]:
 
 def _strand_indices_for_hit_mode(strand: StrandMode) -> tuple[int, ...]:
     """Return strand indices considered by one hit-collection request."""
+    plus_strand = 0
+    minus_strand = 1
     if strand == "+":
-        return (PLUS_STRAND,)
+        return (plus_strand,)
     if strand == "-":
-        return (MINUS_STRAND,)
-    return (PLUS_STRAND, MINUS_STRAND)
+        return (minus_strand,)
+    return (plus_strand, minus_strand)
 
 
 def _empty_score_batch_like(score_batch):
     """Return an empty score batch with the same shape and row lengths."""
     score_values = np.asarray(score_batch["values"])
-    values = np.full(score_values.shape, SCORE_PADDING, dtype=score_values.dtype)
+    padding_value = score_batch["padding_value"]
+    values = np.full(score_values.shape, padding_value, dtype=score_values.dtype)
     mask = np.zeros(np.asarray(score_batch["mask"]).shape, dtype=bool)
-    return pack_batch(values, mask, score_batch["lengths"], SCORE_PADDING)
+    return pack_batch(values, mask, score_batch["lengths"], padding_value)
 
 
 def _scan_bundle_for_strand(model: GenericModel, sequences, strand: StrandMode):
@@ -72,11 +72,12 @@ def _collect_best_hits(score_bundle, strand: StrandMode) -> dict[str, np.ndarray
     strand_indices: list[int] = []
     scores: list[float] = []
     candidate_strands = _strand_indices_for_hit_mode(strand)
+    plus_strand = 0
 
     for seq_idx in range(len(score_bundle["lengths"])):
         best_score = -np.inf
         best_start = -1
-        best_strand = PLUS_STRAND
+        best_strand = plus_strand
 
         for strand_idx in candidate_strands:
             strand_scores = profile_row_values(score_bundle, strand_idx, seq_idx)
@@ -140,14 +141,16 @@ def _collect_threshold_hits_for_strands(
 
 def _collect_best_strand_threshold_hits(score_bundle, score_threshold: float) -> dict[str, np.ndarray]:
     """Collect above-threshold hits after collapsing both strands by per-position maximum."""
+    plus_strand = 0
+    minus_strand = 1
     seq_indices_parts = []
     start_parts = []
     strand_parts = []
     score_parts = []
 
     for seq_idx in range(len(score_bundle["lengths"])):
-        plus_scores = profile_row_values(score_bundle, PLUS_STRAND, seq_idx)
-        minus_scores = profile_row_values(score_bundle, MINUS_STRAND, seq_idx)
+        plus_scores = profile_row_values(score_bundle, plus_strand, seq_idx)
+        minus_scores = profile_row_values(score_bundle, minus_strand, seq_idx)
         if plus_scores.size == 0:
             continue
 
@@ -159,7 +162,7 @@ def _collect_best_strand_threshold_hits(score_bundle, score_threshold: float) ->
         seq_indices_parts.append(np.full(positions.size, seq_idx, dtype=np.int64))
         start_parts.append(positions.astype(np.int64, copy=False))
         strand_parts.append(
-            np.where(plus_scores[positions] >= minus_scores[positions], PLUS_STRAND, MINUS_STRAND).astype(
+            np.where(plus_scores[positions] >= minus_scores[positions], plus_strand, minus_strand).astype(
                 np.int8,
                 copy=False,
             )

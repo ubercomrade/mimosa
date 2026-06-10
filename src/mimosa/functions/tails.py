@@ -6,7 +6,6 @@ import numpy as np
 from numba import njit
 
 from mimosa.batches import (
-    SCORE_PADDING,
     batch_with_values,
     flatten_profile_bundle,
     flatten_valid,
@@ -72,18 +71,19 @@ def _apply_score_log_tail_table_numba(values, mask, scores_col, log_tail_col, pa
 def apply_score_log_tail_table(score_batch, table: np.ndarray):
     """Map one score batch to empirical log-tail values using a lookup table."""
     table_arr = np.asarray(table, dtype=np.float32)
+    padding_value = score_batch["padding_value"]
     if table_arr.size == 0:
-        empty_values = np.full_like(score_batch["values"], SCORE_PADDING)
-        return batch_with_values(score_batch, empty_values, padding_value=SCORE_PADDING)
+        empty_values = np.full_like(score_batch["values"], padding_value)
+        return batch_with_values(score_batch, empty_values, padding_value=padding_value)
 
     mapped = _apply_score_log_tail_table_numba(
         np.ascontiguousarray(score_batch["values"], dtype=np.float32),
         np.ascontiguousarray(score_batch["mask"], dtype=np.bool_),
         np.ascontiguousarray(table_arr[:, 0], dtype=np.float32),
         np.ascontiguousarray(table_arr[:, 1], dtype=np.float32),
-        np.float32(SCORE_PADDING),
+        np.float32(padding_value),
     )
-    return batch_with_values(score_batch, mapped, padding_value=SCORE_PADDING)
+    return batch_with_values(score_batch, mapped, padding_value=padding_value)
 
 
 def _build_length_mask(lengths: np.ndarray, width: int) -> np.ndarray:
@@ -96,10 +96,11 @@ def apply_score_log_tail_table_to_profile_bundle(profile_bundle, table: np.ndarr
     table_arr = np.asarray(table, dtype=np.float32)
     values = np.ascontiguousarray(profile_bundle["values"], dtype=np.float32)
     lengths = np.asarray(profile_bundle["lengths"], dtype=np.int64)
+    padding_value = profile_bundle["padding_value"]
 
     if table_arr.size == 0:
-        empty_values = np.full_like(values, SCORE_PADDING)
-        return pack_profile_bundle(empty_values, lengths, SCORE_PADDING)
+        empty_values = np.full_like(values, padding_value)
+        return pack_profile_bundle(empty_values, lengths, padding_value)
 
     mask = np.ascontiguousarray(_build_length_mask(lengths, values.shape[2]), dtype=np.bool_)
     mapped = np.empty_like(values)
@@ -112,10 +113,10 @@ def apply_score_log_tail_table_to_profile_bundle(profile_bundle, table: np.ndarr
             mask,
             scores_col,
             log_tail_col,
-            np.float32(SCORE_PADDING),
+            np.float32(padding_value),
         )
 
-    return pack_profile_bundle(mapped, lengths, SCORE_PADDING)
+    return pack_profile_bundle(mapped, lengths, padding_value)
 
 
 def scores_to_empirical_log_tail_bundle(profile_bundle):
@@ -126,6 +127,7 @@ def scores_to_empirical_log_tail_bundle(profile_bundle):
 
 def normalize_empirical_log_tail_pair(score_batch_plus, score_batch_minus):
     """Normalize two strand score batches using one shared empirical log-tail mapping."""
+    padding_value = score_batch_plus["padding_value"]
     profile_bundle = pack_profile_bundle(
         np.stack(
             (
@@ -135,14 +137,14 @@ def normalize_empirical_log_tail_pair(score_batch_plus, score_batch_minus):
             axis=0,
         ),
         np.asarray(score_batch_plus["lengths"], dtype=np.int64),
-        SCORE_PADDING,
+        padding_value,
     )
     normalized = scores_to_empirical_log_tail_bundle(profile_bundle)
     values_plus = normalized["values"][0]
     values_minus = normalized["values"][1]
     return (
-        pack_batch(values_plus, score_batch_plus["mask"], score_batch_plus["lengths"], SCORE_PADDING),
-        pack_batch(values_minus, score_batch_minus["mask"], score_batch_minus["lengths"], SCORE_PADDING),
+        pack_batch(values_plus, score_batch_plus["mask"], score_batch_plus["lengths"], padding_value),
+        pack_batch(values_minus, score_batch_minus["mask"], score_batch_minus["lengths"], padding_value),
     )
 
 

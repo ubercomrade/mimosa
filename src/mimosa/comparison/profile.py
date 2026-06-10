@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 from numba import njit
 
-from mimosa.batches import MINUS_STRAND, PLUS_STRAND, flatten_profile_bundle
+from mimosa.batches import flatten_profile_bundle
 from mimosa.cache import ProfileCacheSpec, fingerprint_model, load_profile_cache, store_profile_cache
 from mimosa.comparison.common import _cached_batch_fingerprint, _select_best_orientation
 from mimosa.comparison.config import SUPPORTED_PROFILE_METRICS
@@ -29,10 +29,10 @@ from mimosa.types import ComparatorConfig, ComparisonResult
 logger = logging.getLogger(__name__)
 
 PROFILE_ORIENTATION_PAIRS = (
-    ("++", PLUS_STRAND, PLUS_STRAND),
-    ("--", MINUS_STRAND, MINUS_STRAND),
-    ("+-", PLUS_STRAND, MINUS_STRAND),
-    ("-+", MINUS_STRAND, PLUS_STRAND),
+    ("++", 0, 0),
+    ("--", 1, 1),
+    ("+-", 0, 1),
+    ("-+", 1, 0),
 )
 
 

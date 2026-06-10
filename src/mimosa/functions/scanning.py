@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 from numba import njit
 
-from mimosa.batches import SCORE_PADDING, pack_batch
+from mimosa.batches import pack_batch
 
 
 def score_seq(num_site, kmer, model):
@@ -202,9 +202,10 @@ def _scan_dense_strands_kernel_numba(
 
 def _empty_score_scan_batch(n_rows: int, max_scores: int, out_lengths: np.ndarray):
     """Return one empty score batch with the requested output geometry."""
-    empty_values = np.full((n_rows, max_scores), SCORE_PADDING, dtype=np.float32)
+    score_padding = 0.0
+    empty_values = np.full((n_rows, max_scores), score_padding, dtype=np.float32)
     empty_mask = np.zeros((n_rows, max_scores), dtype=bool)
-    return pack_batch(empty_values, empty_mask, out_lengths, SCORE_PADDING)
+    return pack_batch(empty_values, empty_mask, out_lengths, score_padding)
 
 
 def batch_all_scores(
@@ -238,8 +239,9 @@ def batch_all_scores(
                 n_terms,
             )
     else:
+        score_padding = 0.0
         bucket_step = 32
-        scored_values = np.full((n_rows, max_scores), SCORE_PADDING, dtype=np.float32)
+        scored_values = np.full((n_rows, max_scores), score_padding, dtype=np.float32)
         scored_mask = np.zeros((n_rows, max_scores), dtype=np.bool_)
         for bucket_indices in _iter_scan_buckets(lengths, motif_len, bucket_step):
             bucket_lengths = np.ascontiguousarray(lengths[bucket_indices], dtype=np.int64)
@@ -267,7 +269,7 @@ def batch_all_scores(
             scored_values[bucket_indices, :bucket_score_width] = bucket_scores
             scored_mask[bucket_indices, :bucket_score_width] = bucket_mask
 
-    return pack_batch(scored_values, scored_mask, out_lengths, SCORE_PADDING)
+    return pack_batch(scored_values, scored_mask, out_lengths, 0.0)
 
 
 def batch_all_scores_strands(sequences, matrix: np.ndarray, kmer: int = 1, with_context: bool = False):
@@ -291,8 +293,9 @@ def batch_all_scores_strands(sequences, matrix: np.ndarray, kmer: int = 1, with_
             n_terms,
         )
     else:
+        score_padding = 0.0
         bucket_step = 32
-        scored_values = np.full((n_rows, 2, max_scores), SCORE_PADDING, dtype=np.float32)
+        scored_values = np.full((n_rows, 2, max_scores), score_padding, dtype=np.float32)
         scored_mask = np.zeros((n_rows, 2, max_scores), dtype=np.bool_)
         for bucket_indices in _iter_scan_buckets(lengths, motif_len, bucket_step):
             bucket_lengths = np.ascontiguousarray(lengths[bucket_indices], dtype=np.int64)
@@ -311,6 +314,6 @@ def batch_all_scores_strands(sequences, matrix: np.ndarray, kmer: int = 1, with_
             scored_values[bucket_indices, :, :bucket_score_width] = bucket_scores
             scored_mask[bucket_indices, :, :bucket_score_width] = bucket_mask
 
-    plus_batch = pack_batch(scored_values[:, 0, :], scored_mask[:, 0, :], out_lengths, SCORE_PADDING)
-    minus_batch = pack_batch(scored_values[:, 1, :], scored_mask[:, 1, :], out_lengths, SCORE_PADDING)
+    plus_batch = pack_batch(scored_values[:, 0, :], scored_mask[:, 0, :], out_lengths, 0.0)
+    minus_batch = pack_batch(scored_values[:, 1, :], scored_mask[:, 1, :], out_lengths, 0.0)
     return plus_batch, minus_batch

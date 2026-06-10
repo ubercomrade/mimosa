@@ -6,13 +6,6 @@ from typing import Iterable, TypedDict
 
 import numpy as np
 
-NUCLEOTIDE_PADDING = 4
-SCORE_PADDING = 0.0
-BATCH_NDIM = 2
-PROFILE_BUNDLE_NDIM = 3
-PLUS_STRAND = 0
-MINUS_STRAND = 1
-
 
 class SequenceBatch(TypedDict):
     values: np.ndarray
@@ -59,11 +52,12 @@ def empty_masked_batch(dtype, padding_value) -> MaskedBatch:
 
 def pack_batch(values, mask, lengths, padding_value) -> MaskedBatch:
     """Validate and pack one dense masked batch payload."""
+    batch_ndim = 2
     values_array = np.asarray(values)
     mask_array = np.asarray(mask, dtype=bool)
     lengths_array = np.asarray(lengths, dtype=np.int64)
 
-    if values_array.ndim != BATCH_NDIM:
+    if values_array.ndim != batch_ndim:
         raise ValueError("batch values must be a 2D array")
     if mask_array.shape != values_array.shape:
         raise ValueError("batch mask must have the same shape as values")
@@ -82,10 +76,11 @@ def pack_batch(values, mask, lengths, padding_value) -> MaskedBatch:
 
 def pack_profile_bundle(values, lengths, padding_value) -> ProfileBundle:
     """Validate and pack one 3D profile bundle payload."""
+    profile_bundle_ndim = 3
     values_array = np.asarray(values)
     lengths_array = np.asarray(lengths, dtype=np.int64)
 
-    if values_array.ndim != PROFILE_BUNDLE_NDIM:
+    if values_array.ndim != profile_bundle_ndim:
         raise ValueError("profile bundle values must be a 3D array")
     if lengths_array.shape != (values_array.shape[1],):
         raise ValueError("profile bundle lengths must have shape (n_rows,)")
@@ -139,13 +134,14 @@ def make_masked_batch(rows: Iterable[np.ndarray], dtype=None, padding_value=0) -
 
 def make_sequence_batch(rows: Iterable[np.ndarray]) -> SequenceBatch:
     """Build a padded sequence batch for integer-encoded sequences."""
+    nucleotide_padding = 4
     normalized_rows, resolved_dtype = _normalize_rows(rows, dtype=np.int8)
     if not normalized_rows:
-        return empty_sequence_batch(np.int8, NUCLEOTIDE_PADDING)
+        return empty_sequence_batch(np.int8, nucleotide_padding)
 
     lengths = np.asarray([row.size for row in normalized_rows], dtype=np.int64)
     width = int(lengths.max(initial=0))
-    values = np.full((len(normalized_rows), width), NUCLEOTIDE_PADDING, dtype=resolved_dtype)
+    values = np.full((len(normalized_rows), width), nucleotide_padding, dtype=resolved_dtype)
     for row_index, row in enumerate(normalized_rows):
         length = int(lengths[row_index])
         if length == 0:
@@ -155,7 +151,7 @@ def make_sequence_batch(rows: Iterable[np.ndarray]) -> SequenceBatch:
     return {
         "values": values,
         "lengths": lengths,
-        "padding_value": NUCLEOTIDE_PADDING,
+        "padding_value": nucleotide_padding,
     }
 
 
@@ -168,7 +164,8 @@ def make_random_sequence_batch(num_sequences: int, seq_length: int, seed: int) -
 
 def make_score_batch(rows: Iterable[np.ndarray]) -> MaskedBatch:
     """Build a dense masked batch for score profiles."""
-    return make_masked_batch(rows, dtype=np.float32, padding_value=SCORE_PADDING)
+    score_padding = 0.0
+    return make_masked_batch(rows, dtype=np.float32, padding_value=score_padding)
 
 
 def make_strand_bundle(plus_batch: MaskedBatch, minus_batch: MaskedBatch) -> ProfileBundle:
