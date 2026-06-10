@@ -6,7 +6,7 @@ It supports two complementary comparison strategies:
 - `profile`: compare score profiles, either from precomputed score tracks or from motif scans on sequences
 - `motif`: compare motif representations directly, with optional PFM reconstruction for incompatible representations
 
-The current package version is `1.2.0`.
+The current package version is `1.3.0`.
 
 ## Introduction
 
@@ -137,18 +137,46 @@ $$
 
 ### Null Hypothesis and Significance
 
-MIMOSA uses stored, query-specific null distributions rather than surrogate-profile or permutation tests. A null
-distribution is built by comparing each query motif against unrelated targets from a motif collection, for example
-targets from different TF families. For an observed score $S_{\text{obs}}$, the p-value is the upper-tail survival
-probability:
+MIMOSA uses stored, query-specific null distributions. It does not run the removed surrogate-profile,
+distortion-kernel, or permutation tests during a comparison. A null distribution is built ahead of time by comparing
+each query motif against targets declared unrelated by a relation input, for example motifs from different TF
+families.
+
+For an observed score $S_{\text{obs}}$, significance is computed as an upper-tail survival probability because all
+reported metrics are oriented so that larger scores mean stronger similarity:
 
 $$
 p = P(S_{\text{null}} \ge S_{\text{obs}})
 $$
 
-The artifact records the comparison strategy, metric, score-affecting comparator options, sequence/background
-fingerprints, motif collection fingerprint, and relation input fingerprint. At comparison time, `--pvalue` uses only a
-compatible artifact. Results can be annotated with `p-value`, `E-value`, and Benjamini-Hochberg `q-value`.
+Each query distribution is fitted with a Gaussian KDE survival estimator when there are at least three variable null
+scores; otherwise MIMOSA falls back to a finite-sample-corrected empirical estimator:
+
+$$
+p = \frac{\#\{S_{\text{null}} \ge S_{\text{obs}}\} + 1}{n_{\text{null}} + 1}
+$$
+
+KDE p-values are also clamped to the empirical lower bound $1 / (n_{\text{null}} + 1)$.
+
+Null artifacts are produced by `mimosa build-null` and stored as trusted `.joblib` files. The artifact records:
+
+- comparison strategy and metric
+- score-affecting comparator options
+- FASTA and background fingerprints when sequence-derived scoring is used
+- motif collection fingerprint
+- relation input fingerprint
+- package version and null-format version
+- one entry per query motif fingerprint
+
+At comparison time, `--pvalue` loads either the explicit `--null-distribution` artifact or the first compatible
+artifact found in `--null-search-dir` paths and the user cache (`~/.cache/mimosa/nulls`). Compatibility is checked
+against the strategy, metric, score-affecting options, sequence/background fingerprints, null-format version, and query
+motif fingerprint. An explicit incompatible artifact raises an error; a search with no compatible artifact returns the
+score-only result and logs a warning.
+
+Annotated results include `p-value`, `E-value`, Benjamini-Hochberg `q-value`, `null_id`, `null_n`, and
+`null_estimator`. The E-value is `p-value * effective_number_of_targets`; pass `--effective-number-of-targets` to
+override the default target count.
 
 ## Supported Inputs
 
@@ -166,6 +194,7 @@ Notes:
 - `profile` supports all six types above, including direct `scores` vs `scores`
 - `motif` supports all motif families except `scores`
 - heterogeneous `motif` comparisons automatically switch to sequence-driven PFM reconstruction
+- `build-null` accepts directory motif collections for all motif families and multi-motif MEME collections for `pwm`
 - BaMM loading uses a uniform background model; a separate background file is not required
 
 ### Security note
@@ -244,6 +273,24 @@ mimosa motif examples/sitega_stat6.mat examples/pif4.meme \
   --pfm-mode
 ```
 
+Build and use a stored null-distribution artifact:
+
+```bash
+mimosa build-null motifs.meme \
+  --model-type pwm \
+  --groups groups.tsv \
+  --strategy motif \
+  --metric pcc \
+  --output motifs-pcc.null.joblib
+
+mimosa motif examples/gata2.meme examples/gata4.meme \
+  --model1-type pwm \
+  --model2-type pwm \
+  --metric pcc \
+  --pvalue \
+  --null-distribution motifs-pcc.null.joblib
+```
+
 Clear cached normalized profiles:
 
 ```bash
@@ -252,13 +299,14 @@ mimosa cache clear --cache-dir .mimosa-cache
 
 ## CLI Overview
 
-The CLI exposes three top-level commands:
+The CLI exposes four top-level commands:
 
 - `mimosa profile`
 - `mimosa motif`
+- `mimosa build-null`
 - `mimosa cache clear`
 
-Comparison commands print one JSON object to `stdout`. Cache maintenance also prints JSON.
+Comparison, null-building, and cache maintenance commands print one JSON object to `stdout`.
 
 Typical `profile` result:
 
@@ -345,8 +393,8 @@ Important arguments:
 | `--cache` | `off` or `on` |
 | `--cache-dir` | cache directory, default `.mimosa-cache` |
 | `--pvalue` | annotate using a compatible stored null-distribution artifact |
-| `--null-distribution` | explicit artifact path from `mimosa build-null` |
-| `--null-search-dir` | additional artifact search directory |
+| `--null-distribution` | explicit trusted artifact path from `mimosa build-null` |
+| `--null-search-dir` | repeatable additional artifact search directory |
 | `--effective-number-of-targets` | override E-value target count |
 | `--seed` | random seed, default `127` |
 | `--jobs` | number of parallel jobs, default `-1` |
@@ -394,8 +442,8 @@ Important arguments:
 | `--pfm-mode` | force sequence-driven PFM reconstruction |
 | `--pfm-top-fraction` | top fraction of reconstructed hits used for PFM building, default `0.05` |
 | `--pvalue` | annotate using a compatible stored null-distribution artifact |
-| `--null-distribution` | explicit artifact path from `mimosa build-null` |
-| `--null-search-dir` | additional artifact search directory |
+| `--null-distribution` | explicit trusted artifact path from `mimosa build-null` |
+| `--null-search-dir` | repeatable additional artifact search directory |
 | `--effective-number-of-targets` | override E-value target count |
 | `--seed` | random seed, default `127` |
 | `--jobs` | number of parallel jobs, default `-1` |
@@ -413,9 +461,47 @@ mimosa motif examples/sitega_gata2.mat examples/pif4.meme \
 
 ## `build-null` Mode
 
-`mimosa build-null` creates a joblib artifact with query-specific null distributions from a motif collection and a
-relation table. Directory collections are loaded deterministically for any motif type when `--model-type` is provided;
-multi-motif MEME collections are supported for `--model-type pwm`.
+`mimosa build-null` creates a trusted joblib artifact with query-specific null distributions from a motif collection
+and a relation input. Directory collections are loaded deterministically for any motif type when `--model-type` is
+provided; multi-motif MEME collections are supported for `--model-type pwm`. Motif names must be unique.
+
+Exactly one relation input is required:
+
+- `--groups`: table with motif-name and group columns; targets from different groups are used as null targets
+- `--pair-table`: table with query, target, and include columns; truthy include values select null pairs
+- `--pair-matrix`: square relation matrix; truthy cells select null pairs
+
+Truth values include `1`, `true`, `t`, `yes`, `y`, `include`, and `included`.
+
+For `--strategy profile`, `build-null` uses FASTA sequences or generates random sequences with the `profile` defaults
+(`--num-sequences 1000`, `--seq-length 200`). For `--strategy motif`, direct same-family matrix/tensor comparison does
+not need sequences. If `--pfm-mode` is enabled, sequence-driven PFM reconstruction uses the same `--fasta` or random
+sequence options.
+
+Important arguments:
+
+| Flag | Meaning |
+| :--- | :--- |
+| `motifs` | directory collection or multi-motif MEME file |
+| `--model-type` | `pwm`, `bamm`, `sitega`, `dimont`, or `slim` |
+| `--pattern` | optional glob for directory collections |
+| `--groups` | TSV/CSV motif-to-group table |
+| `--pair-table` | TSV/CSV explicit query-target relation table |
+| `--pair-matrix` | square TSV/CSV relation matrix |
+| `--name-column`, `--group-column` | column names for `--groups`, defaults `motif` and `group` |
+| `--query-column`, `--target-column`, `--include-column` | column names for `--pair-table` |
+| `--ignore-missing-relations` | ignore relation names absent from the loaded collection |
+| `--strategy` | `profile` or `motif` |
+| `--metric` | defaults to `co` for `profile` and `pcc` for `motif` |
+| `--fasta`, `--background` | sequence inputs for profile scoring or `--pfm-mode` reconstruction |
+| `--search-range`, `--window-radius`, `--realign-window`, `--min-logfpr` | profile comparator options |
+| `--pfm-mode`, `--pfm-top-fraction` | PFM reconstruction options for motif nulls |
+| `--cache`, `--cache-dir` | profile cache options during null building |
+| `--output` | output `.joblib` artifact path |
+| `--install-cache` | also copy the artifact into `~/.cache/mimosa/nulls` |
+| `--strict` | fail when a query has too few null targets |
+| `--min-null-targets` | minimum number of null targets per query, default `1` |
+| `--seed`, `--jobs` | random seed and parallelism |
 
 Group-table example:
 
@@ -440,6 +526,13 @@ mimosa motif examples/gata2.meme examples/gata4.meme \
   --pvalue \
   --null-distribution hocomoco-pwm-motif-pcc.null.joblib
 ```
+
+If `--install-cache` was used while building the artifact, later comparisons can omit `--null-distribution` and search
+the user cache automatically when `--pvalue` is enabled. Use `--null-search-dir` for additional project-local artifact
+directories.
+
+The build command prints a JSON summary with the artifact path, optional cache path, number of motifs loaded, number
+of query distributions built, skipped queries, total comparisons run, and the stored comparator signature.
 
 ## `cache` Command
 
@@ -466,12 +559,13 @@ High-level comparison helpers:
 
 - `compare_motifs(...)`
 - `compare_one_to_many(...)`
-- `create_config(...)`
-- `create_many_config(...)`
-- `run_comparison(...)`
+- `create_one_to_one_config(...)`
+- `create_one_to_many_config(...)`
+- `run_one_to_one(...)`
 - `run_one_to_many(...)`
 - `create_comparator_config(...)`
 - `compare(...)`
+- `validate_metric(...)`
 
 Model and scanning helpers:
 
@@ -492,12 +586,14 @@ Types and utility exports:
 
 - `GenericModel`
 - `StrandMode`
-- `ComparisonConfig`
+- `ComparisonResult`
+- `OneToOneConfig`
 - `OneToManyConfig`
 - `ComparatorConfig`
 - `clear_cache(...)`
 - `read_models(...)`
 - `build_null_distributions(...)`
+- `load_null_artifact(...)`
 - `save_null_artifact(...)`
 - relation parsers: `parse_group_relations(...)`, `parse_pair_relations(...)`, `parse_pair_matrix_relations(...)`
 
