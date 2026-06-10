@@ -153,7 +153,7 @@ Each query distribution is fitted with a Gaussian KDE survival estimator when th
 scores; otherwise MIMOSA falls back to a finite-sample-corrected empirical estimator:
 
 $$
-p = \frac{\#\{S_{\text{null}} \ge S_{\text{obs}}\} + 1}{n_{\text{null}} + 1}
+p = \frac{\{S_{\text{null}} \ge S_{\text{obs}}\} + 1}{n_{\text{null}} + 1}
 $$
 
 KDE p-values are also clamped to the empirical lower bound $1 / (n_{\text{null}} + 1)$.
