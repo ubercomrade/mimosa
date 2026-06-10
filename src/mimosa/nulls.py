@@ -25,7 +25,7 @@ from mimosa.types import ComparatorConfig, ComparisonResult
 
 logger = logging.getLogger(__name__)
 
-NULL_FORMAT_VERSION = 1
+NULL_FORMAT_VERSION = 2
 NULL_CACHE_DIR = Path.home() / ".cache" / "mimosa" / "nulls"
 MIN_KDE_SAMPLES = 3
 _SCORE_CONFIG_KEYS = (
@@ -40,7 +40,7 @@ _SCORE_CONFIG_KEYS = (
 )
 
 
-class NullArtifactMetadata(TypedDict):
+class NullDistributionFileMetadata(TypedDict):
     format_version: int
     created_at: str
     strategy: str
@@ -54,36 +54,36 @@ class NullArtifactMetadata(TypedDict):
     package_version: str
 
 
-class NullArtifactEntry(TypedDict, total=False):
+class NullDistributionData(TypedDict, total=False):
     estimator_type: str
     sorted_scores: np.ndarray
     parameters: dict[str, Any]
-    query_name: str
-    query_fingerprint: str
-    included_target_names: list[str]
-    included_target_fingerprints: list[str]
-    effective_number_of_targets: int
     raw_null_scores: np.ndarray
     n_null: int
+    number_of_queries: int
+    included_query_names: list[str]
+    included_target_names: list[str]
+    included_pairs: list[dict[str, str]]
 
 
-class NullArtifact(TypedDict):
-    metadata: NullArtifactMetadata
-    entries: dict[str, NullArtifactEntry]
+class NullDistributionFile(TypedDict):
+    metadata: NullDistributionFileMetadata
+    distribution: NullDistributionData
 
 
 @dataclass
 class NullBuildResult:
-    """Summary returned after building one null-distribution artifact."""
+    """Summary returned after building one in-memory null distribution file payload."""
 
-    artifact: NullArtifact
+    null_distribution_file: NullDistributionFile
     skipped: list[dict[str, Any]]
+    number_of_queries_used: int
     total_comparisons: int
 
 
 @dataclass(frozen=True, slots=True)
 class NullBuildRequest:
-    """Resolved inputs required to build and persist one null-distribution artifact."""
+    """Resolved inputs required to build and persist one null distribution file."""
 
     models: list[GenericModel]
     relations: dict[str, set[str]]
@@ -102,10 +102,10 @@ class NullBuildRequest:
 class NullBuildSummary:
     """Serializable summary for one null-distribution build."""
 
-    artifact: Path
+    null_distribution_file: Path
     cache_path: Path | None
     number_of_motifs: int
-    number_of_query_distributions_built: int
+    number_of_queries_used: int
     skipped_queries: list[dict[str, Any]]
     total_comparisons_run: int
     config_signature: dict[str, Any]
@@ -113,10 +113,10 @@ class NullBuildSummary:
     def to_dict(self) -> dict[str, Any]:
         """Return the public JSON-compatible payload used by the CLI."""
         return {
-            "artifact": str(self.artifact),
+            "null_distribution_file": str(self.null_distribution_file),
             "cache_path": str(self.cache_path) if self.cache_path else None,
             "number_of_motifs": self.number_of_motifs,
-            "number_of_query_distributions_built": self.number_of_query_distributions_built,
+            "number_of_queries_used": self.number_of_queries_used,
             "skipped_queries": self.skipped_queries,
             "total_comparisons_run": self.total_comparisons_run,
             "config_signature": self.config_signature,
@@ -156,7 +156,7 @@ def environment_metadata(  # noqa: PLR0913
     model_collection_fingerprint: str | None = None,
     relation_fingerprint: str | None = None,
 ) -> dict[str, Any]:
-    """Build the compatibility metadata stored in each null artifact."""
+    """Build the compatibility metadata stored in each null distribution file."""
     try:
         version = package_metadata.version("mimosa-tool")
     except package_metadata.PackageNotFoundError:
@@ -241,14 +241,14 @@ def fit_survival_estimator(scores: Iterable[float]) -> EmpiricalSurvivalEstimato
         return EmpiricalSurvivalEstimator(values)
 
 
-def estimator_from_entry(entry: NullArtifactEntry) -> EmpiricalSurvivalEstimator:
-    """Rehydrate an estimator from one artifact entry."""
-    scores = np.asarray(entry["sorted_scores"], dtype=np.float64)
-    if entry.get("estimator_type") == "kde":
+def estimator_from_distribution(distribution: NullDistributionData) -> EmpiricalSurvivalEstimator:
+    """Rehydrate an estimator from one null distribution file."""
+    scores = np.asarray(distribution["sorted_scores"], dtype=np.float64)
+    if distribution.get("estimator_type") == "kde":
         try:
             return KdeSurvivalEstimator(scores)
         except Exception:
-            logger.warning("KDE entry for %s could not be rehydrated; using ECDF.", entry.get("query_name"))
+            logger.warning("KDE null distribution could not be rehydrated; using ECDF.")
     return EmpiricalSurvivalEstimator(scores)
 
 
@@ -383,7 +383,7 @@ def build_null_distributions(  # noqa: PLR0913
     strict: bool = False,
     relation_fingerprint: str | None = None,
 ) -> NullBuildResult:
-    """Build one query-specific null distribution for each eligible model."""
+    """Build one pooled null distribution from all eligible query-target comparisons."""
     from mimosa.comparison import compare_one_to_many
 
     by_name = {model.name: model for model in models}
@@ -396,8 +396,11 @@ def build_null_distributions(  # noqa: PLR0913
         model_collection_fingerprint=collection_fp,
         relation_fingerprint=relation_fingerprint,
     )
-    entries: dict[str, NullArtifactEntry] = {}
     skipped: list[dict[str, Any]] = []
+    raw_scores: list[np.ndarray] = []
+    included_query_names: list[str] = []
+    included_target_names: set[str] = set()
+    included_pairs: list[dict[str, str]] = []
     total_comparisons = 0
     score_only_config = replace(config, pvalue=False)
 
@@ -408,7 +411,7 @@ def build_null_distributions(  # noqa: PLR0913
         if len(target_names) < min_null_targets:
             reason = f"only {len(target_names)} null target(s); required {min_null_targets}"
             skipped.append({"query": query.name, "reason": reason})
-            message = f"Skipping null distribution for {query.name}: {reason}."
+            message = f"Skipping null contribution for {query.name}: {reason}."
             if strict:
                 raise ValueError(message)
             logger.warning(message)
@@ -424,36 +427,59 @@ def build_null_distributions(  # noqa: PLR0913
             background=background,
         )
         scores = np.asarray([float(result["score"]) for result in results], dtype=np.float64)
-        estimator = fit_survival_estimator(scores)
-        entry = cast(NullArtifactEntry, estimator.to_entry())
-        entry.update(
-            {
-                "query_name": query.name,
-                "query_fingerprint": fingerprint_model(query),
-                "included_target_names": target_names,
-                "included_target_fingerprints": [fingerprint_model(by_name[name]) for name in target_names],
-                "effective_number_of_targets": len(target_names),
-                "raw_null_scores": scores,
-                "n_null": int(scores.size),
-            }
-        )
-        entries[entry["query_fingerprint"]] = entry
+        raw_scores.append(scores)
+        included_query_names.append(query.name)
+        included_target_names.update(target_names)
+        query_fingerprint = fingerprint_model(query)
+        for target_name in target_names:
+            included_pairs.append(
+                {
+                    "query_name": query.name,
+                    "query_fingerprint": query_fingerprint,
+                    "target_name": target_name,
+                    "target_fingerprint": fingerprint_model(by_name[target_name]),
+                }
+            )
         total_comparisons += len(results)
 
-    artifact: NullArtifact = {"metadata": cast(NullArtifactMetadata, metadata_block), "entries": entries}
-    return NullBuildResult(artifact=artifact, skipped=skipped, total_comparisons=total_comparisons)
+    if not raw_scores:
+        raise ValueError("Cannot build a null distribution: no eligible query-target comparisons were found.")
+
+    all_scores = np.concatenate(raw_scores).astype(np.float64)
+    estimator = fit_survival_estimator(all_scores)
+    distribution = cast(NullDistributionData, estimator.to_entry())
+    distribution.update(
+        {
+            "raw_null_scores": all_scores,
+            "n_null": int(all_scores.size),
+            "number_of_queries": len(included_query_names),
+            "included_query_names": included_query_names,
+            "included_target_names": sorted(included_target_names),
+            "included_pairs": included_pairs,
+        }
+    )
+    null_distribution_file: NullDistributionFile = {
+        "metadata": cast(NullDistributionFileMetadata, metadata_block),
+        "distribution": distribution,
+    }
+    return NullBuildResult(
+        null_distribution_file=null_distribution_file,
+        skipped=skipped,
+        number_of_queries_used=len(included_query_names),
+        total_comparisons=total_comparisons,
+    )
 
 
-def save_null_artifact(artifact: NullArtifact, path: str | Path) -> Path:
-    """Persist one null-distribution artifact."""
+def save_null_distribution_file(null_distribution_file: NullDistributionFile, path: str | Path) -> Path:
+    """Persist one null distribution file."""
     output = Path(path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(artifact, output)
+    joblib.dump(null_distribution_file, output)
     return output
 
 
-def install_null_artifact(path: str | Path, cache_dir: str | Path = NULL_CACHE_DIR) -> Path:
-    """Copy one artifact into the user null-distribution cache."""
+def install_null_distribution_file(path: str | Path, cache_dir: str | Path = NULL_CACHE_DIR) -> Path:
+    """Copy one null distribution file into the user null-distribution cache."""
     cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
     destination = cache / Path(path).name
@@ -462,7 +488,7 @@ def install_null_artifact(path: str | Path, cache_dir: str | Path = NULL_CACHE_D
 
 
 def run_build_null_request(request: NullBuildRequest) -> NullBuildSummary:
-    """Build, save, and optionally install one null-distribution artifact."""
+    """Build, save, and optionally install one null distribution file."""
     built = build_null_distributions(
         request.models,
         request.relations,
@@ -474,47 +500,47 @@ def run_build_null_request(request: NullBuildRequest) -> NullBuildSummary:
         strict=request.strict,
         relation_fingerprint=request.relation_fingerprint,
     )
-    artifact_path = save_null_artifact(built.artifact, request.output)
-    cache_path = install_null_artifact(artifact_path) if request.install_cache else None
+    null_distribution_file_path = save_null_distribution_file(built.null_distribution_file, request.output)
+    cache_path = install_null_distribution_file(null_distribution_file_path) if request.install_cache else None
     return NullBuildSummary(
-        artifact=artifact_path,
+        null_distribution_file=null_distribution_file_path,
         cache_path=cache_path,
         number_of_motifs=len(request.models),
-        number_of_query_distributions_built=len(built.artifact["entries"]),
+        number_of_queries_used=built.number_of_queries_used,
         skipped_queries=built.skipped,
         total_comparisons_run=built.total_comparisons,
-        config_signature=built.artifact["metadata"]["config_signature"],
+        config_signature=built.null_distribution_file["metadata"]["config_signature"],
     )
 
 
-def load_null_artifact(source: str | Path | dict[str, Any]) -> NullArtifact:
-    """Load a trusted null-distribution artifact from a path or return an in-memory artifact."""
+def load_null_distribution_file(source: str | Path | dict[str, Any]) -> NullDistributionFile:
+    """Load a trusted null distribution file from a path or return an in-memory payload."""
     if isinstance(source, dict):
-        return cast(NullArtifact, source)
-    return cast(NullArtifact, joblib.load(source))
+        return cast(NullDistributionFile, source)
+    return cast(NullDistributionFile, joblib.load(source))
 
 
-def load_compatible_null_artifact(
+def load_compatible_null_distribution_file(
     *,
     strategy: str,
     config: ComparatorConfig,
     query_model: GenericModel,
     sequences=None,
     background=None,
-) -> NullArtifact | None:
-    """Load the explicit or first searched compatible null artifact for one query/config."""
+) -> NullDistributionFile | None:
+    """Load the explicit or first searched compatible null distribution file for one query/config."""
     explicit = config.get("null_distribution")
     if explicit is not None:
-        artifact = load_null_artifact(explicit)
-        validate_artifact_compatible(
-            artifact,
+        null_distribution_file = load_null_distribution_file(explicit)
+        validate_null_distribution_file_compatible(
+            null_distribution_file,
             strategy=strategy,
             config=config,
             query_model=query_model,
             sequences=sequences,
             background=background,
         )
-        return artifact
+        return null_distribution_file
 
     search_dirs = [Path(p) for p in (config.get("null_search_dirs") or [])]
     search_dirs.append(NULL_CACHE_DIR)
@@ -522,21 +548,21 @@ def load_compatible_null_artifact(
         if not directory.exists():
             continue
         for path in sorted(directory.glob("*.joblib")):
-            artifact = load_null_artifact(path)
-            if is_artifact_compatible(
-                artifact,
+            null_distribution_file = load_null_distribution_file(path)
+            if is_null_distribution_file_compatible(
+                null_distribution_file,
                 strategy=strategy,
                 config=config,
                 query_model=query_model,
                 sequences=sequences,
                 background=background,
             ):
-                return artifact
+                return null_distribution_file
     return None
 
 
-def validate_artifact_compatible(  # noqa: PLR0913
-    artifact: NullArtifact,
+def validate_null_distribution_file_compatible(  # noqa: PLR0913
+    null_distribution_file: NullDistributionFile,
     *,
     strategy: str,
     config: ComparatorConfig,
@@ -544,9 +570,9 @@ def validate_artifact_compatible(  # noqa: PLR0913
     sequences=None,
     background=None,
 ) -> None:
-    """Raise ValueError if an explicit artifact does not match the comparison context."""
+    """Raise ValueError if an explicit null distribution file does not match the comparison context."""
     problems = _compatibility_problems(
-        artifact,
+        null_distribution_file,
         strategy=strategy,
         config=config,
         query_model=query_model,
@@ -557,8 +583,8 @@ def validate_artifact_compatible(  # noqa: PLR0913
         raise ValueError("Null distribution is incompatible: " + "; ".join(problems))
 
 
-def is_artifact_compatible(  # noqa: PLR0913
-    artifact: NullArtifact,
+def is_null_distribution_file_compatible(  # noqa: PLR0913
+    null_distribution_file: NullDistributionFile,
     *,
     strategy: str,
     config: ComparatorConfig,
@@ -566,9 +592,9 @@ def is_artifact_compatible(  # noqa: PLR0913
     sequences=None,
     background=None,
 ) -> bool:
-    """Return True when one artifact matches the comparison context."""
+    """Return True when one null distribution file matches the comparison context."""
     return not _compatibility_problems(
-        artifact,
+        null_distribution_file,
         strategy=strategy,
         config=config,
         query_model=query_model,
@@ -578,7 +604,7 @@ def is_artifact_compatible(  # noqa: PLR0913
 
 
 def _compatibility_problems(  # noqa: PLR0913
-    artifact: NullArtifact,
+    null_distribution_file: NullDistributionFile,
     *,
     strategy: str,
     config: ComparatorConfig,
@@ -586,7 +612,8 @@ def _compatibility_problems(  # noqa: PLR0913
     sequences=None,
     background=None,
 ) -> list[str]:
-    metadata_block = artifact.get("metadata", {})
+    del query_model
+    metadata_block = null_distribution_file.get("metadata", {})
     expected = environment_metadata(strategy=strategy, config=config, sequences=sequences, background=background)
     problems: list[str] = []
     compatibility_keys = (
@@ -601,31 +628,34 @@ def _compatibility_problems(  # noqa: PLR0913
         if metadata_block.get(key) != expected.get(key):
             problems.append(f"{key} differs")
 
-    query_fp = fingerprint_model(query_model)
-    if query_fp not in artifact.get("entries", {}):
-        problems.append(f"query fingerprint is missing for {query_model.name!r}")
+    if "distribution" not in null_distribution_file:
+        problems.append("pooled null distribution is missing")
     return problems
 
 
 def annotate_results_with_nulls(
     results: list[ComparisonResult],
     *,
-    artifact: NullArtifact,
+    null_distribution_file: NullDistributionFile,
     query_model: GenericModel,
     effective_number_of_targets: int | None = None,
 ) -> list[ComparisonResult]:
     """Return comparison results enriched with p-value, E-value, and BH-FDR q-value."""
-    entry = artifact["entries"][fingerprint_model(query_model)]
-    estimator = estimator_from_entry(entry)
-    n_null = int(entry.get("n_null", estimator.n))
+    del query_model
+    distribution = null_distribution_file["distribution"]
+    estimator = estimator_from_distribution(distribution)
+    n_null = int(distribution.get("n_null", estimator.n))
+    metadata_block = null_distribution_file.get("metadata", {})
     null_id = stable_hash(
         {
-            "format_version": artifact.get("metadata", {}).get("format_version"),
-            "query_fingerprint": entry.get("query_fingerprint"),
-            "config_signature_hash": artifact.get("metadata", {}).get("config_signature_hash"),
+            "format_version": metadata_block.get("format_version"),
+            "config_signature_hash": metadata_block.get("config_signature_hash"),
+            "model_collection_fingerprint": metadata_block.get("model_collection_fingerprint"),
+            "relation_fingerprint": metadata_block.get("relation_fingerprint"),
+            "n_null": n_null,
         }
     )
-    effective = effective_number_of_targets or len(results) or int(entry.get("effective_number_of_targets", 1))
+    effective = effective_number_of_targets or len(results)
 
     pvalues: list[float] = []
     annotated_results = list(results)
@@ -640,7 +670,7 @@ def annotate_results_with_nulls(
             e_value=float(pvalue * effective),
             null_id=null_id,
             null_n=n_null,
-            null_estimator=str(entry.get("estimator_type", estimator.estimator_type)),
+            null_estimator=str(distribution.get("estimator_type", estimator.estimator_type)),
         )
         pvalues.append(pvalue)
         valid_indices.append(idx)

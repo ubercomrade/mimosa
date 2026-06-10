@@ -552,7 +552,7 @@ def test_profile_comparison_rejects_corr_metric(examples_dir, temp_dir):
 
 
 def test_build_null_and_motif_pvalue_annotation(tmp_path):
-    """build-null should create an artifact usable by motif comparison."""
+    """build-null should create a null distribution file usable by motif comparison."""
     motif_dir = tmp_path / "motifs"
     motif_dir.mkdir()
     (motif_dir / "q.pfm").write_text(">q\n0.7 0.1 0.1 0.1\n0.1 0.7 0.1 0.1\n", encoding="utf-8")
@@ -560,7 +560,7 @@ def test_build_null_and_motif_pvalue_annotation(tmp_path):
     (motif_dir / "t2.pfm").write_text(">t2\n0.1 0.1 0.7 0.1\n0.1 0.7 0.1 0.1\n", encoding="utf-8")
     groups = tmp_path / "groups.tsv"
     groups.write_text("motif\tgroup\nq\tA\nt1\tB\nt2\tB\n", encoding="utf-8")
-    artifact = tmp_path / "motif-pcc.null.joblib"
+    null_distribution_file = tmp_path / "motif-pcc.null.joblib"
 
     build = run_cli(
         [
@@ -578,7 +578,7 @@ def test_build_null_and_motif_pvalue_annotation(tmp_path):
             "--metric",
             "pcc",
             "--output",
-            str(artifact),
+            str(null_distribution_file),
         ]
     )
     assert build.returncode == 0, f"Command failed with stderr: {build.stderr}"
@@ -597,7 +597,7 @@ def test_build_null_and_motif_pvalue_annotation(tmp_path):
             "pcc",
             "--pvalue",
             "--null-distribution",
-            str(artifact),
+            str(null_distribution_file),
         ]
     )
     assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"

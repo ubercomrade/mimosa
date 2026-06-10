@@ -76,22 +76,23 @@ def test_null_builder_and_annotation_add_significance_values():
     query = _make_shifted_core_pwm_model("q", 0)
     target_a = _make_shifted_core_pwm_model("u1", 1)
     target_b = _make_shifted_core_pwm_model("u2", 2)
+    other_query = _make_shifted_core_pwm_model("q2", 3)
     config = create_comparator_config(metric="pcc")
-    relations = {"q": {"q", "u1", "u2"}}
+    relations = {"q": {"q", "u1", "u2"}, "q2": {"u1", "u2"}}
 
     built = build_null_distributions(
-        [query, target_a, target_b],
+        [query, target_a, target_b, other_query],
         relations,
         strategy="motif",
         config=config,
         min_null_targets=2,
     )
-    entry = next(iter(built.artifact["entries"].values()))
+    distribution = built.null_distribution_file["distribution"]
     results = [
         ComparisonResult(
             query="q",
             target="u1",
-            score=float(entry["raw_null_scores"][0]),
+            score=float(distribution["raw_null_scores"][0]),
             offset=0,
             orientation="++",
             metric="pcc",
@@ -99,7 +100,7 @@ def test_null_builder_and_annotation_add_significance_values():
         ComparisonResult(
             query="q",
             target="u2",
-            score=float(entry["raw_null_scores"][1]),
+            score=float(distribution["raw_null_scores"][1]),
             offset=0,
             orientation="++",
             metric="pcc",
@@ -107,12 +108,15 @@ def test_null_builder_and_annotation_add_significance_values():
     ]
     annotated = annotate_results_with_nulls(
         results,
-        artifact=built.artifact,
+        null_distribution_file=built.null_distribution_file,
         query_model=query,
         effective_number_of_targets=2,
     )
 
-    assert entry["included_target_names"] == ["u1", "u2"]
+    assert distribution["included_query_names"] == ["q", "q2"]
+    assert distribution["included_target_names"] == ["u1", "u2"]
+    assert distribution["n_null"] == 4
+    assert len(distribution["included_pairs"]) == 4
     assert all("p-value" in result and "E-value" in result and "q-value" in result for result in annotated)
 
 
@@ -167,14 +171,14 @@ def test_build_null_request_from_args_runs_without_subprocess(tmp_path):
 
     assert output.exists()
     assert request.relations["q"] == {"t1", "t2"}
-    assert summary.to_dict()["artifact"] == str(output)
+    assert summary.to_dict()["null_distribution_file"] == str(output)
     assert summary.number_of_motifs == 3
-    assert summary.number_of_query_distributions_built == 1
+    assert summary.number_of_queries_used == 1
     assert summary.total_comparisons_run == 2
 
 
-def test_artifact_matching_rejects_incompatible_metric_and_query():
-    """Artifact compatibility should include metric/config and query fingerprint."""
+def test_null_distribution_file_matching_rejects_incompatible_metric_but_not_query():
+    """Pooled null distribution compatibility should not depend on the query fingerprint."""
     query = _make_shifted_core_pwm_model("q", 0)
     config = create_comparator_config(metric="pcc")
     built = build_null_distributions(
@@ -187,9 +191,24 @@ def test_artifact_matching_rejects_incompatible_metric_and_query():
     incompatible = create_comparator_config(metric="cosine")
     other_query = _make_shifted_core_pwm_model("other", 0)
 
-    assert is_artifact_compatible(built.artifact, strategy="motif", config=config, query_model=query)
-    assert not is_artifact_compatible(built.artifact, strategy="motif", config=incompatible, query_model=query)
-    assert not is_artifact_compatible(built.artifact, strategy="motif", config=config, query_model=other_query)
+    assert is_null_distribution_file_compatible(
+        built.null_distribution_file,
+        strategy="motif",
+        config=config,
+        query_model=query,
+    )
+    assert not is_null_distribution_file_compatible(
+        built.null_distribution_file,
+        strategy="motif",
+        config=incompatible,
+        query_model=query,
+    )
+    assert is_null_distribution_file_compatible(
+        built.null_distribution_file,
+        strategy="motif",
+        config=config,
+        query_model=other_query,
+    )
 
 
 def test_environment_metadata_uses_distribution_name(monkeypatch):
@@ -208,14 +227,14 @@ def test_environment_metadata_uses_distribution_name(monkeypatch):
     assert metadata["package_version"] == "9.9.9"
 
 
-def test_save_null_artifact_roundtrip(tmp_path):
-    """Null artifacts should be saved as joblib payloads."""
+def test_save_null_distribution_file_roundtrip(tmp_path):
+    """Null distribution files should be saved as joblib payloads."""
     path = tmp_path / "null.joblib"
-    artifact = {"metadata": {"format_version": 1}, "entries": {}}
+    null_distribution_file = {"metadata": {"format_version": 2}, "distribution": {"estimator_type": "ecdf"}}
 
-    save_null_artifact(artifact, path)
+    save_null_distribution_file(null_distribution_file, path)
 
-    assert joblib.load(path) == artifact
+    assert joblib.load(path) == null_distribution_file
 
 
 if __name__ == "__main__":

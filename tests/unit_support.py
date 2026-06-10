@@ -21,8 +21,8 @@ import pytest
 import mimosa
 import mimosa.api as api_module
 from mimosa.api import (
-    compare_motifs,
     compare_one_to_many,
+    compare_one_to_one,
     create_one_to_many_config,
     create_one_to_one_config,
     run_one_to_many,
@@ -91,11 +91,11 @@ from mimosa.nulls import (
     build_null_distributions,
     environment_metadata,
     fit_survival_estimator,
-    is_artifact_compatible,
+    is_null_distribution_file_compatible,
     parse_group_relations,
     parse_pair_relations,
     run_build_null_request,
-    save_null_artifact,
+    save_null_distribution_file,
 )
 from mimosa.scanning import calculate_threshold_table, get_frequencies, scan_model, scan_model_strands
 from mimosa.sites import get_pfm, get_sites

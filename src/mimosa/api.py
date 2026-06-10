@@ -18,7 +18,7 @@ from mimosa.comparison import (
 )
 from mimosa.io import read_fasta
 from mimosa.models import GenericModel, read_model
-from mimosa.nulls import annotate_results_with_nulls, load_compatible_null_artifact
+from mimosa.nulls import annotate_results_with_nulls, load_compatible_null_distribution_file
 from mimosa.types import ComparatorConfig, ComparisonResult, OneToManyConfig, OneToOneConfig
 from mimosa.validation import validate_file_exists, validate_positive_int
 
@@ -87,11 +87,11 @@ def create_one_to_one_config(
     )
 
 
-def compare_motifs(
-    model1: ModelRef,
-    model2: ModelRef,
-    model1_type: str | None = None,
-    model2_type: str | None = None,
+def compare_one_to_one(
+    query: ModelRef,
+    target: ModelRef,
+    query_type: str | None = None,
+    target_type: str | None = None,
     strategy: str = "profile",
     sequences: SequenceRef | None = None,
     background: SequenceRef | None = None,
@@ -99,16 +99,16 @@ def compare_motifs(
     seq_length: int = 200,
     seed: int = 127,
     comparator: ComparatorConfig | None = None,
-    model1_kwargs: Mapping[str, Any] | None = None,
-    model2_kwargs: Mapping[str, Any] | None = None,
+    query_kwargs: Mapping[str, Any] | None = None,
+    target_kwargs: Mapping[str, Any] | None = None,
     **comparator_kwargs: Any,
 ) -> ComparisonResult:
-    """Single-call entry point for motif comparison."""
+    """Single-call entry point for one-vs-one motif comparison."""
     config = create_one_to_one_config(
-        query=model1,
-        target=model2,
-        query_type=model1_type,
-        target_type=model2_type,
+        query=query,
+        target=target,
+        query_type=query_type,
+        target_type=target_type,
         strategy=strategy,
         sequences=sequences,
         background=background,
@@ -116,8 +116,8 @@ def compare_motifs(
         seq_length=seq_length,
         seed=seed,
         comparator=comparator,
-        query_kwargs=model1_kwargs,
-        target_kwargs=model2_kwargs,
+        query_kwargs=query_kwargs,
+        target_kwargs=target_kwargs,
         **comparator_kwargs,
     )
     return run_one_to_one(config)
@@ -375,21 +375,21 @@ def _annotate_results_if_requested(
     if not config.pvalue or not results:
         return results
 
-    artifact = load_compatible_null_artifact(
+    null_distribution_file = load_compatible_null_distribution_file(
         strategy=strategy,
         config=config,
         query_model=query_model,
         sequences=sequences,
         background=background,
     )
-    if artifact is None:
+    if null_distribution_file is None:
         logger.warning("No compatible null distribution found; returning score-only result.")
         return results
 
     effective_number = config.effective_number_of_targets or default_effective_number_of_targets
     return annotate_results_with_nulls(
         results,
-        artifact=artifact,
+        null_distribution_file=null_distribution_file,
         query_model=query_model,
         effective_number_of_targets=effective_number,
     )

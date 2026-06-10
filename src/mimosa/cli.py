@@ -56,7 +56,7 @@ Examples:
     --model1-type pwm --model2-type pwm \
     --metric pcc
 
-  # Build query-specific null distributions from unrelated motifs
+  # Build a pooled null distribution from unrelated motif comparisons
   mimosa build-null motifs.meme --model-type pwm --groups groups.tsv \
     --strategy motif --metric pcc --output motifs-pcc.null.joblib
 
@@ -170,7 +170,7 @@ def _add_common_technical_arguments(
 
 
 def _add_significance_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add stored-null-distribution comparison options."""
+    """Add stored null distribution file comparison options."""
     group = parser.add_argument_group("Significance Options")
     group.add_argument(
         "--pvalue",
@@ -180,15 +180,15 @@ def _add_significance_arguments(parser: argparse.ArgumentParser) -> None:
     group.add_argument(
         "--null-distribution",
         help=(
-            "Path to a trusted null-distribution artifact built with 'mimosa build-null'. "
-            "Joblib artifacts must not be loaded from untrusted sources."
+            "Path to a trusted null distribution file built with 'mimosa build-null'. "
+            "Joblib files must not be loaded from untrusted sources."
         ),
     )
     group.add_argument(
         "--null-search-dir",
         action="append",
         dest="null_search_dirs",
-        help="Additional directory searched for compatible null-distribution artifacts.",
+        help="Additional directory searched for compatible null distribution files.",
     )
     group.add_argument(
         "--effective-number-of-targets",
@@ -315,7 +315,7 @@ def _add_build_null_parser(subparsers: argparse._SubParsersAction) -> None:
     """Add the null-distribution builder parser."""
     parser = subparsers.add_parser(
         "build-null",
-        help="Build query-specific null distributions from unrelated target motifs.",
+        help="Build a pooled null distribution from unrelated target motif comparisons.",
     )
     parser.add_argument("motifs", help="Motif collection: directory or multi-motif MEME file.")
     parser.add_argument("--model-type", choices=MOTIF_MODEL_TYPES, required=True, help="Motif model format.")
@@ -350,8 +350,12 @@ def _add_build_null_parser(subparsers: argparse._SubParsersAction) -> None:
     comparison.add_argument("--cache-dir", default=".mimosa-cache")
 
     output = parser.add_argument_group("Output Options")
-    output.add_argument("--output", required=True, help="Path to write the trusted joblib null-distribution artifact.")
-    output.add_argument("--install-cache", action="store_true", help="Also copy the artifact into the user cache.")
+    output.add_argument("--output", required=True, help="Path to write the trusted joblib null distribution file.")
+    output.add_argument(
+        "--install-cache",
+        action="store_true",
+        help="Also copy the null distribution file into the user cache.",
+    )
     output.add_argument("--strict", action="store_true", help="Fail when a query lacks enough null targets.")
     output.add_argument("--min-null-targets", type=int, default=1)
 
@@ -416,7 +420,7 @@ def validate_inputs(args) -> None:  # noqa: C901
     if getattr(args, "background", None):
         file_checks.append((args.background, "Background FASTA file"))
     if getattr(args, "null_distribution", None):
-        file_checks.append((args.null_distribution, "Null-distribution artifact"))
+        file_checks.append((args.null_distribution, "Null distribution file"))
 
     try:
         for path, label in file_checks:
@@ -587,7 +591,7 @@ def build_null_request_from_args(args) -> NullBuildRequest:
 
 
 def run_build_null_from_args(args) -> None:
-    """Build and save a null-distribution artifact from CLI arguments."""
+    """Build and save a null distribution file from CLI arguments."""
     request = build_null_request_from_args(args)
     summary = run_build_null_request(request)
     print(json.dumps(summary.to_dict()))

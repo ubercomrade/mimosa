@@ -3,8 +3,8 @@
 from mimosa.api import (
     OneToManyConfig,
     OneToOneConfig,
-    compare_motifs,
     compare_one_to_many,
+    compare_one_to_one,
     create_one_to_many_config,
     create_one_to_one_config,
     run_one_to_many,
@@ -20,11 +20,11 @@ from mimosa.models import (
 )
 from mimosa.nulls import (
     build_null_distributions,
-    load_null_artifact,
+    load_null_distribution_file,
     parse_group_relations,
     parse_pair_matrix_relations,
     parse_pair_relations,
-    save_null_artifact,
+    save_null_distribution_file,
 )
 from mimosa.scanning import (
     StrandMode,
@@ -44,7 +44,7 @@ __all__ = [
     "StrandMode",
     "clear_cache",
     "compare",
-    "compare_motifs",
+    "compare_one_to_one",
     "compare_one_to_many",
     "create_comparator_config",
     "create_one_to_many_config",
@@ -54,7 +54,7 @@ __all__ = [
     "get_scores",
     "get_sites",
     "build_null_distributions",
-    "load_null_artifact",
+    "load_null_distribution_file",
     "parse_group_relations",
     "parse_pair_matrix_relations",
     "parse_pair_relations",
@@ -64,6 +64,6 @@ __all__ = [
     "run_one_to_one",
     "run_one_to_many",
     "scan_model",
-    "save_null_artifact",
+    "save_null_distribution_file",
     "validate_metric",
 ]

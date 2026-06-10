@@ -1622,8 +1622,8 @@ def test_run_one_to_one_supports_co_rowwise_for_profile():
     assert 0.0 <= result["score"] <= 1.0
 
 
-def test_compare_motifs_shortcut_works_with_single_import_api():
-    """compare_motifs should provide one-call high-level API."""
+def test_compare_one_to_one_shortcut_works_with_single_import_api():
+    """compare_one_to_one should provide one-call high-level API."""
     representation = np.array(
         [
             [0.2, 0.3, 0.1],
@@ -1638,9 +1638,9 @@ def test_compare_motifs_shortcut_works_with_single_import_api():
     model2 = GenericModel(type_key="pwm", name="m2", representation=representation, length=3, config={"kmer": 1})
     sequences = make_sequence_batch([np.array([0, 1, 2, 3, 2, 1, 0], dtype=np.int8)])
 
-    result = compare_motifs(
-        model1=model1,
-        model2=model2,
+    result = compare_one_to_one(
+        query=model1,
+        target=model2,
         strategy="profile",
         sequences=sequences,
         metric="co",
@@ -1712,8 +1712,8 @@ def test_compare_one_to_many_matches_pairwise_motif_results():
         metric="pcc",
     )
 
-    expected_a = compare_motifs(query, target_a, strategy="motif", metric="pcc")
-    expected_b = compare_motifs(query, target_b, strategy="motif", metric="pcc")
+    expected_a = compare_one_to_one(query, target_a, strategy="motif", metric="pcc")
+    expected_b = compare_one_to_one(query, target_b, strategy="motif", metric="pcc")
 
     assert [result["target"] for result in results] == ["target_a", "target_b"]
     for result, expected in zip(results, [expected_a, expected_b], strict=False):

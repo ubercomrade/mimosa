@@ -137,10 +137,8 @@ $$
 
 ### Null Hypothesis and Significance
 
-MIMOSA uses stored, query-specific null distributions. It does not run the removed surrogate-profile,
-distortion-kernel, or permutation tests during a comparison. A null distribution is built ahead of time by comparing
-each query motif against targets declared unrelated by a relation input, for example motifs from different TF
-families.
+MIMOSA uses a stored pooled null distribution. A null distribution file is built ahead of time by comparing each eligible
+query motif against targets declared unrelated by a relation input, for example motifs from different TF families.
 
 For an observed score $S_{\text{obs}}$, significance is computed as an upper-tail survival probability because all
 reported metrics are oriented so that larger scores mean stronger similarity:
@@ -149,7 +147,7 @@ $$
 p = P(S_{\text{null}} \ge S_{\text{obs}})
 $$
 
-Each query distribution is fitted with a Gaussian KDE survival estimator when there are at least three variable null
+The pooled distribution is fitted with a Gaussian KDE survival estimator when there are at least three variable null
 scores; otherwise MIMOSA falls back to a finite-sample-corrected empirical estimator:
 
 $$
@@ -158,7 +156,10 @@ $$
 
 KDE p-values are also clamped to the empirical lower bound $1 / (n_{\text{null}} + 1)$.
 
-Null artifacts are produced by `mimosa build-null` and stored as trusted `.joblib` files. The artifact records:
+Null distribution files are produced by `mimosa build-null` and stored as trusted `.joblib` files. Each file contains
+one pooled distribution across all eligible query-target comparisons. For each eligible query motif, MIMOSA compares
+that query against unrelated target motifs selected by the relation input, appends those scores to the shared null
+sample, and then fits a KDE or empirical survival estimator to the pooled scores. The file records:
 
 - comparison strategy and metric
 - score-affecting comparator options
@@ -166,13 +167,14 @@ Null artifacts are produced by `mimosa build-null` and stored as trusted `.jobli
 - motif collection fingerprint
 - relation input fingerprint
 - package version and null-format version
-- one entry per query motif fingerprint
+- the pooled estimator and raw null scores
+- query-target pairs that contributed scores
 
-At comparison time, `--pvalue` loads either the explicit `--null-distribution` artifact or the first compatible
-artifact found in `--null-search-dir` paths and the user cache (`~/.cache/mimosa/nulls`). Compatibility is checked
-against the strategy, metric, score-affecting options, sequence/background fingerprints, null-format version, and query
-motif fingerprint. An explicit incompatible artifact raises an error; a search with no compatible artifact returns the
-score-only result and logs a warning.
+At comparison time, `--pvalue` loads either the explicit `--null-distribution` file or the first compatible
+file found in `--null-search-dir` paths and the user cache (`~/.cache/mimosa/nulls`). Compatibility is checked
+against the strategy, metric, score-affecting options, sequence/background fingerprints, and null-format version. An
+explicit incompatible file raises an error; a search with no compatible file returns the score-only result and logs a
+warning.
 
 Annotated results include `p-value`, `E-value`, Benjamini-Hochberg `q-value`, `null_id`, `null_n`, and
 `null_estimator`. The E-value is `p-value * effective_number_of_targets`; pass `--effective-number-of-targets` to
@@ -199,7 +201,7 @@ Notes:
 
 ### Security note
 
-MIMOSA can load `.pkl` model files and `.joblib` null-distribution artifacts. These formats use Python
+MIMOSA can load `.pkl` model files and `.joblib` null distribution files. These formats use Python
 pickle/joblib serialization and may execute arbitrary code when loaded. Only load such files from trusted sources.
 
 ## Installation
@@ -273,7 +275,7 @@ mimosa motif examples/sitega_stat6.mat examples/pif4.meme \
   --pfm-mode
 ```
 
-Build and use a stored null-distribution artifact:
+Build and use a stored null distribution file:
 
 ```bash
 mimosa build-null motifs.meme \
@@ -335,7 +337,7 @@ Typical `motif` result:
 }
 ```
 
-If `--pvalue` is used with a compatible null-distribution artifact, the result may also include:
+If `--pvalue` is used with a compatible null distribution file, the result may also include:
 
 - `p-value`
 - `E-value`
@@ -357,7 +359,7 @@ It supports:
 - motif-vs-motif comparisons through sequence scanning
 - empirical score normalization with background calibration
 - optional on-disk caching of normalized profile bundles
-- p-value annotation from compatible stored null-distribution artifacts
+- p-value annotation from compatible stored null distribution files
 
 If motif scanning is required and `--fasta` is omitted, MIMOSA generates random A/C/G/T sequences with:
 
@@ -392,9 +394,9 @@ Important arguments:
 | `--min-logfpr` | empirical log-tail threshold for anchors; omitted or `0` uses one best anchor per sequence |
 | `--cache` | `off` or `on` |
 | `--cache-dir` | cache directory, default `.mimosa-cache` |
-| `--pvalue` | annotate using a compatible stored null-distribution artifact |
-| `--null-distribution` | explicit trusted artifact path from `mimosa build-null` |
-| `--null-search-dir` | repeatable additional artifact search directory |
+| `--pvalue` | annotate using a compatible stored null distribution file |
+| `--null-distribution` | explicit trusted null distribution file path from `mimosa build-null` |
+| `--null-search-dir` | repeatable additional null distribution file search directory |
 | `--effective-number-of-targets` | override E-value target count |
 | `--seed` | random seed, default `127` |
 | `--jobs` | number of parallel jobs, default `-1` |
@@ -441,9 +443,9 @@ Important arguments:
 | `--metric` | `pcc`, `ed`, or `cosine` |
 | `--pfm-mode` | force sequence-driven PFM reconstruction |
 | `--pfm-top-fraction` | top fraction of reconstructed hits used for PFM building, default `0.05` |
-| `--pvalue` | annotate using a compatible stored null-distribution artifact |
-| `--null-distribution` | explicit trusted artifact path from `mimosa build-null` |
-| `--null-search-dir` | repeatable additional artifact search directory |
+| `--pvalue` | annotate using a compatible stored null distribution file |
+| `--null-distribution` | explicit trusted null distribution file path from `mimosa build-null` |
+| `--null-search-dir` | repeatable additional null distribution file search directory |
 | `--effective-number-of-targets` | override E-value target count |
 | `--seed` | random seed, default `127` |
 | `--jobs` | number of parallel jobs, default `-1` |
@@ -461,9 +463,10 @@ mimosa motif examples/sitega_gata2.mat examples/pif4.meme \
 
 ## `build-null` Mode
 
-`mimosa build-null` creates a trusted joblib artifact with query-specific null distributions from a motif collection
-and a relation input. Directory collections are loaded deterministically for any motif type when `--model-type` is
-provided; multi-motif MEME collections are supported for `--model-type pwm`. Motif names must be unique.
+`mimosa build-null` creates a trusted joblib null distribution file with one pooled null distribution from a motif
+collection and a relation input. Directory collections are loaded deterministically for any motif type when
+`--model-type` is provided; multi-motif MEME collections are supported for `--model-type pwm`. Motif names must be
+unique.
 
 Exactly one relation input is required:
 
@@ -497,8 +500,8 @@ Important arguments:
 | `--search-range`, `--window-radius`, `--realign-window`, `--min-logfpr` | profile comparator options |
 | `--pfm-mode`, `--pfm-top-fraction` | PFM reconstruction options for motif nulls |
 | `--cache`, `--cache-dir` | profile cache options during null building |
-| `--output` | output `.joblib` artifact path |
-| `--install-cache` | also copy the artifact into `~/.cache/mimosa/nulls` |
+| `--output` | output `.joblib` null distribution file path |
+| `--install-cache` | also copy the null distribution file into `~/.cache/mimosa/nulls` |
 | `--strict` | fail when a query has too few null targets |
 | `--min-null-targets` | minimum number of null targets per query, default `1` |
 | `--seed`, `--jobs` | random seed and parallelism |
@@ -516,7 +519,7 @@ mimosa build-null H14CORE_meme_format.meme \
   --output hocomoco-pwm-motif-pcc.null.joblib
 ```
 
-Using the artifact:
+Using the null distribution file:
 
 ```bash
 mimosa motif examples/gata2.meme examples/gata4.meme \
@@ -527,12 +530,13 @@ mimosa motif examples/gata2.meme examples/gata4.meme \
   --null-distribution hocomoco-pwm-motif-pcc.null.joblib
 ```
 
-If `--install-cache` was used while building the artifact, later comparisons can omit `--null-distribution` and search
-the user cache automatically when `--pvalue` is enabled. Use `--null-search-dir` for additional project-local artifact
-directories.
+If `--install-cache` was used while building the null distribution file, later comparisons can omit
+`--null-distribution` and search the user cache automatically when `--pvalue` is enabled. Use `--null-search-dir` for
+additional project-local file directories.
 
-The build command prints a JSON summary with the artifact path, optional cache path, number of motifs loaded, number
-of query distributions built, skipped queries, total comparisons run, and the stored comparator signature.
+The build command prints a JSON summary with the null distribution file path, optional cache path, number of motifs
+loaded, number of queries used in the pooled distribution, skipped queries, total comparisons run, and the stored
+comparator signature.
 
 ## `cache` Command
 
@@ -557,7 +561,7 @@ The public API is exported from [src/mimosa/__init__.py](src/mimosa/__init__.py)
 
 High-level comparison helpers:
 
-- `compare_motifs(...)`
+- `compare_one_to_one(...)`
 - `compare_one_to_many(...)`
 - `create_one_to_one_config(...)`
 - `create_one_to_many_config(...)`
@@ -593,20 +597,20 @@ Types and utility exports:
 - `clear_cache(...)`
 - `read_models(...)`
 - `build_null_distributions(...)`
-- `load_null_artifact(...)`
-- `save_null_artifact(...)`
+- `load_null_distribution_file(...)`
+- `save_null_distribution_file(...)`
 - relation parsers: `parse_group_relations(...)`, `parse_pair_relations(...)`, `parse_pair_matrix_relations(...)`
 
 Single comparison example:
 
 ```python
-from mimosa import compare_motifs
+from mimosa import compare_one_to_one
 
-result = compare_motifs(
+result = compare_one_to_one(
     "examples/gata2.meme",
     "examples/gata4.meme",
-    model1_type="pwm",
-    model2_type="pwm",
+    query_type="pwm",
+    target_type="pwm",
     strategy="profile",
     sequences="examples/foreground.fa",
     background="examples/background.fa",
