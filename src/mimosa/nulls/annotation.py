@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Iterable
 
 import numpy as np
+from scipy import stats
 
 from mimosa.models import GenericModel
 from mimosa.nulls.estimators import estimator_from_distribution
@@ -21,7 +21,7 @@ def annotate_results_with_nulls(
     query_model: GenericModel,
     effective_number_of_targets: int | None = None,
 ) -> list[ComparisonResult]:
-    """Return comparison results enriched with p-value, E-value, and BH-FDR q-value."""
+    """Return comparison results enriched with p-value, adjusted p-value, and E-value."""
     del query_model
     distribution = null_distribution_file["distribution"]
     estimator = estimator_from_distribution(distribution)
@@ -56,25 +56,17 @@ def annotate_results_with_nulls(
         pvalues.append(pvalue)
         valid_indices.append(idx)
 
-    for idx, qvalue in zip(valid_indices, bh_qvalues(pvalues), strict=False):
-        annotated_results[idx] = replace(annotated_results[idx], q_value=qvalue)
+    for idx, adjusted_pvalue in zip(valid_indices, adjusted_pvalues(pvalues), strict=False):
+        annotated_results[idx] = replace(annotated_results[idx], adj_p_value=adjusted_pvalue)
     return annotated_results
 
 
-def bh_qvalues(pvalues: Iterable[float]) -> list[float]:
-    """Compute monotone Benjamini-Hochberg q-values preserving input order."""
+def adjusted_pvalues(pvalues) -> list[float]:
+    """Compute FDR-adjusted p-values preserving input order."""
     values = np.asarray(list(pvalues), dtype=np.float64)
     if values.size == 0:
         return []
-    order = np.argsort(values)
-    ranked = values[order]
-    adjusted = np.empty_like(ranked)
-    running = 1.0
-    m = ranked.size
-    for reverse_idx in range(m - 1, -1, -1):
-        rank = reverse_idx + 1
-        running = min(running, float(ranked[reverse_idx] * m / rank))
-        adjusted[reverse_idx] = running
-    result = np.empty_like(adjusted)
-    result[order] = np.clip(adjusted, 0.0, 1.0)
+    if values.size == 1:
+        return [float(values[0])]
+    result = stats.false_discovery_control(values, method="bh")
     return [float(value) for value in result]

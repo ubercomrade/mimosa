@@ -59,16 +59,16 @@ def test_relation_parsers_exclude_self_and_group_matches(tmp_path):
     assert pair_relations["q"] == {"t2"}
 
 
-def test_null_estimators_and_bh_qvalues_are_bounded_and_monotone():
-    """Survival estimators and BH-FDR should return bounded upper-tail values."""
+def test_null_estimator_and_adjusted_pvalues_are_bounded_and_monotone():
+    """GEV survival estimator and FDR adjustment should return bounded upper-tail values."""
     estimator = fit_survival_estimator([0.1, 0.2, 0.3, 0.4])
-    empirical = EmpiricalSurvivalEstimator([0.1, 0.2, 0.3, 0.4])
 
+    assert isinstance(estimator, GenextremeSurvivalEstimator)
+    assert estimator.sf(0.35) == pytest.approx(stats.genextreme.sf(0.35, *estimator.genextreme_params))
     assert 0.0 < estimator.sf(0.35) <= 1.0
     assert estimator.sf(0.2) >= estimator.sf(0.3)
-    assert empirical.sf(0.4) == pytest.approx(2.0 / 5.0)
-    assert empirical.sf(0.5) == pytest.approx(1.0 / 5.0)
-    np.testing.assert_allclose(bh_qvalues([0.03, 0.01, 0.02]), [0.03, 0.03, 0.03])
+    np.testing.assert_allclose(adjusted_pvalues([0.03, 0.01, 0.02]), [0.03, 0.03, 0.03])
+    np.testing.assert_allclose(adjusted_pvalues([0.03]), [0.03])
 
 
 def test_null_builder_and_annotation_add_significance_values():
@@ -116,8 +116,44 @@ def test_null_builder_and_annotation_add_significance_values():
     assert distribution["included_query_names"] == ["q", "q2"]
     assert distribution["included_target_names"] == ["u1", "u2"]
     assert distribution["n_null"] == 4
+    assert distribution["estimator_type"] == "genextreme"
+    assert len(distribution["genextreme_params"]) == 3
     assert len(distribution["included_pairs"]) == 4
-    assert all("p-value" in result and "E-value" in result and "q-value" in result for result in annotated)
+    assert all("p-value" in result and "E-value" in result and "adj.p-value" in result for result in annotated)
+
+
+def test_single_comparison_annotation_sets_adjusted_pvalue_to_pvalue():
+    """Single-pair annotation should still report adj.p-value equal to p-value."""
+    query = _make_shifted_core_pwm_model("q", 0)
+    null_distribution_file = {
+        "metadata": {"format_version": 2},
+        "distribution": {
+            "estimator_type": "genextreme",
+            "sorted_scores": np.array([0.1, 0.2, 0.3, 0.4], dtype=np.float64),
+            "genextreme_params": stats.genextreme.fit([0.1, 0.2, 0.3, 0.4]),
+            "n_null": 4,
+        },
+    }
+    result = ComparisonResult(
+        query="q",
+        target="u1",
+        score=0.35,
+        offset=0,
+        orientation="++",
+        metric="pcc",
+    )
+
+    annotated = annotate_results_with_nulls(
+        [result],
+        null_distribution_file=null_distribution_file,
+        query_model=query,
+        effective_number_of_targets=1,
+    )
+
+    assert "p-value" in annotated[0]
+    assert "E-value" in annotated[0]
+    assert "adj.p-value" in annotated[0]
+    assert annotated[0]["adj.p-value"] == annotated[0]["p-value"]
 
 
 def test_build_null_request_from_args_runs_without_subprocess(tmp_path):
@@ -283,7 +319,13 @@ def test_environment_metadata_uses_distribution_name(monkeypatch):
 def test_save_null_distribution_file_roundtrip(tmp_path):
     """Null distribution files should be saved as joblib payloads."""
     path = tmp_path / "null.joblib"
-    null_distribution_file = {"metadata": {"format_version": 2}, "distribution": {"estimator_type": "ecdf"}}
+    null_distribution_file = {
+        "metadata": {"format_version": 2},
+        "distribution": {
+            "estimator_type": "genextreme",
+            "genextreme_params": (1.0, 2.0, 3.0),
+        },
+    }
 
     save_null_distribution_file(null_distribution_file, path)
 

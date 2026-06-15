@@ -600,7 +600,7 @@ def test_build_null_and_motif_pvalue_annotation(tmp_path):
     assert_comparison_output(output, metric="pcc")
     assert "p-value" in output
     assert "E-value" in output
-    assert "q-value" in output
+    assert "adj.p-value" in output
 
 
 def test_pipeline_with_invalid_mode():

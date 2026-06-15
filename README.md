@@ -147,19 +147,23 @@ $$
 p = P(S_{\text{null}} \ge S_{\text{obs}})
 $$
 
-The pooled distribution is fitted with a Gaussian KDE survival estimator when there are at least three variable null
-scores; otherwise MIMOSA falls back to a finite-sample-corrected empirical estimator:
+The pooled distribution is fitted with SciPy's generalized extreme value distribution:
+
+$$
+\theta = \operatorname{genextreme.fit}(S_{\text{null}}), \quad
+p = \operatorname{genextreme.sf}(S_{\text{obs}}; \theta)
+$$
+
+If a saved estimator cannot be fitted or rehydrated, MIMOSA falls back to a finite-sample-corrected empirical estimator:
 
 $$
 p = \frac{\{S_{\text{null}} \ge S_{\text{obs}}\} + 1}{n_{\text{null}} + 1}
 $$
 
-KDE p-values are also clamped to the empirical lower bound $1 / (n_{\text{null}} + 1)$.
-
 Null distribution files are produced by `mimosa build-null` and stored as trusted `.joblib` files. Each file contains
 one pooled distribution across all eligible query-target comparisons. For each eligible query motif, MIMOSA compares
 that query against unrelated target motifs selected by the relation input, appends those scores to the shared null
-sample, and then fits a KDE or empirical survival estimator to the pooled scores. The file records:
+sample, and then fits a GEV survival estimator to the pooled scores. The file records:
 
 - comparison strategy and metric
 - score-affecting comparator options
@@ -176,9 +180,10 @@ against the strategy, metric, score-affecting options, sequence/background finge
 explicit incompatible file raises an error; a search with no compatible file returns the score-only result and logs a
 warning.
 
-Annotated results include `p-value`, `E-value`, Benjamini-Hochberg `q-value`, `null_id`, `null_n`, and
-`null_estimator`. The E-value is `p-value * effective_number_of_targets`; pass `--effective-number-of-targets` to
-override the default target count.
+Annotated results include `p-value`, `adj.p-value`, `E-value`, `null_id`, `null_n`, and `null_estimator`. When more
+than one comparison is annotated, `adj.p-value` is computed with SciPy's `stats.false_discovery_control`; for a single
+comparison it equals `p-value`. The E-value is `p-value * effective_number_of_targets`; pass
+`--effective-number-of-targets` to override the default target count.
 
 ## Supported Inputs
 
@@ -386,8 +391,8 @@ Typical `motif` result:
 If `--pvalue` is used with a compatible null distribution file, the result may also include:
 
 - `p-value`
+- `adj.p-value`
 - `E-value`
-- `q-value`
 - `null_id`
 - `null_n`
 - `null_estimator`

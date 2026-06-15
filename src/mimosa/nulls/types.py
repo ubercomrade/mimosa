@@ -31,6 +31,7 @@ class NullDistributionData(TypedDict, total=False):
     estimator_type: str
     sorted_scores: np.ndarray
     parameters: dict[str, Any]
+    genextreme_params: tuple[float, float, float]
     raw_null_scores: np.ndarray
     n_null: int
     number_of_queries: int

@@ -121,4 +121,9 @@ def _compatibility_problems(  # noqa: PLR0913
 
     if "distribution" not in null_distribution_file:
         problems.append("pooled null distribution is missing")
+    else:
+        distribution = null_distribution_file["distribution"]
+        parameters = distribution.get("parameters", {})
+        if "genextreme_params" not in distribution and "genextreme_params" not in parameters:
+            problems.append("genextreme_params are missing")
     return problems

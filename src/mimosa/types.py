@@ -97,10 +97,12 @@ class ComparisonResult(_FrozenRecord):
 
     _PUBLIC_KEY_OVERRIDES = {
         "p-value": "p_value",
+        "adj.p-value": "adj_p_value",
         "E-value": "e_value",
-        "q-value": "q_value",
     }
-    _OMIT_NONE_FIELDS = frozenset({"n_sites", "p_value", "e_value", "q_value", "null_id", "null_n", "null_estimator"})
+    _OMIT_NONE_FIELDS = frozenset(
+        {"n_sites", "p_value", "adj_p_value", "e_value", "null_id", "null_n", "null_estimator"}
+    )
 
     query: str
     target: str
@@ -110,8 +112,8 @@ class ComparisonResult(_FrozenRecord):
     metric: str
     n_sites: int | None = None
     p_value: float | None = None
+    adj_p_value: float | None = None
     e_value: float | None = None
-    q_value: float | None = None
     null_id: str | None = None
     null_n: int | None = None
     null_estimator: str | None = None
