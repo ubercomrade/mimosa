@@ -7,7 +7,6 @@ from dataclasses import replace
 from typing import Any, cast
 
 import numpy as np
-from tqdm import tqdm
 
 from mimosa.cache import fingerprint_model
 from mimosa.models import GenericModel
@@ -22,6 +21,7 @@ from mimosa.nulls.types import (
     NullDistributionFile,
     NullDistributionFileMetadata,
 )
+from mimosa.progress import iter_progress
 from mimosa.types import ComparatorConfig
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ def build_null_distributions(  # noqa: PLR0913
     min_null_targets: int = 1,
     strict: bool = False,
     relation_fingerprint: str | None = None,
+    progress: bool | None = False,
 ) -> NullBuildResult:
     """Build one pooled null distribution from all eligible query-target comparisons."""
     from mimosa.comparison import compare_one_to_many
@@ -60,7 +61,7 @@ def build_null_distributions(  # noqa: PLR0913
     total_comparisons = 0
     score_only_config = replace(config, pvalue=False)
 
-    for query in tqdm(models):
+    for query in iter_progress(models, enabled=progress, desc="queries", total=len(models)):
         target_names = sorted(
             name for name in relations.get(query.name, set()) if name in by_name and name != query.name
         )
@@ -81,6 +82,9 @@ def build_null_distributions(  # noqa: PLR0913
             score_only_config,
             sequences=sequences,
             background=background,
+            progress=progress,
+            progress_desc=f"{query.name} targets",
+            progress_leave=False,
         )
         scores = np.asarray([float(result["score"]) for result in results], dtype=np.float64)
         raw_scores.append(scores)
@@ -138,6 +142,7 @@ def run_build_null_request(request: NullBuildRequest) -> NullBuildSummary:
         min_null_targets=request.min_null_targets,
         strict=request.strict,
         relation_fingerprint=request.relation_fingerprint,
+        progress=request.progress,
     )
     null_distribution_file_path = save_null_distribution_file(built.null_distribution_file, request.output)
     cache_path = install_null_distribution_file(null_distribution_file_path) if request.install_cache else None

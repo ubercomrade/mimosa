@@ -23,16 +23,19 @@ from mimosa.nulls import (
     parse_pair_relations,
     run_build_null_request,
 )
+from mimosa.progress import TqdmLoggingHandler, should_enable_progress
 from mimosa.validation import validate_file_exists, validate_positive_int
 
 PROFILE_MODEL_TYPES = ["scores", "pwm", "bamm", "sitega", "dimont", "slim"]
 MOTIF_MODEL_TYPES = ["pwm", "bamm", "sitega", "dimont", "slim"]
 
 
-def setup_logging(verbose: bool) -> None:
+def setup_logging(verbose: bool, progress: bool | None = False) -> None:
     """Setup logging configuration."""
     level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    handler: logging.Handler = TqdmLoggingHandler() if should_enable_progress(progress) else logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+    logging.basicConfig(level=level, handlers=[handler], force=True)
 
 
 def create_arg_parser() -> argparse.ArgumentParser:
@@ -154,6 +157,12 @@ def _add_common_technical_arguments(
             default=-1,
             help="Number of parallel jobs. Use -1 for all cores. (default: %(default)s)",
         )
+    technical_group.add_argument(
+        "--progress",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Show progress bars on stderr. Defaults to auto-detecting interactive terminals.",
+    )
     if include_cache:
         technical_group.add_argument(
             "--cache",
@@ -587,6 +596,7 @@ def build_null_request_from_args(args) -> NullBuildRequest:
         strict=args.strict,
         relation_fingerprint=relation_fingerprint,
         install_cache=args.install_cache,
+        progress=getattr(args, "progress", False),
     )
 
 
@@ -619,7 +629,7 @@ def main_cli() -> None:
         sys.exit(1)
 
     args = parser.parse_args()
-    setup_logging(args.verbose)
+    setup_logging(args.verbose, getattr(args, "progress", False))
     validate_inputs(args)
     if args.mode == "cache":
         run_cache_command_from_args(args)

@@ -150,6 +150,7 @@ def create_one_to_many_config(
     comparator: ComparatorConfig | None = None,
     query_kwargs: Mapping[str, Any] | None = None,
     target_kwargs: Mapping[str, Any] | None = None,
+    progress: bool | None = False,
     **comparator_kwargs: Any,
 ) -> OneToManyConfig:
     """Build a unified immutable one-vs-many comparison configuration."""
@@ -177,6 +178,7 @@ def create_one_to_many_config(
         comparator=resolved_comparator,
         query_kwargs=query_kwargs,
         target_kwargs=target_kwargs,
+        progress=progress,
     )
 
 
@@ -194,6 +196,7 @@ def compare_one_to_many(
     comparator: ComparatorConfig | None = None,
     query_kwargs: Mapping[str, Any] | None = None,
     target_kwargs: Mapping[str, Any] | None = None,
+    progress: bool | None = False,
     **comparator_kwargs: Any,
 ) -> list[ComparisonResult]:
     """Single-call entry point for one-vs-many motif comparison."""
@@ -211,6 +214,7 @@ def compare_one_to_many(
         comparator=comparator,
         query_kwargs=query_kwargs,
         target_kwargs=target_kwargs,
+        progress=progress,
         **comparator_kwargs,
     )
     return run_one_to_many(config)
@@ -243,6 +247,7 @@ def create_null_distribution_config(  # noqa: PLR0913
     min_null_targets: int = 1,
     strict: bool = False,
     install_cache: bool = False,
+    progress: bool | None = False,
     **comparator_kwargs: Any,
 ) -> NullBuildRequest:
     """Build a resolved null-distribution request for interactive API use."""
@@ -294,6 +299,7 @@ def create_null_distribution_config(  # noqa: PLR0913
         strict=strict,
         relation_fingerprint=relation_fingerprint,
         install_cache=install_cache,
+        progress=progress,
     )
 
 
@@ -324,6 +330,7 @@ def create_null_distribution(  # noqa: PLR0913
     min_null_targets: int = 1,
     strict: bool = False,
     install_cache: bool = False,
+    progress: bool | None = False,
     **comparator_kwargs: Any,
 ) -> NullBuildSummary:
     """Build and persist one null distribution from model and relation inputs."""
@@ -353,6 +360,7 @@ def create_null_distribution(  # noqa: PLR0913
         min_null_targets=min_null_targets,
         strict=strict,
         install_cache=install_cache,
+        progress=progress,
         **comparator_kwargs,
     )
     return run_null_distribution(config)
@@ -421,6 +429,8 @@ def run_one_to_many(config: OneToManyConfig) -> list[ComparisonResult]:
         config=config.comparator,
         sequences=sequences,
         background=background,
+        progress=config.progress,
+        progress_desc=f"{query_model.name} targets",
     )
     return _annotate_results_if_requested(
         results,

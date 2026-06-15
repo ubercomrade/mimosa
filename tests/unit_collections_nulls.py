@@ -200,6 +200,7 @@ def test_build_null_request_from_args_runs_without_subprocess(tmp_path):
         min_null_targets=2,
         jobs=None,
         seed=127,
+        progress=True,
     )
 
     request = build_null_request_from_args(args)
@@ -207,6 +208,7 @@ def test_build_null_request_from_args_runs_without_subprocess(tmp_path):
 
     assert output.exists()
     assert request.relations["q"] == {"t1", "t2"}
+    assert request.progress is True
     assert summary.to_dict()["null_distribution_file"] == str(output)
     assert summary.number_of_motifs == 3
     assert summary.number_of_queries_used == 1

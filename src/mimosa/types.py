@@ -159,6 +159,7 @@ class OneToManyConfig(_FrozenRecord):
     comparator: ComparatorConfig
     query_kwargs: Mapping[str, Any]
     target_kwargs: Mapping[str, Any]
+    progress: bool | None = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "targets", tuple(self.targets))

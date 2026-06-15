@@ -57,6 +57,32 @@ def test_compare_passes_n_jobs_to_strategy(monkeypatch):
     assert observed == [1]
 
 
+def test_run_target_comparisons_wraps_progress_iterator(monkeypatch):
+    """Target-level progress should be handled at the shared one-vs-many boundary."""
+    from mimosa.comparison import runner as runner_module
+
+    observed = []
+    targets = [SimpleNamespace(name="a"), SimpleNamespace(name="b")]
+
+    def fake_iter_progress(iterable, *, enabled, desc, total, leave):
+        observed.append({"enabled": enabled, "desc": desc, "total": total, "leave": leave})
+        yield from iterable
+
+    monkeypatch.setattr(runner_module, "iter_progress", fake_iter_progress)
+
+    result = runner_module._run_target_comparisons(
+        targets,
+        1,
+        lambda target: target.name,
+        progress=True,
+        progress_desc="query targets",
+        progress_leave=False,
+    )
+
+    assert result == ["a", "b"]
+    assert observed == [{"enabled": True, "desc": "query targets", "total": 2, "leave": False}]
+
+
 def test_cli_maps_jobs_to_n_jobs_for_profile_config():
     """CLI --jobs should reach comparator config as n_jobs."""
     args = SimpleNamespace(
@@ -74,12 +100,14 @@ def test_cli_maps_jobs_to_n_jobs_for_profile_config():
         null_distribution=None,
         null_search_dirs=None,
         effective_number_of_targets=None,
+        progress=True,
     )
 
     kwargs = map_args_to_comparator_kwargs(args)
     config = create_comparator_config(**kwargs)
 
     assert kwargs["n_jobs"] == 3
+    assert "progress" not in kwargs
     assert config["n_jobs"] == 3
 
 
@@ -1398,7 +1426,16 @@ def test_run_one_to_many_passes_targets_lazily(monkeypatch):
     config = create_one_to_many_config(query=query, targets=[target], strategy="profile", metric="co")
     observed = {}
 
-    def fake_compare_one_to_many_models(query_model, target_models, strategy, config, sequences=None, background=None):
+    def fake_compare_one_to_many_models(
+        query_model,
+        target_models,
+        strategy,
+        config,
+        sequences=None,
+        background=None,
+        **runtime_kwargs,
+    ):
+        observed["runtime_kwargs"] = runtime_kwargs
         observed["is_list"] = isinstance(target_models, list)
         materialized = list(target_models)
         observed["count"] = len(materialized)
@@ -1417,7 +1454,11 @@ def test_run_one_to_many_passes_targets_lazily(monkeypatch):
 
     results = run_one_to_many(config)
 
-    assert observed == {"is_list": False, "count": 1}
+    assert observed == {
+        "runtime_kwargs": {"progress": False, "progress_desc": "query targets"},
+        "is_list": False,
+        "count": 1,
+    }
     assert results == [
         ComparisonResult(query="query", target="target", score=1.0, offset=0, orientation="++", metric="co")
     ]

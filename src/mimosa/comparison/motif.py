@@ -226,11 +226,15 @@ def strategy_motif(model1: GenericModel, model2: GenericModel, sequences, cfg: C
     return _build_motif_result(model1.name, model2.name, best, cfg["metric"])
 
 
-def _compare_motif_one_to_many(
+def _compare_motif_one_to_many(  # noqa: PLR0913
     query_model: GenericModel,
     target_models,
     sequences,
     cfg: ComparatorConfig,
+    *,
+    progress: bool | None = False,
+    progress_desc: str | None = None,
+    progress_leave: bool = True,
 ) -> list[ComparisonResult]:
     """Compare one motif query against many targets while reusing prepared query state."""
     from mimosa.comparison.runner import _run_target_comparisons
@@ -265,4 +269,11 @@ def _compare_motif_one_to_many(
         finally:
             target_cache.clear()
 
-    return _run_target_comparisons(target_list, cfg["n_jobs"], _score_target)
+    return _run_target_comparisons(
+        target_list,
+        cfg["n_jobs"],
+        _score_target,
+        progress=progress,
+        progress_desc=progress_desc,
+        progress_leave=progress_leave,
+    )

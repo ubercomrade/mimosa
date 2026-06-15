@@ -612,7 +612,14 @@ def strategy_profile(model1: GenericModel, model2: GenericModel, sequences, cfg:
 
 
 def _compare_profile_one_to_many(
-    query_model: GenericModel, target_models, sequences, cfg: ComparatorConfig
+    query_model: GenericModel,
+    target_models,
+    sequences,
+    cfg: ComparatorConfig,
+    *,
+    progress: bool | None = False,
+    progress_desc: str | None = None,
+    progress_leave: bool = True,
 ) -> list[ComparisonResult]:
     """Compare one profile query against many targets while reusing normalized query profiles."""
     from mimosa.comparison.runner import _run_target_comparisons
@@ -648,4 +655,11 @@ def _compare_profile_one_to_many(
         finally:
             target_cache.clear()
 
-    return _run_target_comparisons(target_list, cfg["n_jobs"], _score_target)
+    return _run_target_comparisons(
+        target_list,
+        cfg["n_jobs"],
+        _score_target,
+        progress=progress,
+        progress_desc=progress_desc,
+        progress_leave=progress_leave,
+    )

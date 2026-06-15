@@ -235,7 +235,7 @@ uv pip install -e . --no-build-isolation
 ```
 
 Main runtime dependencies are declared in [pyproject.toml](pyproject.toml): `numpy`, `scipy`, `pandas`,
-`joblib`, and `numba`.
+`joblib`, `numba`, and `tqdm`.
 
 ## Quick Start
 
@@ -288,6 +288,7 @@ mimosa build-null motifs.meme \
   --groups groups.tsv \
   --strategy motif \
   --metric pcc \
+  --progress \
   --output motifs-pcc.null.joblib
 
 mimosa motif examples/gata2.meme examples/gata4.meme \
@@ -328,6 +329,13 @@ query = GenericModel("pwm", "query", representation, length, {"kmer": 1, "_sourc
 results = compare_one_to_many(query, targets, strategy="profile", sequences=sequences)
 ```
 
+For long one-vs-many runs, pass `progress=True` to render a `tqdm` progress bar on `stderr` without changing the
+returned results:
+
+```python
+results = compare_one_to_many(query, targets, strategy="profile", sequences=sequences, progress=True)
+```
+
 External model families should be integrated through `register_model_handler`. A handler is an adapter bundle with
 `scan`, optional `scan_both`, `load`, `write`, and `score_bounds` callables. Functions in `mimosa.handlers` whose
 names start with `_` are internal implementation details and should not be imported by downstream projects.
@@ -359,7 +367,13 @@ The CLI exposes four top-level commands:
 - `mimosa build-null`
 - `mimosa cache clear`
 
-Comparison, null-building, and cache maintenance commands print one JSON object to `stdout`.
+Comparison, null-building, and cache maintenance commands print one JSON object to `stdout`. Logs and progress bars
+are written to `stderr`, so JSON output remains safe to pipe into tools such as `jq`.
+
+Progress bars are controlled by `--progress` and `--no-progress`. The default is automatic: progress is shown only
+when `stderr` is an interactive terminal. Use `--progress` to force bars for long local runs, or `--no-progress` for
+CI and log files. `-v/--verbose` enables additional logging; when progress is active, log lines are emitted through
+`tqdm.write(...)` so they do not corrupt the active bar.
 
 Typical `profile` result:
 
@@ -451,6 +465,7 @@ Important arguments:
 | `--effective-number-of-targets` | override E-value target count |
 | `--seed` | random seed, default `127` |
 | `--jobs` | number of parallel jobs, default `-1` |
+| `--progress`, `--no-progress` | show or suppress progress bars on `stderr`; default auto-detects terminals |
 | `-v`, `--verbose` | verbose logging |
 
 Example with two motif models:
@@ -500,6 +515,7 @@ Important arguments:
 | `--effective-number-of-targets` | override E-value target count |
 | `--seed` | random seed, default `127` |
 | `--jobs` | number of parallel jobs, default `-1` |
+| `--progress`, `--no-progress` | show or suppress progress bars on `stderr`; default auto-detects terminals |
 | `-v`, `--verbose` | verbose logging |
 
 Example:
@@ -556,6 +572,7 @@ Important arguments:
 | `--strict` | fail when a query has too few null targets |
 | `--min-null-targets` | minimum number of null targets per query, default `1` |
 | `--seed`, `--jobs` | random seed and parallelism |
+| `--progress`, `--no-progress` | show or suppress query and target progress bars on `stderr`; default auto-detects terminals |
 
 Group-table example:
 
@@ -567,6 +584,7 @@ mimosa build-null H14CORE_meme_format.meme \
   --group-column family \
   --strategy motif \
   --metric pcc \
+  --progress \
   --output hocomoco-pwm-motif-pcc.null.joblib
 ```
 
@@ -685,8 +703,12 @@ results = compare_one_to_many(
     target_type="pwm",
     strategy="motif",
     metric="pcc",
+    progress=True,
 )
 ```
+
+`progress=True` is a runtime-only API option. It does not become part of `ComparatorConfig`, cache keys, or null
+distribution compatibility signatures.
 
 Site extraction and PFM reconstruction example:
 

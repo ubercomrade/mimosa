@@ -70,6 +70,7 @@ class NullBuildRequest:
     strict: bool = False
     relation_fingerprint: str | None = None
     install_cache: bool = False
+    progress: bool | None = False
 
 
 @dataclass(frozen=True, slots=True)
