@@ -45,18 +45,14 @@ def test_read_models_directory_is_deterministic(tmp_path):
     assert [model.name for model in models] == ["a_first", "b_second"]
 
 
-def test_relation_parsers_exclude_self_and_group_matches(tmp_path):
-    """Relation parsers should include only unrelated or explicitly included non-self pairs."""
+def test_group_relation_parser_excludes_self_and_group_matches(tmp_path):
+    """Group relations should include only motifs from different groups."""
     groups = tmp_path / "groups.tsv"
     groups.write_text("motif\tfamily\nq\tA\nt1\tA\nt2\tB\n", encoding="utf-8")
-    pairs = tmp_path / "pairs.tsv"
-    pairs.write_text("query\ttarget\tinclude\nq\tq\ttrue\nq\tt1\tfalse\nq\tt2\ttrue\n", encoding="utf-8")
 
     group_relations = parse_group_relations(groups, group_column="family", known_names={"q", "t1", "t2"})
-    pair_relations = parse_pair_relations(pairs, known_names={"q", "t1", "t2"})
 
     assert group_relations["q"] == {"t2"}
-    assert pair_relations["q"] == {"t2"}
 
 
 def test_null_estimator_and_adjusted_pvalues_are_bounded_and_monotone():
@@ -172,13 +168,8 @@ def test_build_null_request_from_args_runs_without_subprocess(tmp_path):
         model_type="pwm",
         pattern="*.pfm",
         groups=groups,
-        pair_table=None,
-        pair_matrix=None,
         name_column="motif",
         group_column="group",
-        query_column="query",
-        target_column="target",
-        include_column="include",
         ignore_missing_relations=False,
         strategy="motif",
         metric="pcc",
@@ -216,15 +207,17 @@ def test_build_null_request_from_args_runs_without_subprocess(tmp_path):
 
 
 def test_create_null_distribution_api_builds_from_in_memory_models(tmp_path):
-    """Interactive null API should accept preloaded models and in-memory relations."""
+    """Interactive null API should accept preloaded models and group relations."""
     query = _make_shifted_core_pwm_model("q", 0)
     target_a = _make_shifted_core_pwm_model("u1", 1)
     target_b = _make_shifted_core_pwm_model("u2", 2)
+    groups = tmp_path / "groups.tsv"
+    groups.write_text("motif\tgroup\nq\tA\nu1\tB\nu2\tB\n", encoding="utf-8")
     output = tmp_path / "interactive.null.joblib"
 
     request = create_null_distribution_config(
         [query, target_a, target_b],
-        relations={"q": {"q", "u1", "u2"}},
+        groups=groups,
         strategy="motif",
         metric="pcc",
         output=output,

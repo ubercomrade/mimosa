@@ -535,13 +535,8 @@ collection and a relation input. Directory collections are loaded deterministica
 `--model-type` is provided; multi-motif MEME collections are supported for `--model-type pwm`. Motif names must be
 unique.
 
-Exactly one relation input is required:
-
-- `--groups`: table with motif-name and group columns; targets from different groups are used as null targets
-- `--pair-table`: table with query, target, and include columns; truthy include values select null pairs
-- `--pair-matrix`: square relation matrix; truthy cells select null pairs
-
-Truth values include `1`, `true`, `t`, `yes`, `y`, `include`, and `included`.
+A group relation table is required. `--groups` must point to a table with motif-name and group columns; targets from
+different groups are used as null targets.
 
 For `--strategy profile`, `build-null` uses FASTA sequences or generates random sequences with the `profile` defaults
 (`--num-sequences 1000`, `--seq-length 200`). For `--strategy motif`, direct same-family matrix/tensor comparison does
@@ -556,10 +551,7 @@ Important arguments:
 | `--model-type` | `pwm`, `bamm`, `sitega`, `dimont`, or `slim` |
 | `--pattern` | optional glob for directory collections |
 | `--groups` | TSV/CSV motif-to-group table |
-| `--pair-table` | TSV/CSV explicit query-target relation table |
-| `--pair-matrix` | square TSV/CSV relation matrix |
 | `--name-column`, `--group-column` | column names for `--groups`, defaults `motif` and `group` |
-| `--query-column`, `--target-column`, `--include-column` | column names for `--pair-table` |
 | `--ignore-missing-relations` | ignore relation names absent from the loaded collection |
 | `--strategy` | `profile` or `motif` |
 | `--metric` | defaults to `co` for `profile` and `pcc` for `motif` |
@@ -668,7 +660,7 @@ Types and utility exports:
 - `build_null_distributions(...)`
 - `load_null_distribution_file(...)`
 - `save_null_distribution_file(...)`
-- relation parsers: `parse_group_relations(...)`, `parse_pair_relations(...)`, `parse_pair_matrix_relations(...)`
+- relation parser: `parse_group_relations(...)`
 
 Single comparison example:
 

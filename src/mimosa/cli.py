@@ -19,8 +19,6 @@ from mimosa.nulls import (
     NullBuildRequest,
     file_fingerprint,
     parse_group_relations,
-    parse_pair_matrix_relations,
-    parse_pair_relations,
     run_build_null_request,
 )
 from mimosa.progress import TqdmLoggingHandler, should_enable_progress
@@ -331,15 +329,9 @@ def _add_build_null_parser(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument("--pattern", help="Glob pattern used when loading a directory collection.")
 
     relation = parser.add_argument_group("Relation Options")
-    source = relation.add_mutually_exclusive_group(required=True)
-    source.add_argument("--groups", help="TSV/CSV with motif and group columns.")
-    source.add_argument("--pair-table", help="TSV/CSV with query, target, and include columns.")
-    source.add_argument("--pair-matrix", help="Square TSV/CSV matrix where truthy cells include null pairs.")
+    relation.add_argument("--groups", required=True, help="TSV/CSV with motif and group columns.")
     relation.add_argument("--name-column", default="motif", help="Motif-name column for --groups.")
     relation.add_argument("--group-column", default="group", help="Group column for --groups.")
-    relation.add_argument("--query-column", default="query", help="Query column for --pair-table.")
-    relation.add_argument("--target-column", default="target", help="Target column for --pair-table.")
-    relation.add_argument("--include-column", default="include", help="Include column for --pair-table.")
     relation.add_argument("--ignore-missing-relations", action="store_true", help="Ignore relation names not loaded.")
 
     comparison = parser.add_argument_group("Comparison Options")
@@ -401,8 +393,6 @@ def validate_inputs(args) -> None:  # noqa: C901
         file_checks = [(args.motifs, "Motif collection")]
         for optional_path, label in (
             (getattr(args, "groups", None), "Group relation file"),
-            (getattr(args, "pair_table", None), "Pair relation file"),
-            (getattr(args, "pair_matrix", None), "Pair matrix file"),
             (getattr(args, "fasta", None), "FASTA file"),
             (getattr(args, "background", None), "Background FASTA file"),
         ):
@@ -555,31 +545,14 @@ def build_null_request_from_args(args) -> NullBuildRequest:
     """Resolve parsed CLI arguments into a null-distribution build request."""
     models = read_models(args.motifs, args.model_type, pattern=args.pattern)
     known_names = {model.name for model in models}
-    relation_path = args.groups or args.pair_table or args.pair_matrix
-    relation_fingerprint = file_fingerprint(relation_path)
-    if args.groups:
-        relations = parse_group_relations(
-            args.groups,
-            name_column=args.name_column,
-            group_column=args.group_column,
-            ignore_missing=args.ignore_missing_relations,
-            known_names=known_names,
-        )
-    elif args.pair_table:
-        relations = parse_pair_relations(
-            args.pair_table,
-            query_column=args.query_column,
-            target_column=args.target_column,
-            include_column=args.include_column,
-            ignore_missing=args.ignore_missing_relations,
-            known_names=known_names,
-        )
-    else:
-        relations = parse_pair_matrix_relations(
-            args.pair_matrix,
-            ignore_missing=args.ignore_missing_relations,
-            known_names=known_names,
-        )
+    relation_fingerprint = file_fingerprint(args.groups)
+    relations = parse_group_relations(
+        args.groups,
+        name_column=args.name_column,
+        group_column=args.group_column,
+        ignore_missing=args.ignore_missing_relations,
+        known_names=known_names,
+    )
 
     comparator = create_comparator_config(**map_args_to_comparator_kwargs(args))
     sequences = _resolve_build_null_sequences(args, comparator)

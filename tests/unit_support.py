@@ -95,7 +95,6 @@ from mimosa.nulls import (
     fit_survival_estimator,
     is_null_distribution_file_compatible,
     parse_group_relations,
-    parse_pair_relations,
     run_build_null_request,
     save_null_distribution_file,
 )

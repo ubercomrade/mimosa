@@ -19,7 +19,7 @@ from mimosa.nulls.metadata import (
     stable_hash,
     stable_json_dumps,
 )
-from mimosa.nulls.relations import parse_group_relations, parse_pair_matrix_relations, parse_pair_relations
+from mimosa.nulls.relations import parse_group_relations
 from mimosa.nulls.storage import (
     NULL_CACHE_DIR,
     install_null_distribution_file,
@@ -57,8 +57,6 @@ __all__ = [
     "load_compatible_null_distribution_file",
     "load_null_distribution_file",
     "parse_group_relations",
-    "parse_pair_matrix_relations",
-    "parse_pair_relations",
     "package_metadata",
     "run_build_null_request",
     "save_null_distribution_file",

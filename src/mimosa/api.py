@@ -25,10 +25,7 @@ from mimosa.nulls import (
     file_fingerprint,
     load_compatible_null_distribution_file,
     parse_group_relations,
-    parse_pair_matrix_relations,
-    parse_pair_relations,
     run_build_null_request,
-    stable_hash,
 )
 from mimosa.types import ComparatorConfig, ComparisonResult, OneToManyConfig, OneToOneConfig
 from mimosa.validation import validate_file_exists, validate_positive_int
@@ -38,7 +35,6 @@ logger = logging.getLogger(__name__)
 ModelRef = GenericModel | str | Path
 ModelCollectionRef = Iterable[ModelRef] | str | Path
 SequenceRef = SequenceBatch | str | Path
-RelationRef = Mapping[str, Iterable[str]]
 
 _STRATEGY_ALIASES = {
     "profile": "profile",
@@ -224,17 +220,11 @@ def create_null_distribution_config(  # noqa: PLR0913
     models: ModelCollectionRef,
     *,
     output: str | Path,
+    groups: str | Path,
     model_type: str | None = None,
     pattern: str | None = None,
-    relations: RelationRef | None = None,
-    groups: str | Path | None = None,
-    pair_table: str | Path | None = None,
-    pair_matrix: str | Path | None = None,
     name_column: str = "motif",
     group_column: str = "group",
-    query_column: str = "query",
-    target_column: str = "target",
-    include_column: str = "include",
     ignore_missing_relations: bool = False,
     strategy: str = "motif",
     sequences: SequenceRef | None = None,
@@ -265,17 +255,11 @@ def create_null_distribution_config(  # noqa: PLR0913
     resolved_models = _resolve_model_collection(models, model_type, pattern, model_kwargs)
     known_names = {model.name for model in resolved_models}
     resolved_relations, relation_fingerprint = _resolve_null_relations(
-        relations=relations,
         groups=groups,
-        pair_table=pair_table,
-        pair_matrix=pair_matrix,
         known_names=known_names,
         ignore_missing=ignore_missing_relations,
         name_column=name_column,
         group_column=group_column,
-        query_column=query_column,
-        target_column=target_column,
-        include_column=include_column,
     )
     resolved_sequences = _resolve_null_build_sequences(
         sequences,
@@ -307,17 +291,11 @@ def create_null_distribution(  # noqa: PLR0913
     models: ModelCollectionRef,
     *,
     output: str | Path,
+    groups: str | Path,
     model_type: str | None = None,
     pattern: str | None = None,
-    relations: RelationRef | None = None,
-    groups: str | Path | None = None,
-    pair_table: str | Path | None = None,
-    pair_matrix: str | Path | None = None,
     name_column: str = "motif",
     group_column: str = "group",
-    query_column: str = "query",
-    target_column: str = "target",
-    include_column: str = "include",
     ignore_missing_relations: bool = False,
     strategy: str = "motif",
     sequences: SequenceRef | None = None,
@@ -339,15 +317,9 @@ def create_null_distribution(  # noqa: PLR0913
         output=output,
         model_type=model_type,
         pattern=pattern,
-        relations=relations,
         groups=groups,
-        pair_table=pair_table,
-        pair_matrix=pair_matrix,
         name_column=name_column,
         group_column=group_column,
-        query_column=query_column,
-        target_column=target_column,
-        include_column=include_column,
         ignore_missing_relations=ignore_missing_relations,
         strategy=strategy,
         sequences=sequences,
@@ -588,91 +560,26 @@ def _resolve_null_build_sequences(
     return _resolve_sequence_ref(source, num_sequences, seq_length, seed)
 
 
-def _resolve_null_relations(  # noqa: PLR0913
+def _resolve_null_relations(
     *,
-    relations: RelationRef | None,
-    groups: str | Path | None,
-    pair_table: str | Path | None,
-    pair_matrix: str | Path | None,
+    groups: str | Path,
     known_names: set[str],
     ignore_missing: bool,
     name_column: str,
     group_column: str,
-    query_column: str,
-    target_column: str,
-    include_column: str,
 ) -> tuple[dict[str, set[str]], str]:
-    """Resolve null-pair relations from exactly one in-memory or file source."""
-    source_count = sum(source is not None for source in (relations, groups, pair_table, pair_matrix))
-    if source_count != 1:
-        raise ValueError("Provide exactly one relation source: relations, groups, pair_table, or pair_matrix.")
-
-    if relations is not None:
-        normalized = _normalize_relation_mapping(relations, known_names, ignore_missing)
-        return normalized, stable_hash({query: sorted(targets) for query, targets in sorted(normalized.items())})
-
-    if groups is not None:
-        path = validate_file_exists(groups, "Group relation file")
-        return (
-            parse_group_relations(
-                path,
-                name_column=name_column,
-                group_column=group_column,
-                ignore_missing=ignore_missing,
-                known_names=known_names,
-            ),
-            file_fingerprint(path),
-        )
-
-    if pair_table is not None:
-        path = validate_file_exists(pair_table, "Pair relation file")
-        return (
-            parse_pair_relations(
-                path,
-                query_column=query_column,
-                target_column=target_column,
-                include_column=include_column,
-                ignore_missing=ignore_missing,
-                known_names=known_names,
-            ),
-            file_fingerprint(path),
-        )
-
-    if pair_matrix is not None:
-        path = validate_file_exists(pair_matrix, "Pair matrix file")
-        return (
-            parse_pair_matrix_relations(path, ignore_missing=ignore_missing, known_names=known_names),
-            file_fingerprint(path),
-        )
-
-    raise AssertionError("unreachable relation source state")
-
-
-def _normalize_relation_mapping(
-    relations: RelationRef,
-    known_names: set[str],
-    ignore_missing: bool,
-) -> dict[str, set[str]]:
-    """Normalize and validate an in-memory null relation mapping."""
-    normalized: dict[str, set[str]] = {}
-    seen_names: set[str] = set()
-    for query, targets in relations.items():
-        query_name = str(query)
-        target_names = {str(target) for target in targets}
-        seen_names.add(query_name)
-        seen_names.update(target_names)
-        normalized[query_name] = {target for target in target_names if target != query_name}
-
-    missing = seen_names.difference(known_names)
-    if missing and not ignore_missing:
-        raise ValueError(f"Relation input references unknown motifs: {', '.join(sorted(missing))}")
-    if ignore_missing:
-        return {
-            query: {target for target in targets if target in known_names}
-            for query, targets in normalized.items()
-            if query in known_names
-        }
-    return normalized
+    """Resolve null-pair relations from a motif-to-group table."""
+    path = validate_file_exists(groups, "Group relation file")
+    return (
+        parse_group_relations(
+            path,
+            name_column=name_column,
+            group_column=group_column,
+            ignore_missing=ignore_missing,
+            known_names=known_names,
+        ),
+        file_fingerprint(path),
+    )
 
 
 def _annotate_results_if_requested(

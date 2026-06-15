@@ -27,8 +27,6 @@ from mimosa.nulls import (
     build_null_distributions,
     load_null_distribution_file,
     parse_group_relations,
-    parse_pair_matrix_relations,
-    parse_pair_relations,
     save_null_distribution_file,
 )
 from mimosa.scanning import (
@@ -65,8 +63,6 @@ __all__ = [
     "build_null_distributions",
     "load_null_distribution_file",
     "parse_group_relations",
-    "parse_pair_matrix_relations",
-    "parse_pair_relations",
     "read_model",
     "read_models",
     "register_model_handler",
