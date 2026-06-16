@@ -42,6 +42,9 @@ def fingerprint_batch(batch) -> str | None:
     if batch is None:
         return None
 
+    if batch == "none":
+        return "none"
+
     hasher = hashlib.blake2b(digest_size=16)
     hasher.update(_hash_array(np.asarray(batch["values"])))
     mask = batch.get("mask")
