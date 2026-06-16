@@ -111,7 +111,6 @@ def _compatibility_problems(  # noqa: PLR0913
         "format_version",
         "strategy",
         "metric",
-        "config_signature_hash",
         "sequence_fingerprint",
         "background_fingerprint",
     )

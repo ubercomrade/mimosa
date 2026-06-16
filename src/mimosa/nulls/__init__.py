@@ -12,7 +12,6 @@ from mimosa.nulls.compatibility import (
 from mimosa.nulls.estimators import GenextremeSurvivalEstimator, fit_survival_estimator
 from mimosa.nulls.metadata import (
     NULL_FORMAT_VERSION,
-    comparator_signature,
     environment_metadata,
     file_fingerprint,
     package_metadata,
@@ -48,7 +47,6 @@ __all__ = [
     "adjusted_pvalues",
     "annotate_results_with_nulls",
     "build_null_distributions",
-    "comparator_signature",
     "environment_metadata",
     "file_fingerprint",
     "fit_survival_estimator",

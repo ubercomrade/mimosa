@@ -30,7 +30,6 @@ def annotate_results_with_nulls(
     null_id = stable_hash(
         {
             "format_version": metadata_block.get("format_version"),
-            "config_signature_hash": metadata_block.get("config_signature_hash"),
             "model_collection_fingerprint": metadata_block.get("model_collection_fingerprint"),
             "relation_fingerprint": metadata_block.get("relation_fingerprint"),
             "n_null": n_null,

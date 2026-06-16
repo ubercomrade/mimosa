@@ -153,5 +153,4 @@ def run_build_null_request(request: NullBuildRequest) -> NullBuildSummary:
         number_of_queries_used=built.number_of_queries_used,
         skipped_queries=built.skipped,
         total_comparisons_run=built.total_comparisons,
-        config_signature=built.null_distribution_file["metadata"]["config_signature"],
     )

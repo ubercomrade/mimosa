@@ -18,8 +18,6 @@ class NullDistributionFileMetadata(TypedDict):
     created_at: str
     strategy: str
     metric: str
-    config_signature: dict[str, Any]
-    config_signature_hash: str
     sequence_fingerprint: str
     background_fingerprint: str
     model_collection_fingerprint: str | None
@@ -83,7 +81,6 @@ class NullBuildSummary:
     number_of_queries_used: int
     skipped_queries: list[dict[str, Any]]
     total_comparisons_run: int
-    config_signature: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
         """Return the public JSON-compatible payload used by the CLI."""
@@ -94,5 +91,4 @@ class NullBuildSummary:
             "number_of_queries_used": self.number_of_queries_used,
             "skipped_queries": self.skipped_queries,
             "total_comparisons_run": self.total_comparisons_run,
-            "config_signature": self.config_signature,
         }

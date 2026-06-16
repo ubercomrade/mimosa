@@ -84,6 +84,7 @@ def test_null_builder_and_annotation_add_significance_values():
         min_null_targets=2,
     )
     distribution = built.null_distribution_file["distribution"]
+    metadata = built.null_distribution_file["metadata"]
     results = [
         ComparisonResult(
             query="q",
@@ -115,6 +116,8 @@ def test_null_builder_and_annotation_add_significance_values():
     assert distribution["estimator_type"] == "genextreme"
     assert len(distribution["genextreme_params"]) == 3
     assert len(distribution["included_pairs"]) == 4
+    assert "config_signature" not in metadata
+    assert "config_signature_hash" not in metadata
     assert all("p-value" in result and "E-value" in result and "adj.p-value" in result for result in annotated)
 
 
