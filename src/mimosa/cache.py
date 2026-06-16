@@ -40,9 +40,6 @@ def _hash_array(array: np.ndarray) -> bytes:
 def fingerprint_batch(batch) -> str | None:
     """Return a stable content fingerprint for one padded or masked batch."""
     if batch is None:
-        return None
-
-    if batch == "none":
         return "none"
 
     hasher = hashlib.blake2b(digest_size=16)
