@@ -51,9 +51,7 @@ class GenextremeSurvivalEstimator:
     def to_entry(self) -> dict[str, Any]:
         return {
             "estimator_type": self.estimator_type,
-            "sorted_scores": self.scores.astype(np.float64),
             "genextreme_params": self.genextreme_params,
-            "parameters": {"genextreme_params": self.genextreme_params},
         }
 
 
@@ -64,7 +62,7 @@ def fit_survival_estimator(scores: Iterable[float]) -> GenextremeSurvivalEstimat
 
 def estimator_from_distribution(distribution: NullDistributionData) -> GenextremeSurvivalEstimator:
     """Rehydrate a GEV estimator from one null distribution file."""
-    scores = np.asarray(distribution["sorted_scores"], dtype=np.float64)
+    scores = _scores_from_distribution(distribution)
     parameters = distribution.get("parameters", {})
     if "genextreme_params" in distribution:
         genextreme_params = distribution["genextreme_params"]
@@ -73,3 +71,11 @@ def estimator_from_distribution(distribution: NullDistributionData) -> Genextrem
     if genextreme_params is None:
         raise ValueError("Null distribution is missing genextreme_params.")
     return GenextremeSurvivalEstimator(scores, genextreme_params)
+
+
+def _scores_from_distribution(distribution: NullDistributionData) -> np.ndarray:
+    if "raw_null_scores" in distribution:
+        return np.asarray(distribution["raw_null_scores"], dtype=np.float64)
+    if "sorted_scores" in distribution:
+        return np.asarray(distribution["sorted_scores"], dtype=np.float64)
+    raise ValueError("Null distribution is missing raw_null_scores.")

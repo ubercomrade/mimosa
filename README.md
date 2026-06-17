@@ -100,12 +100,9 @@ $$
 {\sqrt{\sum_i (v_1^i)^2}\sqrt{\sum_i (v_2^i)^2}}
 $$
 
-`profile` mode also exposes `co_rowwise` and `dice_rowwise`. These compute one score per selected window and then
-average finite window scores, instead of pooling all selected windows into one flattened vector. Rowwise variants are
-useful when many anchors are selected and each anchor should contribute more evenly.
+`profile` mode also exposes `co_rowwise` and `dice_rowwise`. These compute one score per selected window and then average finite window scores, instead of pooling all selected windows into one flattened vector. Rowwise variants are useful when many anchors are selected and each anchor should contribute more evenly.
 
-The `motif` metrics operate column-by-column on aligned matrices or flattened tensors. Let $u_t$ and $v_t$ be two
-aligned columns at position $t$.
+The `motif` metrics operate column-by-column on aligned matrices or flattened tensors. Let $u_t$ and $v_t$ be two aligned columns at position $t$.
 
 **Pearson Correlation (`pcc`)**
 
@@ -137,8 +134,15 @@ $$
 
 ### Null Hypothesis and Significance
 
-MIMOSA uses a stored pooled null distribution. A null distribution file is built ahead of time by comparing each eligible
-query motif against targets declared unrelated by a relation input, for example motifs from different TF families.
+MIMOSA uses a stored pooled null distribution. A null distribution file is built ahead of time from a motif collection split into groups, such as transcription-factor families or classes. The group table defines which motifs are unrelated: for each eligible query motif, null targets are all loaded motifs with a different group label. Motifs from the same group are not used as null targets for each other.
+
+For PWM/PFM collections, the input collection can also be prepared as a shuffled control set before running MIMOSA, for example by permuting columns or nucleotide rows in the PWM matrices. `mimosa build-null` then treats that shuffled set as the motif collection and still applies the group table to choose unrelated query-target pairs.
+
+MIMOSA compares all eligible query-target pairs selected by these group relations. The resulting scores are pooled into one shared null sample:
+
+$$
+S_{\text{null}} = \{s(q, t): q \ne t,\; group(q) \ne group(t)\}
+$$
 
 For an observed score $S_{\text{obs}}$, significance is computed as an upper-tail survival probability because all
 reported metrics are oriented so that larger scores mean stronger similarity:
@@ -154,31 +158,18 @@ $$
 p = \operatorname{genextreme.sf}(S_{\text{obs}}; \theta)
 $$
 
-If a saved estimator cannot be fitted or rehydrated, MIMOSA falls back to a finite-sample-corrected empirical estimator:
-
-$$
-p = \frac{\{S_{\text{null}} \ge S_{\text{obs}}\} + 1}{n_{\text{null}} + 1}
-$$
-
-Null distribution files are produced by `mimosa build-null` and stored as trusted `.joblib` files. Each file contains
-one pooled distribution across all eligible query-target comparisons. For each eligible query motif, MIMOSA compares
-that query against unrelated target motifs selected by the relation input, appends those scores to the shared null
-sample, and then fits a GEV survival estimator to the pooled scores. The file records:
+Null distribution files are produced by `mimosa build-null` and stored as trusted `.joblib` files. Each file contains one pooled distribution across all eligible query-target comparisons. For each eligible query motif, MIMOSA compares that query against unrelated target motifs selected from different groups, appends those scores to the shared null sample, and then fits a GEV survival estimator to the pooled scores. The file records:
 
 - comparison strategy and metric
-- score-affecting comparator options
 - FASTA and background fingerprints when sequence-derived scoring is used
 - motif collection fingerprint
 - relation input fingerprint
-- package version and null-format version
-- the pooled estimator and raw null scores
-- query-target pairs that contributed scores
+- null-format version
+- the GEV estimator parameters
+- raw, unsorted null scores in the same order as the stored pairs
+- query-target motif-name pairs that contributed scores
 
-At comparison time, `--pvalue` loads either the explicit `--null-distribution` file or the first compatible
-file found in `--null-search-dir` paths and the user cache (`~/.cache/mimosa/nulls`). Compatibility is checked
-against the strategy, metric, score-affecting options, sequence/background fingerprints, and null-format version. An
-explicit incompatible file raises an error; a search with no compatible file returns the score-only result and logs a
-warning.
+At comparison time, `--pvalue` loads either the explicit `--null-distribution` file or the first compatible file found in `--null-search-dir` paths and the user cache (`~/.cache/mimosa/nulls`). Compatibility is checked against the null-format version, strategy, metric, and sequence/background fingerprints. An explicit incompatible file raises an error; a search with no compatible file returns the score-only result and logs a warning.
 
 Annotated results include `p-value`, `adj.p-value`, `E-value`, `null_id`, `null_n`, and `null_estimator`. When more
 than one comparison is annotated, `adj.p-value` is computed with SciPy's `stats.false_discovery_control`; for a single

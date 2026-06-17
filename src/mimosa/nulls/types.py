@@ -15,14 +15,12 @@ from mimosa.types import ComparatorConfig
 
 class NullDistributionFileMetadata(TypedDict):
     format_version: int
-    created_at: str
     strategy: str
     metric: str
     sequence_fingerprint: str
     background_fingerprint: str
     model_collection_fingerprint: str | None
     relation_fingerprint: str | None
-    package_version: str
 
 
 class NullDistributionData(TypedDict, total=False):

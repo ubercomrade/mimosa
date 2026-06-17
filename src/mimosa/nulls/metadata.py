@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
-from importlib import metadata as package_metadata
 from pathlib import Path
 from typing import Any
 
@@ -44,19 +42,12 @@ def environment_metadata(  # noqa: PLR0913
     relation_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     """Build the compatibility metadata stored in each null distribution file."""
-    try:
-        version = package_metadata.version("mimosa-tool")
-    except package_metadata.PackageNotFoundError:
-        version = "0+unknown"
-
     return {
         "format_version": NULL_FORMAT_VERSION,
-        "created_at": datetime.now(timezone.utc).isoformat(),
         "strategy": strategy,
         "metric": config["metric"],
         "sequence_fingerprint": fingerprint_batch(sequences) or "none",
         "background_fingerprint": fingerprint_batch(background) or "none",
         "model_collection_fingerprint": model_collection_fingerprint,
         "relation_fingerprint": relation_fingerprint,
-        "package_version": version,
     }

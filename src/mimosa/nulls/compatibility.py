@@ -125,4 +125,6 @@ def _compatibility_problems(  # noqa: PLR0913
         parameters = distribution.get("parameters", {})
         if "genextreme_params" not in distribution and "genextreme_params" not in parameters:
             problems.append("genextreme_params are missing")
+        if "raw_null_scores" not in distribution and "sorted_scores" not in distribution:
+            problems.append("null scores are missing")
     return problems

@@ -56,7 +56,6 @@ def build_null_distributions(  # noqa: PLR0913
     skipped: list[dict[str, Any]] = []
     raw_scores: list[np.ndarray] = []
     included_query_names: list[str] = []
-    included_target_names: set[str] = set()
     included_pairs: list[dict[str, str]] = []
     total_comparisons = 0
     score_only_config = replace(config, pvalue=False)
@@ -89,15 +88,11 @@ def build_null_distributions(  # noqa: PLR0913
         scores = np.asarray([float(result["score"]) for result in results], dtype=np.float64)
         raw_scores.append(scores)
         included_query_names.append(query.name)
-        included_target_names.update(target_names)
-        query_fingerprint = fingerprint_model(query)
         for target_name in target_names:
             included_pairs.append(
                 {
                     "query_name": query.name,
-                    "query_fingerprint": query_fingerprint,
                     "target_name": target_name,
-                    "target_fingerprint": fingerprint_model(by_name[target_name]),
                 }
             )
         total_comparisons += len(results)
@@ -111,10 +106,6 @@ def build_null_distributions(  # noqa: PLR0913
     distribution.update(
         {
             "raw_null_scores": all_scores,
-            "n_null": int(all_scores.size),
-            "number_of_queries": len(included_query_names),
-            "included_query_names": included_query_names,
-            "included_target_names": sorted(included_target_names),
             "included_pairs": included_pairs,
         }
     )

@@ -14,7 +14,6 @@ from mimosa.nulls.metadata import (
     NULL_FORMAT_VERSION,
     environment_metadata,
     file_fingerprint,
-    package_metadata,
     stable_hash,
     stable_json_dumps,
 )
@@ -55,7 +54,6 @@ __all__ = [
     "load_compatible_null_distribution_file",
     "load_null_distribution_file",
     "parse_group_relations",
-    "package_metadata",
     "run_build_null_request",
     "save_null_distribution_file",
     "stable_hash",

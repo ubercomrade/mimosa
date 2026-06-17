@@ -110,14 +110,22 @@ def test_null_builder_and_annotation_add_significance_values():
         effective_number_of_targets=2,
     )
 
-    assert distribution["included_query_names"] == ["q", "q2"]
-    assert distribution["included_target_names"] == ["u1", "u2"]
-    assert distribution["n_null"] == 4
     assert distribution["estimator_type"] == "genextreme"
     assert len(distribution["genextreme_params"]) == 3
     assert len(distribution["included_pairs"]) == 4
+    assert len(distribution["raw_null_scores"]) == len(distribution["included_pairs"])
+    assert all(set(pair) == {"query_name", "target_name"} for pair in distribution["included_pairs"])
+    assert "sorted_scores" not in distribution
+    assert "parameters" not in distribution
+    assert "n_null" not in distribution
+    assert "number_of_queries" not in distribution
+    assert "included_query_names" not in distribution
+    assert "included_target_names" not in distribution
+    assert annotated[0]["null_n"] == 4
     assert "config_signature" not in metadata
     assert "config_signature_hash" not in metadata
+    assert "created_at" not in metadata
+    assert "package_version" not in metadata
     assert all("p-value" in result and "E-value" in result and "adj.p-value" in result for result in annotated)
 
 
@@ -298,20 +306,22 @@ def test_null_distribution_file_matching_rejects_incompatible_metric_but_not_que
     )
 
 
-def test_environment_metadata_uses_distribution_name(monkeypatch):
-    """Null metadata should query the installed distribution name."""
-    calls = []
-
-    def fake_version(distribution_name):
-        calls.append(distribution_name)
-        return "9.9.9"
-
-    monkeypatch.setattr("mimosa.nulls.package_metadata.version", fake_version)
-
+def test_environment_metadata_contains_only_compatibility_fields():
+    """Null metadata should avoid volatile keys while keeping required fingerprints."""
     metadata = environment_metadata(strategy="motif", config=create_comparator_config(metric="pcc"))
 
-    assert calls == ["mimosa-tool"]
-    assert metadata["package_version"] == "9.9.9"
+    assert set(metadata) == {
+        "format_version",
+        "strategy",
+        "metric",
+        "sequence_fingerprint",
+        "background_fingerprint",
+        "model_collection_fingerprint",
+        "relation_fingerprint",
+    }
+    assert metadata["format_version"] == 2
+    assert metadata["strategy"] == "motif"
+    assert metadata["metric"] == "pcc"
 
 
 def test_save_null_distribution_file_roundtrip(tmp_path):
