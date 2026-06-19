@@ -134,11 +134,11 @@ $$
 
 ### Null Hypothesis and Significance
 
-MIMOSA uses a stored pooled null distribution. A null distribution file is built ahead of time from a motif collection split into groups, such as transcription-factor families or classes. The group table defines which motifs are unrelated: for each eligible query motif, null targets are all loaded motifs with a different group label. Motifs from the same group are not used as null targets for each other.
+MIMOSA uses a stored pooled null distribution. A null distribution file is built ahead of time from a motif collection split into groups, such as transcription-factor families or classes. The group table defines which motifs are treated as unrelated: for each eligible query motif, null targets are loaded motifs that are present in the group table and have a different group label. Motifs from the same group are not used as null targets for each other.
 
-For PWM/PFM collections, the input collection can also be prepared as a shuffled control set before running MIMOSA, for example by permuting columns or nucleotide rows in the PWM matrices. `mimosa build-null` then treats that shuffled set as the motif collection and still applies the group table to choose unrelated query-target pairs.
+For PWM/PFM collections, the input collection can also be prepared as a shuffled control set before running MIMOSA, for example by permuting motif positions and nucleotide weights within positions. `mimosa build-null` does not shuffle motifs internally; it treats the supplied shuffled set as the motif collection and still applies the group table to choose unrelated query-target pairs.
 
-MIMOSA compares all eligible query-target pairs selected by these group relations. The resulting scores are pooled into one shared null sample:
+MIMOSA compares all eligible query-target pairs selected by these group relations using the selected strategy and metric. Each score is computed after the usual optimization over shifts and orientations. The resulting scores are pooled into one shared null sample:
 
 $$
 S_{\text{null}} = \{s(q, t): q \ne t,\; group(q) \ne group(t)\}
@@ -161,7 +161,7 @@ $$
 Null distribution files are produced by `mimosa build-null` and stored as trusted `.joblib` files. Each file contains one pooled distribution across all eligible query-target comparisons. For each eligible query motif, MIMOSA compares that query against unrelated target motifs selected from different groups, appends those scores to the shared null sample, and then fits a GEV survival estimator to the pooled scores. The file records:
 
 - comparison strategy and metric
-- FASTA and background fingerprints when sequence-derived scoring is used
+- FASTA and background fingerprints, stored as `none` when sequence-derived scoring is not used
 - motif collection fingerprint
 - relation input fingerprint
 - null-format version
@@ -587,8 +587,7 @@ If `--install-cache` was used while building the null distribution file, later c
 additional project-local file directories.
 
 The build command prints a JSON summary with the null distribution file path, optional cache path, number of motifs
-loaded, number of queries used in the pooled distribution, skipped queries, total comparisons run, and the stored
-comparator signature.
+loaded, number of queries used in the pooled distribution, skipped queries, and total comparisons run.
 
 ## `cache` Command
 
