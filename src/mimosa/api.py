@@ -79,6 +79,8 @@ def create_one_to_one_config(
         effective_kwargs["metric"] = default_metric
 
     resolved_comparator = comparator or create_comparator_config(**effective_kwargs)
+    resolved_query_kwargs = dict(query_kwargs or {})
+    resolved_target_kwargs = dict(target_kwargs or {})
     return OneToOneConfig(
         query=query,
         target=target,
@@ -91,8 +93,8 @@ def create_one_to_one_config(
         seq_length=seq_length,
         seed=seed,
         comparator=resolved_comparator,
-        query_kwargs=query_kwargs,
-        target_kwargs=target_kwargs,
+        query_kwargs=resolved_query_kwargs,
+        target_kwargs=resolved_target_kwargs,
     )
 
 
@@ -160,6 +162,8 @@ def create_one_to_many_config(
         effective_kwargs["metric"] = default_metric
 
     resolved_comparator = comparator or create_comparator_config(**effective_kwargs)
+    resolved_query_kwargs = dict(query_kwargs or {})
+    resolved_target_kwargs = dict(target_kwargs or {})
     return OneToManyConfig(
         query=query,
         targets=tuple(_normalize_targets(targets)),
@@ -172,8 +176,8 @@ def create_one_to_many_config(
         seq_length=seq_length,
         seed=seed,
         comparator=resolved_comparator,
-        query_kwargs=query_kwargs,
-        target_kwargs=target_kwargs,
+        query_kwargs=resolved_query_kwargs,
+        target_kwargs=resolved_target_kwargs,
         progress=progress,
     )
 

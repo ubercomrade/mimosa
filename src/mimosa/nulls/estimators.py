@@ -64,13 +64,14 @@ def estimator_from_distribution(distribution: NullDistributionData) -> Genextrem
     """Rehydrate a GEV estimator from one null distribution file."""
     scores = _scores_from_distribution(distribution)
     parameters = distribution.get("parameters", {})
+    raw_params: Iterable[float] | None
     if "genextreme_params" in distribution:
-        genextreme_params = distribution["genextreme_params"]
+        raw_params = distribution["genextreme_params"]
     else:
-        genextreme_params = parameters.get("genextreme_params")
-    if genextreme_params is None:
+        raw_params = parameters.get("genextreme_params")
+    if raw_params is None:
         raise ValueError("Null distribution is missing genextreme_params.")
-    return GenextremeSurvivalEstimator(scores, genextreme_params)
+    return GenextremeSurvivalEstimator(scores, raw_params)
 
 
 def _scores_from_distribution(distribution: NullDistributionData) -> np.ndarray:

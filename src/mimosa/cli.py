@@ -382,34 +382,41 @@ def _add_cache_parser(subparsers: argparse._SubParsersAction) -> None:
     )
 
 
-def validate_inputs(args) -> None:  # noqa: C901
+def validate_inputs(args) -> None:
     """Validate input files and parameters."""
-    logger = logging.getLogger(__name__)
-
     if args.mode == "cache":
         return
 
-    if args.mode == "build-null":
-        file_checks = [(args.motifs, "Motif collection")]
-        for optional_path, label in (
-            (getattr(args, "groups", None), "Group relation file"),
-            (getattr(args, "fasta", None), "FASTA file"),
-            (getattr(args, "background", None), "Background FASTA file"),
-        ):
-            if optional_path:
-                file_checks.append((optional_path, label))
+    logger = logging.getLogger(__name__)
+    try:
+        if args.mode == "build-null":
+            _validate_build_null_inputs(args)
+        else:
+            _validate_comparison_inputs(args)
+    except (FileNotFoundError, ValueError) as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
 
-        try:
-            for path, label in file_checks:
-                validate_file_exists(path, label)
-            create_comparator_config(**map_args_to_comparator_kwargs(args))
-            _validate_build_null_metric(args)
-            validate_positive_int("min_null_targets", args.min_null_targets)
-        except (FileNotFoundError, ValueError) as exc:
-            logger.error("%s", exc)
-            sys.exit(1)
-        return
 
+def _validate_build_null_inputs(args) -> None:
+    """Validate files and parameters for null-distribution building."""
+    file_checks = [(args.motifs, "Motif collection")]
+    for optional_path, label in (
+        (getattr(args, "groups", None), "Group relation file"),
+        (getattr(args, "fasta", None), "FASTA file"),
+        (getattr(args, "background", None), "Background FASTA file"),
+    ):
+        if optional_path:
+            file_checks.append((optional_path, label))
+
+    _validate_existing_paths(file_checks)
+    create_comparator_config(**map_args_to_comparator_kwargs(args))
+    _validate_build_null_metric(args)
+    validate_positive_int("min_null_targets", args.min_null_targets)
+
+
+def _validate_comparison_inputs(args) -> None:
+    """Validate files and comparator parameters for comparison modes."""
     file_checks = [
         (args.model1, "Input file"),
         (args.model2, "Input file"),
@@ -421,14 +428,15 @@ def validate_inputs(args) -> None:  # noqa: C901
     if getattr(args, "null_distribution", None):
         file_checks.append((args.null_distribution, "Null distribution file"))
 
-    try:
-        for path, label in file_checks:
-            validate_file_exists(path, label)
-        if args.mode in {"profile", "motif"}:
-            create_comparator_config(**map_args_to_comparator_kwargs(args))
-    except (FileNotFoundError, ValueError) as exc:
-        logger.error("%s", exc)
-        sys.exit(1)
+    _validate_existing_paths(file_checks)
+    if args.mode in {"profile", "motif"}:
+        create_comparator_config(**map_args_to_comparator_kwargs(args))
+
+
+def _validate_existing_paths(file_checks) -> None:
+    """Validate a sequence of path/label pairs."""
+    for path, label in file_checks:
+        validate_file_exists(path, label)
 
 
 def map_args_to_comparator_kwargs(args) -> Dict[str, Any]:

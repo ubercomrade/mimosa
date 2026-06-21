@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, cast
 
 from mimosa.batches import SequenceBatch
 
@@ -42,7 +42,7 @@ class _FrozenRecord(Mapping[str, Any]):
         return value
 
     def __iter__(self) -> Iterator[str]:
-        for field_info in fields(self):
+        for field_info in fields(cast(Any, self)):
             value = getattr(self, field_info.name)
             if field_info.name in self._OMIT_NONE_FIELDS and value is None:
                 continue
