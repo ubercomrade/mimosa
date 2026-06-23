@@ -28,6 +28,7 @@ from mimosa.scanning import (
     scan_with_batch_kernel,
     scan_with_batch_kernel_strands,
     score_bounds_from_model,
+    score_bounds_from_representation,
 )
 
 
@@ -101,11 +102,13 @@ def _load_sitega(path: str, _kwargs: dict) -> GenericModel:
     if ext != ".mat":
         raise ValueError(f"Unsupported SiteGA format: {path}")
 
-    representation, name, length, minimum, maximum = read_sitega(path)
+    representation, name, length = read_sitega(path)
+    representation = np.asarray(representation, dtype=np.float32)
+    minimum, maximum = score_bounds_from_representation(representation)
     return GenericModel(
         "sitega",
         name,
-        np.asarray(representation, dtype=np.float32),
+        representation,
         int(length),
         {"kmer": 2, "minimum": float(minimum), "maximum": float(maximum)},
     )

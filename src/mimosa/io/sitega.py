@@ -9,7 +9,7 @@ import numpy as np
 _SITEGA_EPS = 1e-9
 
 
-def read_sitega(path: str) -> tuple[np.ndarray, str, int, float, float]:
+def read_sitega(path: str) -> tuple[np.ndarray, str, int]:
     """Parse SiteGA output file and return the motif matrix with metadata."""
     converter = {"A": 0, "C": 1, "G": 2, "T": 3}
     segment_fields = 5
@@ -22,8 +22,8 @@ def read_sitega(path: str) -> tuple[np.ndarray, str, int, float, float]:
         length = int(file.readline().strip().split()[0])
         if length <= 0:
             raise ValueError(f"Malformed SiteGA file {path}: model length must be positive.")
-        minimum = float(file.readline().strip().split()[0])
-        maximum = float(file.readline().strip().split()[0])
+        file.readline()  # skip row
+        file.readline()  # skip row
         sitega = np.zeros((5, 5, length), dtype=np.float32)
         for line_number, line in enumerate(file, start=6):
             parts = line.strip().split()
@@ -47,15 +47,15 @@ def read_sitega(path: str) -> tuple[np.ndarray, str, int, float, float]:
             number_of_positions = stop_index - start_index + 1
             for index in range(start_index, stop_index + 1):
                 sitega[nuc_1][nuc_2][index] += float(value) / number_of_positions
-    return np.array(sitega, dtype=np.float32), name, length, minimum, maximum
+    return np.array(sitega, dtype=np.float32), name, length
 
 
 def write_sitega(model, path: str) -> None:
     """Write SiteGA motif to a .mat file."""
-    from mimosa.scanning import get_score_bounds
+    from mimosa.scanning import score_bounds_from_representation
 
     sitega_matrix = model.representation
-    minimum, maximum = get_score_bounds(model)
+    minimum, maximum = score_bounds_from_representation(np.asarray(sitega_matrix))
     converter = {0: "A", 1: "C", 2: "G", 3: "T"}
     dinuc_map = {"".join(dinuc): index for index, dinuc in enumerate(itertools.product("acgt", repeat=2))}
 

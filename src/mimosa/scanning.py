@@ -55,11 +55,6 @@ def scan_model_strands(model: GenericModel, sequences=None):
     return make_strand_bundle(plus_scores, minus_scores)
 
 
-def get_score_bounds(model: GenericModel) -> tuple[float, float]:
-    """Return theoretical minimum and maximum scores for a model."""
-    return get_model_handler(model.type_key).score_bounds(model)
-
-
 def score_bounds_from_representation(representation: np.ndarray) -> tuple[float, float]:
     """Compute theoretical score bounds from one model tensor."""
     minimum = representation.min(axis=tuple(range(representation.ndim - 1))).sum()
@@ -131,7 +126,6 @@ __all__ = [
     "calculate_threshold_table",
     "flatten_scan_scores",
     "get_frequencies",
-    "get_score_bounds",
     "get_scores",
     "resolve_strand_mode",
     "scan_model",

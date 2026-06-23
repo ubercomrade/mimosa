@@ -66,6 +66,26 @@ def test_read_sitega_rejects_out_of_range_segment(tmp_path):
         read_sitega(str(path))
 
 
+def test_load_sitega_bounds_come_from_representation(tmp_path):
+    """SiteGA loader should derive score bounds from parsed tensor values, not file header rows."""
+    path = tmp_path / "sitega.mat"
+    path.write_text(
+        "toy\n"
+        "2\tLPD count\n"
+        "2\tModel length\n"
+        "-999\tMinimum\n"
+        "999\tRazmah\n"
+        "0\t1\t2.0\t1\tac\n"
+        "0\t1\t-4.0\t11\tgt\n",
+        encoding="utf-8",
+    )
+
+    model = read_model(str(path), "sitega")
+
+    assert model.config["minimum"] == pytest.approx(-4.0)
+    assert model.config["maximum"] == pytest.approx(2.0)
+
+
 def test_parse_file_content_rejects_invalid_bamm_width(tmp_path):
     """BaMM parser should validate expected order widths."""
     path = tmp_path / "invalid.ihbcp"
