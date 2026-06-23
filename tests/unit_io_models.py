@@ -70,13 +70,7 @@ def test_load_sitega_bounds_come_from_representation(tmp_path):
     """SiteGA loader should derive score bounds from parsed tensor values, not file header rows."""
     path = tmp_path / "sitega.mat"
     path.write_text(
-        "toy\n"
-        "2\tLPD count\n"
-        "2\tModel length\n"
-        "-999\tMinimum\n"
-        "999\tRazmah\n"
-        "0\t1\t2.0\t1\tac\n"
-        "0\t1\t-4.0\t11\tgt\n",
+        "toy\n2\tLPD count\n2\tModel length\n-999\tMinimum\n999\tRazmah\n0\t1\t2.0\t1\tac\n0\t1\t-4.0\t11\tgt\n",
         encoding="utf-8",
     )
 
