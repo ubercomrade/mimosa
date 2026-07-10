@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import replace
 from typing import Callable, TypeVar
 
-from joblib import Parallel, delayed
+from numba import config as numba_config
+from numba import get_num_threads, set_num_threads
 
 from mimosa.comparison.motif import _compare_motif_one_to_many, strategy_motif
 from mimosa.comparison.profile import _compare_profile_one_to_many, strategy_profile
@@ -21,9 +23,31 @@ registry: dict[str, Callable] = {
 }
 
 
-def _resolve_target_job_count(n_jobs: int | None) -> int:
-    """Resolve one target-level worker count from the compatibility config key."""
-    return -1 if n_jobs is None else int(n_jobs)
+def _resolve_numba_thread_count(n_jobs: int | None) -> int | None:
+    """Resolve the compatibility option against Numba's runtime maximum."""
+    if n_jobs is None:
+        return None
+    maximum = int(numba_config.NUMBA_NUM_THREADS)
+    requested = int(n_jobs)
+    if requested == -1:
+        return maximum
+    if requested > maximum:
+        raise ValueError(f"n_jobs={requested} exceeds the available Numba thread maximum ({maximum}).")
+    return requested
+
+
+@contextmanager
+def _numba_thread_scope(n_jobs: int | None):
+    """Temporarily apply one Numba thread mask and always restore it."""
+    resolved = _resolve_numba_thread_count(n_jobs)
+    previous = get_num_threads()
+    if resolved is not None and resolved != previous:
+        set_num_threads(resolved)
+    try:
+        yield resolved if resolved is not None else previous
+    finally:
+        if get_num_threads() != previous:
+            set_num_threads(previous)
 
 
 def _run_target_comparisons(
@@ -35,35 +59,21 @@ def _run_target_comparisons(
     progress_desc: str | None = None,
     progress_leave: bool = True,
 ) -> list[_ComparisonJobResult]:
-    """Execute one worker across targets sequentially or with joblib threads."""
+    """Execute targets sequentially while numerical kernels use Numba threads."""
     if not target_models:
         return []
 
-    n_jobs = _resolve_target_job_count(n_jobs)
-    if n_jobs == 1 or len(target_models) == 1:
-        return [
-            worker(target_model)
-            for target_model in iter_progress(
-                target_models,
-                enabled=progress,
-                desc=progress_desc,
-                total=len(target_models),
-                leave=progress_leave,
-            )
-        ]
-
-    results = Parallel(n_jobs=n_jobs, backend="loky", return_as="generator")(
-        delayed(worker)(target_model) for target_model in target_models
-    )
-    return list(
-        iter_progress(
-            results,
+    del n_jobs
+    return [
+        worker(target_model)
+        for target_model in iter_progress(
+            target_models,
             enabled=progress,
             desc=progress_desc,
             total=len(target_models),
             leave=progress_leave,
         )
-    )
+    ]
 
 
 def compare(
@@ -82,7 +92,8 @@ def compare(
         raise ValueError(f"Strategy '{strategy}' not found. Available: {available}") from exc
 
     effective_config = replace(config, background=background) if background is not None else config
-    return strategy_fn(model1, model2, sequences, effective_config)
+    with _numba_thread_scope(effective_config["n_jobs"]):
+        return strategy_fn(model1, model2, sequences, effective_config)
 
 
 def compare_one_to_many(
@@ -100,25 +111,26 @@ def compare_one_to_many(
     """Main entry point for one-vs-many motif comparison."""
     effective_config = replace(config, background=background) if background is not None else config
 
-    if strategy == "profile":
-        return _compare_profile_one_to_many(
-            query_model,
-            target_models,
-            sequences,
-            effective_config,
-            progress=progress,
-            progress_desc=progress_desc,
-            progress_leave=progress_leave,
-        )
-    if strategy == "motif":
-        return _compare_motif_one_to_many(
-            query_model,
-            target_models,
-            sequences,
-            effective_config,
-            progress=progress,
-            progress_desc=progress_desc,
-            progress_leave=progress_leave,
-        )
+    with _numba_thread_scope(effective_config["n_jobs"]):
+        if strategy == "profile":
+            return _compare_profile_one_to_many(
+                query_model,
+                target_models,
+                sequences,
+                effective_config,
+                progress=progress,
+                progress_desc=progress_desc,
+                progress_leave=progress_leave,
+            )
+        if strategy == "motif":
+            return _compare_motif_one_to_many(
+                query_model,
+                target_models,
+                sequences,
+                effective_config,
+                progress=progress,
+                progress_desc=progress_desc,
+                progress_leave=progress_leave,
+            )
     available = ", ".join(sorted(registry))
     raise ValueError(f"Strategy '{strategy}' not found. Available: {available}")

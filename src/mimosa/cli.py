@@ -153,7 +153,7 @@ def _add_common_technical_arguments(
             "--jobs",
             type=int,
             default=-1,
-            help="Number of parallel jobs. Use -1 for all cores. (default: %(default)s)",
+            help="Number of Numba threads per numerical kernel. Use -1 for the runtime maximum. (default: %(default)s)",
         )
     technical_group.add_argument(
         "--progress",

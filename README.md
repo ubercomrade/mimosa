@@ -228,6 +228,15 @@ uv pip install -e . --no-build-isolation
 Main runtime dependencies are declared in [pyproject.toml](pyproject.toml): `numpy`, `scipy`, `pandas`,
 `joblib`, `numba`, and `tqdm`.
 
+Numba is the only CPU parallel execution mechanism. Target collections are traversed sequentially, while sufficiently
+large numerical profile-alignment kernels distribute independent profile rows across Numba threads. Small workloads
+automatically use the serial kernel to avoid scheduling overhead. `--jobs 1` forces serial numerical execution,
+`--jobs -1` uses the Numba runtime maximum, and the Python API value `n_jobs=None` preserves the current Numba thread
+mask. The previous thread mask is restored after every public comparison call, including failed calls.
+
+`joblib` is not used to schedule comparisons. It remains a dependency only for compatible model and trusted null
+distribution serialization; loading pickle/joblib data from untrusted sources is unsafe.
+
 ## Quick Start
 
 Compare two precomputed score profiles:
@@ -455,7 +464,7 @@ Important arguments:
 | `--null-search-dir` | repeatable additional null distribution file search directory |
 | `--effective-number-of-targets` | override E-value target count |
 | `--seed` | random seed, default `127` |
-| `--jobs` | number of parallel jobs, default `-1` |
+| `--jobs` | Numba threads per numerical kernel; `1` is serial and `-1` is the runtime maximum |
 | `--progress`, `--no-progress` | show or suppress progress bars on `stderr`; default auto-detects terminals |
 | `-v`, `--verbose` | verbose logging |
 
@@ -505,7 +514,7 @@ Important arguments:
 | `--null-search-dir` | repeatable additional null distribution file search directory |
 | `--effective-number-of-targets` | override E-value target count |
 | `--seed` | random seed, default `127` |
-| `--jobs` | number of parallel jobs, default `-1` |
+| `--jobs` | Numba threads per numerical kernel; direct motif alignment remains serial |
 | `--progress`, `--no-progress` | show or suppress progress bars on `stderr`; default auto-detects terminals |
 | `-v`, `--verbose` | verbose logging |
 
@@ -554,7 +563,7 @@ Important arguments:
 | `--install-cache` | also copy the null distribution file into `~/.cache/mimosa/nulls` |
 | `--strict` | fail when a query has too few null targets |
 | `--min-null-targets` | minimum number of null targets per query, default `1` |
-| `--seed`, `--jobs` | random seed and parallelism |
+| `--seed`, `--jobs` | random seed and Numba thread budget |
 | `--progress`, `--no-progress` | show or suppress query and target progress bars on `stderr`; default auto-detects terminals |
 
 Group-table example:

@@ -32,7 +32,7 @@ def validate_optional_thread_count(name: str, value: Optional[int]) -> Optional[
 
     number = int(value)
     if number == -1:
-        return None
+        return -1
     if number <= 0:
         raise ValueError(f"{name} must be positive or -1 for automatic selection, got {value}")
     return number

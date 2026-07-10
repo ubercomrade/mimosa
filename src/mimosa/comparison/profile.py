@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 import numpy as np
-from numba import njit
+from numba import get_num_threads, njit
 
 from mimosa.batches import flatten_profile_bundle
 from mimosa.cache import ProfileCacheSpec, fingerprint_model, load_profile_cache, store_profile_cache
@@ -21,6 +21,12 @@ from mimosa.functions import (
     rowwise_co,
     rowwise_cosine,
     rowwise_dice,
+)
+from mimosa.functions.alignment import (
+    build_anchor_csr,
+    make_alignment_workspace,
+    score_shift,
+    should_use_parallel,
 )
 from mimosa.models import GenericModel
 from mimosa.scanning import scan_model_strands
@@ -145,12 +151,6 @@ def _prepare_profile_model(
     return prepare_profile_bundle(bundle)
 
 
-def _build_window_offsets(window_radius: int) -> np.ndarray:
-    """Return symmetric integer offsets for one site-centered window."""
-    radius = int(window_radius)
-    return np.arange(-radius, radius + 1, dtype=np.int32)
-
-
 def _empty_positions() -> tuple[np.ndarray, np.ndarray]:
     """Return one empty anchor payload."""
     empty = np.empty(0, dtype=np.int32)
@@ -235,57 +235,6 @@ def _collect_anchor_sites(
     return _collect_threshold_anchor_positions_numba(scores_array, lengths_array, float(score_threshold))
 
 
-def _filter_window_positions(
-    rows: np.ndarray,
-    pos1: np.ndarray,
-    pos2: np.ndarray,
-    lengths1: np.ndarray,
-    lengths2: np.ndarray,
-    min_offset: int,
-    max_offset: int,
-) -> np.ndarray:
-    """Return the mask of anchors whose full windows fit in both profiles."""
-    if rows.size == 0:
-        return np.zeros(0, dtype=bool)
-
-    row_lengths1 = lengths1[rows]
-    row_lengths2 = lengths2[rows]
-
-    return (
-        (pos1 + min_offset >= 0)
-        & (pos1 + max_offset < row_lengths1)
-        & (pos2 + min_offset >= 0)
-        & (pos2 + max_offset < row_lengths2)
-    )
-
-
-def _empty_candidate_triplets() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return one empty candidate payload."""
-    empty = np.empty(0, dtype=np.int32)
-    return empty, empty, empty
-
-
-def _collect_model1_window_candidates(
-    anchor_rows: np.ndarray,
-    anchor_pos1: np.ndarray,
-    lengths1: np.ndarray,
-    lengths2: np.ndarray,
-    shift: int,
-    min_offset: int,
-    max_offset: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Collect valid windows centered on model1 anchors."""
-    if anchor_rows.size == 0:
-        return _empty_candidate_triplets()
-
-    pos2 = anchor_pos1 + int(shift)
-    valid = _filter_window_positions(anchor_rows, anchor_pos1, pos2, lengths1, lengths2, min_offset, max_offset)
-    if not np.any(valid):
-        return _empty_candidate_triplets()
-
-    return anchor_rows[valid], anchor_pos1[valid], pos2[valid]
-
-
 @njit(cache=False, nogil=False)
 def _collect_model2_window_candidates_numba(
     scores1: np.ndarray,
@@ -356,7 +305,8 @@ def _collect_model2_window_candidates(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Collect valid windows centered on model2 anchors and realigned on model1."""
     if anchor_rows.size == 0:
-        return _empty_candidate_triplets()
+        empty = np.empty(0, dtype=np.int32)
+        return empty, empty, empty
 
     return _collect_model2_window_candidates_numba(
         np.ascontiguousarray(scores1, dtype=np.float32),
@@ -371,48 +321,8 @@ def _collect_model2_window_candidates(
     )
 
 
-def _merge_window_candidates(
-    candidate_set1: tuple[np.ndarray, np.ndarray, np.ndarray],
-    candidate_set2: tuple[np.ndarray, np.ndarray, np.ndarray],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Merge model-derived candidates with OR semantics and deterministic deduplication."""
-    rows1, pos1_1, pos2_1 = candidate_set1
-    rows2, pos1_2, pos2_2 = candidate_set2
-
-    if rows1.size == 0:
-        return rows2, pos1_2, pos2_2
-    if rows2.size == 0:
-        return rows1, pos1_1, pos2_1
-
-    rows = np.concatenate((rows1, rows2))
-    pos1 = np.concatenate((pos1_1, pos1_2))
-    pos2 = np.concatenate((pos2_1, pos2_2))
-
-    order = np.lexsort((pos2, pos1, rows))
-    rows = rows[order]
-    pos1 = pos1[order]
-    pos2 = pos2[order]
-
-    keep = np.ones(rows.size, dtype=bool)
-    keep[1:] = (rows[1:] != rows[:-1]) | (pos1[1:] != pos1[:-1]) | (pos2[1:] != pos2[:-1])
-    return rows[keep], pos1[keep], pos2[keep]
-
-
-def _extract_selected_windows(
-    scores: np.ndarray,
-    rows: np.ndarray,
-    positions: np.ndarray,
-    offsets: np.ndarray,
-) -> np.ndarray:
-    """Extract one dense window matrix from selected rows and positions."""
-    if rows.size == 0:
-        return np.empty((0, offsets.size), dtype=np.float32)
-    cols = positions[:, None] + offsets[None, :]
-    return np.asarray(scores[rows[:, None], cols], dtype=np.float32)
-
-
 def _score_window_collection(metric: str, windows1: np.ndarray, windows2: np.ndarray) -> float:
-    """Score one selected window collection with the requested profile metric."""
+    """Score explicit windows for metric-level compatibility tests."""
     if windows1.shape != windows2.shape:
         raise ValueError("Window collections must have identical shapes.")
     if windows1.size == 0:
@@ -453,37 +363,31 @@ def _compute_shifted_window_alignment(
     realign_window: int,
     metric: str,
 ) -> dict[str, int | float]:
-    """Evaluate one shift for one oriented pair of normalized score profiles."""
-    model1_candidates = _collect_model1_window_candidates(
-        query_anchors[0],
-        query_anchors[1],
-        lengths1,
-        lengths2,
-        shift,
-        min_offset,
-        max_offset,
+    """Evaluate one shift through the fused kernel (compatibility adapter)."""
+    del offsets, min_offset
+    n_rows = int(scores1.shape[0])
+    query_csr = build_anchor_csr(query_anchors[0], query_anchors[1], n_rows)
+    target_csr = build_anchor_csr(target_anchors[0], target_anchors[1], n_rows)
+    workspace = make_alignment_workspace(n_rows, int(scores1.shape[1]))
+    score, n_sites = score_shift(
+        np.ascontiguousarray(scores1, dtype=np.float32),
+        np.ascontiguousarray(lengths1, dtype=np.int32),
+        np.ascontiguousarray(scores2, dtype=np.float32),
+        np.ascontiguousarray(lengths2, dtype=np.int32),
+        query_csr,
+        target_csr,
+        int(shift),
+        int(max_offset),
+        int(realign_window),
+        metric,
+        workspace,
+        1,
+        False,
     )
-    model2_candidates = _collect_model2_window_candidates(
-        scores1,
-        lengths1,
-        lengths2,
-        target_anchors[0],
-        target_anchors[1],
-        shift,
-        min_offset,
-        max_offset,
-        realign_window,
-    )
-    rows, pos1, pos2 = _merge_window_candidates(model1_candidates, model2_candidates)
-    if rows.size == 0:
-        return {"score": 0.0, "shift": int(shift), "n_sites": 0}
-
-    windows1 = _extract_selected_windows(scores1, rows, pos1, offsets)
-    windows2 = _extract_selected_windows(scores2, rows, pos2, offsets)
     return {
-        "score": _score_window_collection(metric, windows1, windows2),
+        "score": score,
         "shift": int(shift),
-        "n_sites": int(rows.size),
+        "n_sites": n_sites,
     }
 
 
@@ -492,9 +396,6 @@ def _score_profile_orientation_pair(
     target_bundle: dict,
     query_strand: int,
     target_strand: int,
-    offsets: np.ndarray,
-    min_offset: int,
-    max_offset: int,
     query_anchors: tuple[np.ndarray, np.ndarray],
     target_anchors: tuple[np.ndarray, np.ndarray],
     cfg: ComparatorConfig,
@@ -508,22 +409,30 @@ def _score_profile_orientation_pair(
     if query_scores.shape[0] != target_scores.shape[0]:
         raise ValueError("Profile bundles must have the same number of rows.")
 
+    search_range = int(cfg["search_range"])
+    window_radius = int(cfg["window_radius"])
+    workspace = make_alignment_workspace(int(query_scores.shape[0]), int(query_scores.shape[1]))
+    use_parallel = should_use_parallel(
+        int(query_scores.shape[0]), int(query_scores.shape[1]), search_range, get_num_threads()
+    )
     best = {"score": 0.0, "shift": 0, "n_sites": 0}
-    for shift in range(-int(cfg["search_range"]), int(cfg["search_range"]) + 1):
-        candidate = _compute_shifted_window_alignment(
+    for generation, shift in enumerate(range(-search_range, search_range + 1), start=1):
+        score, n_sites = score_shift(
             query_scores,
             query_lengths,
             target_scores,
             target_lengths,
-            shift,
-            offsets,
-            min_offset,
-            max_offset,
             query_anchors,
             target_anchors,
+            shift,
+            window_radius,
             int(cfg["realign_window"]),
             str(cfg["metric"]),
+            workspace,
+            generation,
+            use_parallel,
         )
+        candidate = {"score": score, "shift": shift, "n_sites": n_sites}
         if float(candidate["score"]) > float(best["score"]) or (
             float(candidate["score"]) == float(best["score"])
             and (
@@ -548,24 +457,20 @@ def _score_profile_candidates(query_bundle: dict, target_bundle: dict, pair_spec
     """Score all requested orientation pairs with the window-based profile algorithm."""
     min_logfpr = cfg["min_logfpr"]
     score_threshold = None if min_logfpr is None or float(min_logfpr) <= 0.0 else float(min_logfpr)
-    offsets = _build_window_offsets(int(cfg["window_radius"]))
-    min_offset = -int(cfg["window_radius"])
-    max_offset = int(cfg["window_radius"])
+    n_rows = int(query_bundle["values"].shape[1])
     query_strands = {int(query_strand) for _, query_strand, _ in pair_specs}
     target_strands = {int(target_strand) for _, _, target_strand in pair_specs}
     query_anchor_cache = {
-        strand_index: _collect_anchor_sites(
-            query_bundle["values"][strand_index],
-            query_bundle["lengths"],
-            score_threshold,
+        strand_index: build_anchor_csr(
+            *_collect_anchor_sites(query_bundle["values"][strand_index], query_bundle["lengths"], score_threshold),
+            n_rows,
         )
         for strand_index in query_strands
     }
     target_anchor_cache = {
-        strand_index: _collect_anchor_sites(
-            target_bundle["values"][strand_index],
-            target_bundle["lengths"],
-            score_threshold,
+        strand_index: build_anchor_csr(
+            *_collect_anchor_sites(target_bundle["values"][strand_index], target_bundle["lengths"], score_threshold),
+            n_rows,
         )
         for strand_index in target_strands
     }
@@ -576,9 +481,6 @@ def _score_profile_candidates(query_bundle: dict, target_bundle: dict, pair_spec
             target_bundle,
             int(query_strand),
             int(target_strand),
-            offsets,
-            min_offset,
-            max_offset,
             query_anchor_cache[int(query_strand)],
             target_anchor_cache[int(target_strand)],
             cfg,

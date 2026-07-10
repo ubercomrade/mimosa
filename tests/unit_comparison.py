@@ -29,6 +29,12 @@ def test_create_comparator_config_resolves_n_jobs():
     assert config["n_jobs"] == 4
 
 
+def test_create_comparator_config_preserves_all_threads_sentinel():
+    """The -1 sentinel must remain distinct from an unspecified thread mask."""
+    config = create_comparator_config(n_jobs=-1)
+    assert config["n_jobs"] == -1
+
+
 @pytest.mark.parametrize("kwargs", [{"n_jobs": 0}, {"n_jobs": -2}])
 def test_create_comparator_config_validates_thread_counts(kwargs):
     """Thread-count settings should accept only positive values or -1."""
@@ -81,6 +87,37 @@ def test_run_target_comparisons_wraps_progress_iterator(monkeypatch):
 
     assert result == ["a", "b"]
     assert observed == [{"enabled": True, "desc": "query targets", "total": 2, "leave": False}]
+
+
+def test_numba_thread_scope_restores_mask_after_exception():
+    """A failed comparison must not leak its temporary Numba thread mask."""
+    from numba import config as numba_config
+    from numba import get_num_threads
+
+    from mimosa.comparison.runner import _numba_thread_scope
+
+    previous = get_num_threads()
+    requested = 1 if previous != 1 else min(2, int(numba_config.NUMBA_NUM_THREADS))
+    with pytest.raises(RuntimeError, match="worker failed"), _numba_thread_scope(requested):
+        assert get_num_threads() == requested
+        raise RuntimeError("worker failed")
+    assert get_num_threads() == previous
+
+
+def test_numba_thread_scope_rejects_count_above_runtime_maximum():
+    """Oversized positive thread budgets should fail before changing the mask."""
+    from numba import config as numba_config
+    from numba import get_num_threads
+
+    from mimosa.comparison.runner import _numba_thread_scope
+
+    previous = get_num_threads()
+    with (
+        pytest.raises(ValueError, match="exceeds the available Numba thread maximum"),
+        _numba_thread_scope(int(numba_config.NUMBA_NUM_THREADS) + 1),
+    ):
+        pass
+    assert get_num_threads() == previous
 
 
 def test_cli_maps_jobs_to_n_jobs_for_profile_config():

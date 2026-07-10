@@ -61,6 +61,33 @@ def test_profile_comparison_bamm_vs_pwm(examples_dir):
     assert_comparison_output(cli_json(result), metric="co", has_sites=True)
 
 
+@pytest.mark.parametrize("jobs", ["1", "2", "-1"])
+def test_profile_comparison_accepts_numba_thread_budgets(examples_dir, jobs):
+    """CLI thread budgets should preserve profile comparison output contracts."""
+    cmd = [
+        "mimosa",
+        "profile",
+        str(examples_dir / "scores_1.fasta"),
+        str(examples_dir / "scores_2.fasta"),
+        "--model1-type",
+        "scores",
+        "--model2-type",
+        "scores",
+        "--metric",
+        "co",
+        "--search-range",
+        "0",
+        "--window-radius",
+        "0",
+        "--jobs",
+        jobs,
+    ]
+
+    result = run_cli(cmd)
+    assert result.returncode == 0, f"Command failed with stderr: {result.stderr}"
+    assert_comparison_output(cli_json(result), metric="co", has_sites=True)
+
+
 def test_profile_comparison_bamm_vs_bamm(examples_dir):
     """Profile mode should compare bamm vs bamm via scanned profiles."""
     cmd = [

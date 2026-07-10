@@ -3,6 +3,131 @@
 from tests.unit_support import *
 
 
+def _reference_shift_score(
+    scores1,
+    lengths1,
+    scores2,
+    lengths2,
+    query_rows,
+    query_positions,
+    target_rows,
+    target_positions,
+    shift,
+    radius,
+    realign_window,
+    metric,
+):
+    """Small allocation-heavy profile alignment reference kept only in tests."""
+    candidates = set()
+    for row, position1 in zip(query_rows, query_positions, strict=True):
+        position2 = int(position1) + shift
+        if (
+            int(position1) - radius >= 0
+            and int(position1) + radius < int(lengths1[row])
+            and position2 - radius >= 0
+            and position2 + radius < int(lengths2[row])
+        ):
+            candidates.add((int(row), int(position1)))
+    for row, position2 in zip(target_rows, target_positions, strict=True):
+        expected = int(position2) - shift
+        left = max(0, expected - realign_window)
+        right = min(int(lengths1[row]) - 1, expected + realign_window)
+        if left > right:
+            continue
+        position1 = left + int(np.argmax(scores1[row, left : right + 1]))
+        aligned2 = position1 + shift
+        if (
+            position1 - radius >= 0
+            and position1 + radius < int(lengths1[row])
+            and aligned2 - radius >= 0
+            and aligned2 + radius < int(lengths2[row])
+        ):
+            candidates.add((int(row), position1))
+
+    ordered = sorted(candidates)
+    if not ordered:
+        return 0.0, 0
+    windows1 = np.array(
+        [scores1[row, position - radius : position + radius + 1] for row, position in ordered], dtype=np.float32
+    )
+    windows2 = np.array(
+        [scores2[row, position + shift - radius : position + shift + radius + 1] for row, position in ordered],
+        dtype=np.float32,
+    )
+    if metric == "co":
+        score = calc_co(windows1, windows2)
+    elif metric == "dice":
+        score = calc_dice(windows1, windows2)
+    else:
+        functions = {"co_rowwise": rowwise_co, "dice_rowwise": rowwise_dice, "cosine": rowwise_cosine}
+        values = functions[metric](windows1, windows2)
+        score = float(np.mean(values[np.isfinite(values)])) if np.any(np.isfinite(values)) else 0.0
+    return score, len(ordered)
+
+
+@pytest.mark.parametrize("metric", ["co", "dice", "co_rowwise", "dice_rowwise", "cosine"])
+@pytest.mark.parametrize("shift", [-1, 0, 1])
+def test_fused_profile_alignment_matches_reference(metric, shift):
+    """Fused serial and parallel kernels must preserve selection and metric semantics."""
+    from mimosa.functions.alignment import build_anchor_csr, make_alignment_workspace, score_shift
+
+    scores1 = np.array(
+        [[0.0, 2.0, 1.0, 3.0, 0.0], [1.0, 0.0, 2.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0]],
+        dtype=np.float32,
+    )
+    scores2 = np.array(
+        [[0.0, 1.0, 2.0, 2.0, 0.0], [0.5, 0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0]],
+        dtype=np.float32,
+    )
+    lengths1 = np.array([5, 3, 0], dtype=np.int32)
+    lengths2 = np.array([5, 4, 0], dtype=np.int32)
+    query_rows = np.array([0, 0, 1], dtype=np.int32)
+    query_positions = np.array([1, 3, 2], dtype=np.int32)
+    target_rows = np.array([0, 0, 1, 1], dtype=np.int32)
+    target_positions = np.array([1, 2, 1, 1], dtype=np.int32)
+    query_csr = build_anchor_csr(query_rows, query_positions, 3)
+    target_csr = build_anchor_csr(target_rows, target_positions, 3)
+    expected_score, expected_sites = _reference_shift_score(
+        scores1,
+        lengths1,
+        scores2,
+        lengths2,
+        query_rows,
+        query_positions,
+        target_rows,
+        target_positions,
+        shift,
+        0,
+        1,
+        metric,
+    )
+
+    observed = []
+    for use_parallel in (False, True):
+        workspace = make_alignment_workspace(3, 5)
+        observed.append(
+            score_shift(
+                scores1,
+                lengths1,
+                scores2,
+                lengths2,
+                query_csr,
+                target_csr,
+                shift,
+                0,
+                1,
+                metric,
+                workspace,
+                1,
+                use_parallel,
+            )
+        )
+
+    for score, n_sites in observed:
+        assert n_sites == expected_sites
+        np.testing.assert_allclose(score, expected_score, rtol=1e-6, atol=1e-7)
+
+
 def test_pfm_to_pwm_basic():
     """Test basic PFM to PWM conversion"""
     # Create a simple PFM with uniform values
