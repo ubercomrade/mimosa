@@ -1,5 +1,10 @@
 # ruff: noqa: F403,F405
 
+import os
+import py_compile
+import subprocess
+import sys
+
 from tests.unit_support import *
 
 
@@ -126,6 +131,35 @@ def test_fused_profile_alignment_matches_reference(metric, shift):
     for score, n_sites in observed:
         assert n_sites == expected_sites
         np.testing.assert_allclose(score, expected_score, rtol=1e-6, atol=1e-7)
+
+
+def test_alignment_imports_without_numba_source_locator(tmp_path):
+    """Disk caching must not make a sourceless package installation unimportable."""
+    from mimosa.functions import alignment
+
+    package = tmp_path / "mimosa"
+    functions = package / "functions"
+    functions.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (functions / "__init__.py").write_text("", encoding="utf-8")
+    py_compile.compile(
+        alignment.__file__,
+        cfile=str(functions / "alignment.pyc"),
+        dfile=str(tmp_path / "removed-source" / "alignment.py"),
+        doraise=True,
+    )
+
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = os.pathsep.join(filter(None, (str(tmp_path), environment.get("PYTHONPATH"))))
+    result = subprocess.run(
+        [sys.executable, "-c", "import mimosa.functions.alignment"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_pfm_to_pwm_basic():
