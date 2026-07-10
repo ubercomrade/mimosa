@@ -1,0 +1,777 @@
+{
+  "fixtures": [
+    {
+      "arrays": {
+        "pfm": {
+          "checksum": "e0a227699da64f10223fbb73afc377613576c9151f1fd3462c05d8ed93667bf9",
+          "dtype": "float32",
+          "file": "pwm_parse_meme_pif4__pfm.npy",
+          "shape": [
+            4,
+            12
+          ]
+        }
+      },
+      "description": "Parse pif4.meme index 0 to PFM array",
+      "id": "pwm_parse_meme_pif4",
+      "metadata": {
+        "length": 12,
+        "motif_count": 1,
+        "name": "pwm_model",
+        "shape": [
+          4,
+          12
+        ]
+      }
+    },
+    {
+      "arrays": {
+        "pfm": {
+          "checksum": "e0a227699da64f10223fbb73afc377613576c9151f1fd3462c05d8ed93667bf9",
+          "dtype": "float32",
+          "file": "pwm_parse_pfm_pif4__pfm.npy",
+          "shape": [
+            4,
+            12
+          ]
+        }
+      },
+      "description": "Parse pif4.pfm to PFM array",
+      "id": "pwm_parse_pfm_pif4",
+      "metadata": {
+        "length": 12,
+        "shape": [
+          4,
+          12
+        ]
+      }
+    },
+    {
+      "arrays": {
+        "pwm": {
+          "checksum": "0dd5467c9dda876264d67b5b59995178cbc1dbdbab3dfcf72978a288713ea981",
+          "dtype": "float32",
+          "file": "pwm_to_pwm_from_pif4__pwm.npy",
+          "shape": [
+            4,
+            12
+          ]
+        }
+      },
+      "description": "Convert pif4 PFM to PWM via pfm_to_pwm",
+      "id": "pwm_to_pwm_from_pif4",
+      "metadata": {
+        "shape": [
+          4,
+          12
+        ]
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "checksum": "dce5fb0c9dcb8a6fda49b940c6c9c365f5dd7a85c4f73401b2b68887615604d7",
+          "dtype": "int64",
+          "file": "fasta_read_foreground__lengths.npy",
+          "shape": [
+            100
+          ]
+        },
+        "values": {
+          "checksum": "6b257aac7bfc6cbc958894a1ed92f2c438243d5f10d1a66ab491f873246fe5b2",
+          "dtype": "int8",
+          "file": "fasta_read_foreground__values.npy",
+          "shape": [
+            100,
+            2751
+          ]
+        }
+      },
+      "description": "Read foreground.fa to encoded sequence batch",
+      "id": "fasta_read_foreground",
+      "metadata": {
+        "max_length": 2751,
+        "n_sequences": 100,
+        "padding_value": 4
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "checksum": "226be82061c2ce0f45e35f66db89f298b653be6b08f2ac9cb87ee7fd48d7a8d7",
+          "dtype": "int64",
+          "file": "random_sequence_batch_seed127__lengths.npy",
+          "shape": [
+            10
+          ]
+        },
+        "values": {
+          "checksum": "41dddaea7745d08da1a8903e85b99e8f1e453034e7c8f79ed0f6652cb32eb622",
+          "dtype": "int8",
+          "file": "random_sequence_batch_seed127__values.npy",
+          "shape": [
+            10,
+            50
+          ]
+        }
+      },
+      "description": "Random encoded sequence batch, seed=127, n=10, len=50",
+      "id": "random_sequence_batch_seed127",
+      "metadata": {
+        "n_sequences": 10,
+        "padding_value": 4,
+        "seed": 127,
+        "seq_length": 50
+      }
+    },
+    {
+      "arrays": {
+        "pwm_forward": {
+          "checksum": "0dd5467c9dda876264d67b5b59995178cbc1dbdbab3dfcf72978a288713ea981",
+          "dtype": "float32",
+          "file": "pwm_reverse_complement_pif4__forward.npy",
+          "shape": [
+            4,
+            12
+          ]
+        },
+        "pwm_reverse": {
+          "checksum": "375fc5b4719d451438ac8fe69139ed8541cd6a7fbf8314f12d6401b03cf7fcea",
+          "dtype": "float32",
+          "file": "pwm_reverse_complement_pif4__reverse.npy",
+          "shape": [
+            4,
+            12
+          ]
+        }
+      },
+      "description": "Reverse complement of pif4 PWM (flip rows + reverse columns)",
+      "id": "pwm_reverse_complement_pif4",
+      "metadata": {
+        "shape": [
+          4,
+          12
+        ]
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "checksum": "d43e65f778f34b8875149a94fd2eb725331e095335a28ecc7d57b97e825125b5",
+          "dtype": "int64",
+          "file": "pwm_scan_forward_pif4_seed42__lengths.npy",
+          "shape": [
+            50
+          ]
+        },
+        "mask": {
+          "checksum": "ec962551ffbe39d94d308581921c94b32132b5f1da8d90da3922825219affbdb",
+          "dtype": "bool",
+          "file": "pwm_scan_forward_pif4_seed42__mask.npy",
+          "shape": [
+            50,
+            189
+          ]
+        },
+        "values": {
+          "checksum": "2c6226d362863c95014aaf306895fdcb390980f27682ac2258b395153c97dc50",
+          "dtype": "float32",
+          "file": "pwm_scan_forward_pif4_seed42__values.npy",
+          "shape": [
+            50,
+            189
+          ]
+        }
+      },
+      "description": "Forward PWM scan of pif4 on 50 random sequences (seed=42, len=200)",
+      "id": "pwm_scan_forward_pif4_seed42",
+      "metadata": {
+        "motif_length": 12,
+        "n_sequences": 50,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "checksum": "d43e65f778f34b8875149a94fd2eb725331e095335a28ecc7d57b97e825125b5",
+          "dtype": "int64",
+          "file": "pwm_scan_reverse_pif4_seed42__lengths.npy",
+          "shape": [
+            50
+          ]
+        },
+        "mask": {
+          "checksum": "ec962551ffbe39d94d308581921c94b32132b5f1da8d90da3922825219affbdb",
+          "dtype": "bool",
+          "file": "pwm_scan_reverse_pif4_seed42__mask.npy",
+          "shape": [
+            50,
+            189
+          ]
+        },
+        "values": {
+          "checksum": "5b848ae68fc9b4f7f9907898963704e41e85b2137704fd835f1ff2eb47cc51fa",
+          "dtype": "float32",
+          "file": "pwm_scan_reverse_pif4_seed42__values.npy",
+          "shape": [
+            50,
+            189
+          ]
+        }
+      },
+      "description": "Reverse PWM scan of pif4 on 50 random sequences (seed=42, len=200)",
+      "id": "pwm_scan_reverse_pif4_seed42",
+      "metadata": {
+        "motif_length": 12,
+        "n_sequences": 50,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "checksum": "d43e65f778f34b8875149a94fd2eb725331e095335a28ecc7d57b97e825125b5",
+          "dtype": "int64",
+          "file": "pwm_scan_both_pif4_seed42__lengths.npy",
+          "shape": [
+            50
+          ]
+        },
+        "values": {
+          "checksum": "86f810588522829c237c9414739b212001c8dd86bf0f741fa5e4fbd5321d1e11",
+          "dtype": "float32",
+          "file": "pwm_scan_both_pif4_seed42__values.npy",
+          "shape": [
+            2,
+            50,
+            189
+          ]
+        }
+      },
+      "description": "Both-strand PWM scan bundle of pif4 on 50 random sequences (seed=42, len=200)",
+      "id": "pwm_scan_both_pif4_seed42",
+      "metadata": {
+        "bundle_shape": [
+          2,
+          50,
+          189
+        ],
+        "motif_length": 12,
+        "n_sequences": 50,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200
+      }
+    },
+    {
+      "description": "Theoretical score bounds for pif4 PWM",
+      "id": "pwm_score_bounds_pif4",
+      "metadata": {
+        "max_score": 11.198073387145996,
+        "min_score": -50.56496047973633
+      }
+    },
+    {
+      "arrays": {
+        "flat_scores": {
+          "checksum": "86f810588522829c237c9414739b212001c8dd86bf0f741fa5e4fbd5321d1e11",
+          "dtype": "float32",
+          "file": "normalization_log_tail_pif4_seed42__flat_scores.npy",
+          "shape": [
+            18900
+          ]
+        },
+        "table": {
+          "checksum": "a6b36fd145b4efd84529a40d106f6d8eb96ce5d59cae7dc06302f7735e86d262",
+          "dtype": "float32",
+          "file": "normalization_log_tail_pif4_seed42__table.npy",
+          "shape": [
+            18749,
+            2
+          ]
+        }
+      },
+      "description": "Empirical log-tail table from pif4 both-strand scan scores (seed=42)",
+      "id": "normalization_log_tail_pif4_seed42",
+      "metadata": {
+        "n_scores": 18900,
+        "table_shape": [
+          18749,
+          2
+        ]
+      }
+    },
+    {
+      "description": "Direct motif self-comparison pif4 vs pif4, metric=pcc",
+      "id": "motif_alignment_self_pif4_pcc",
+      "metadata": {
+        "metric": "pcc",
+        "offset": 0,
+        "orientation": "++",
+        "query": "pwm_model",
+        "score": 1.0,
+        "target": "pwm_model"
+      }
+    },
+    {
+      "description": "Direct motif self-comparison pif4 vs pif4, metric=ed",
+      "id": "motif_alignment_self_pif4_ed",
+      "metadata": {
+        "metric": "ed",
+        "offset": 0,
+        "orientation": "++",
+        "query": "pwm_model",
+        "score": -0.0,
+        "target": "pwm_model"
+      }
+    },
+    {
+      "description": "Direct motif self-comparison pif4 vs pif4, metric=cosine",
+      "id": "motif_alignment_self_pif4_cosine",
+      "metadata": {
+        "metric": "cosine",
+        "offset": 0,
+        "orientation": "++",
+        "query": "pwm_model",
+        "score": 1.0,
+        "target": "pwm_model"
+      }
+    },
+    {
+      "description": "Direct motif comparison pif4 vs gata2, metric=pcc",
+      "id": "motif_alignment_pif4_vs_gata2_pcc",
+      "metadata": {
+        "metric": "pcc",
+        "offset": -1,
+        "orientation": "+-",
+        "query": "pwm_model",
+        "score": 0.43360018730163574,
+        "target": "MA0036.2"
+      }
+    },
+    {
+      "description": "Direct motif comparison pif4 vs gata2, metric=ed",
+      "id": "motif_alignment_pif4_vs_gata2_ed",
+      "metadata": {
+        "metric": "ed",
+        "offset": 6,
+        "orientation": "++",
+        "query": "pwm_model",
+        "score": -2.258838653564453,
+        "target": "MA0036.2"
+      }
+    },
+    {
+      "description": "Direct motif comparison pif4 vs gata2, metric=cosine",
+      "id": "motif_alignment_pif4_vs_gata2_cosine",
+      "metadata": {
+        "metric": "cosine",
+        "offset": -1,
+        "orientation": "-+",
+        "query": "pwm_model",
+        "score": 0.6606208086013794,
+        "target": "MA0036.2"
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "checksum": "189238e5f027db24c424610b2b143842d83b48987b66edbaa5989621e256f7ff",
+          "dtype": "int64",
+          "file": "score_profile_read_1__lengths.npy",
+          "shape": [
+            1000
+          ]
+        },
+        "mask": {
+          "checksum": "6015fcd09f3f14b7da9d89cb95f1e4ee007948bc7cf9a59be8163c3460e4f954",
+          "dtype": "bool",
+          "file": "score_profile_read_1__mask.npy",
+          "shape": [
+            1000,
+            200
+          ]
+        },
+        "values": {
+          "checksum": "5d31235d2ee6fdae7f43ff3d1bd391d8c54192830515f1f08f70239eead0b184",
+          "dtype": "float32",
+          "file": "score_profile_read_1__values.npy",
+          "shape": [
+            1000,
+            200
+          ]
+        }
+      },
+      "description": "Read scores_1.fasta to masked score batch",
+      "id": "score_profile_read_1",
+      "metadata": {
+        "max_length": 200,
+        "n_profiles": 1000,
+        "padding_value": 0.0
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "checksum": "189238e5f027db24c424610b2b143842d83b48987b66edbaa5989621e256f7ff",
+          "dtype": "int64",
+          "file": "score_profile_read_2__lengths.npy",
+          "shape": [
+            1000
+          ]
+        },
+        "mask": {
+          "checksum": "6015fcd09f3f14b7da9d89cb95f1e4ee007948bc7cf9a59be8163c3460e4f954",
+          "dtype": "bool",
+          "file": "score_profile_read_2__mask.npy",
+          "shape": [
+            1000,
+            200
+          ]
+        },
+        "values": {
+          "checksum": "b10b0548179cb9ee89aee9ad1f31e47cc29c71050b6b1e3e0838e8835be7e4c0",
+          "dtype": "float32",
+          "file": "score_profile_read_2__values.npy",
+          "shape": [
+            1000,
+            200
+          ]
+        }
+      },
+      "description": "Read scores_2.fasta to masked score batch",
+      "id": "score_profile_read_2",
+      "metadata": {
+        "max_length": 200,
+        "n_profiles": 1000,
+        "padding_value": 0.0
+      }
+    },
+    {
+      "description": "Profile comparison of precomputed scores, metric=co, search_range=0, window_radius=0",
+      "id": "profile_comparison_scores_co_zero_shift",
+      "metadata": {
+        "metric": "co",
+        "n_sites": 1969,
+        "offset": 0,
+        "orientation": "++",
+        "query": "scores_1",
+        "score": 0.7772436294006636,
+        "target": "scores_2"
+      }
+    },
+    {
+      "description": "Profile comparison of precomputed scores, metric=co_rowwise, search_range=0, window_radius=0",
+      "id": "profile_comparison_scores_co_rowwise_zero_shift",
+      "metadata": {
+        "metric": "co_rowwise",
+        "n_sites": 1969,
+        "offset": 0,
+        "orientation": "++",
+        "query": "scores_1",
+        "score": 1.0,
+        "target": "scores_2"
+      }
+    },
+    {
+      "description": "Profile comparison of precomputed scores, metric=dice, search_range=0, window_radius=0",
+      "id": "profile_comparison_scores_dice_zero_shift",
+      "metadata": {
+        "metric": "dice",
+        "n_sites": 1969,
+        "offset": 0,
+        "orientation": "++",
+        "query": "scores_1",
+        "score": 0.39048325273234824,
+        "target": "scores_2"
+      }
+    },
+    {
+      "description": "Profile comparison of precomputed scores, metric=dice_rowwise, search_range=0, window_radius=0",
+      "id": "profile_comparison_scores_dice_rowwise_zero_shift",
+      "metadata": {
+        "metric": "dice_rowwise",
+        "n_sites": 1969,
+        "offset": 0,
+        "orientation": "++",
+        "query": "scores_1",
+        "score": 0.3810830991950487,
+        "target": "scores_2"
+      }
+    },
+    {
+      "description": "Profile comparison of precomputed scores, metric=cosine, search_range=0, window_radius=0",
+      "id": "profile_comparison_scores_cosine_zero_shift",
+      "metadata": {
+        "metric": "cosine",
+        "n_sites": 1969,
+        "offset": 0,
+        "orientation": "++",
+        "query": "scores_1",
+        "score": 0.9999999997979556,
+        "target": "scores_2"
+      }
+    },
+    {
+      "arrays": {
+        "end": {
+          "checksum": "4634b6acceb11c9f548957e49efe273bd8cc9dbd0319d47468ff8d1f42c4d6c3",
+          "dtype": "int64",
+          "file": "sites_best_pif4_seed42__end.npy",
+          "shape": [
+            100
+          ]
+        },
+        "log_tail": {
+          "checksum": "19bd8e36c13dd23bc484e92051547570befe33994066f141b5e1e2b803e2b447",
+          "dtype": "float64",
+          "file": "sites_best_pif4_seed42__log_tail.npy",
+          "shape": [
+            100
+          ]
+        },
+        "score": {
+          "checksum": "8cd40a4bde3c498843567e21ffc0f08402caa47cd9df8338260027ce443c0a02",
+          "dtype": "float32",
+          "file": "sites_best_pif4_seed42__score.npy",
+          "shape": [
+            100
+          ]
+        },
+        "seq_index": {
+          "checksum": "96bdba67cd0b5e6dc0f9e399f66b17eae627eac812d0620119e87687d789546a",
+          "dtype": "int64",
+          "file": "sites_best_pif4_seed42__seq_index.npy",
+          "shape": [
+            100
+          ]
+        },
+        "start": {
+          "checksum": "11a7f36d53334c8f3283ca10cdb8d884f3eeab1407f5e3ced42f2e80968bd355",
+          "dtype": "int64",
+          "file": "sites_best_pif4_seed42__start.npy",
+          "shape": [
+            100
+          ]
+        }
+      },
+      "description": "Best-mode site extraction for pif4 on 100 random sequences (seed=42)",
+      "id": "sites_best_pif4_seed42",
+      "metadata": {
+        "motif_length": 12,
+        "n_sequences": 100,
+        "n_sites": 100,
+        "seed": 42
+      }
+    },
+    {
+      "arrays": {
+        "pfm": {
+          "checksum": "5b49a3d58a3f292b61325617a332d513f29ef0549239717ad7ab71e0c6b6c016",
+          "dtype": "float32",
+          "file": "pfm_reconstruction_best_pif4_seed42__pfm.npy",
+          "shape": [
+            4,
+            12
+          ]
+        }
+      },
+      "description": "PFM reconstruction from best sites for pif4 (seed=42, pseudocount=0.25)",
+      "id": "pfm_reconstruction_best_pif4_seed42",
+      "metadata": {
+        "motif_length": 12,
+        "n_sequences": 100,
+        "pseudocount": 0.25,
+        "seed": 42,
+        "shape": [
+          4,
+          12
+        ]
+      }
+    },
+    {
+      "arrays": {
+        "scores": {
+          "checksum": "90005b9f63318ea01c1a11dfd45d87fbc09c3df446db67393a3f4a365b28c188",
+          "dtype": "float64",
+          "file": "gev_fit_gumbel_200__scores.npy",
+          "shape": [
+            200
+          ]
+        },
+        "sf_points": {
+          "checksum": "9103ea1d1bea5bf08c73e3ab3c555b0deb30c72d1984d768a721ed18fa406066",
+          "dtype": "float64",
+          "file": "gev_fit_gumbel_200__sf_points.npy",
+          "shape": [
+            5
+          ]
+        }
+      },
+      "description": "GEV fit on 200 Gumbel(0,1) scores",
+      "id": "gev_fit_gumbel_200",
+      "metadata": {
+        "genextreme_params": [
+          0.041947262978483224,
+          0.08007903794590493,
+          1.0418170785546519
+        ],
+        "n": 200,
+        "scipy_version": "1.17.0",
+        "sf_query_points": [
+          -1.0,
+          0.0,
+          1.0,
+          2.0,
+          5.0
+        ]
+      }
+    },
+    {
+      "arrays": {
+        "scores": {
+          "checksum": "4de163a38d50ae693aac05d78c9f84e146ebbb05f5b0c3f110bb35cf1ce4b0e4",
+          "dtype": "float64",
+          "file": "gev_fit_normal_2000__scores.npy",
+          "shape": [
+            2000
+          ]
+        },
+        "sf_points": {
+          "checksum": "77c832a3aa4055e993f8c5fe0eada551fe03804dce7bf0352e5c9e218bc4d07b",
+          "dtype": "float64",
+          "file": "gev_fit_normal_2000__sf_points.npy",
+          "shape": [
+            5
+          ]
+        }
+      },
+      "description": "GEV fit on 2000 Normal(0,1) scores",
+      "id": "gev_fit_normal_2000",
+      "metadata": {
+        "genextreme_params": [
+          0.2324262232042325,
+          -0.3616235942952878,
+          1.0070399602005424
+        ],
+        "n": 2000,
+        "scipy_version": "1.17.0",
+        "sf_query_points": [
+          -1.0,
+          0.0,
+          1.0,
+          2.0,
+          5.0
+        ]
+      }
+    },
+    {
+      "arrays": {
+        "scores": {
+          "checksum": "bda4b64567e81499d4b980cb71c0019388b6b93e14b5d99d156db5e8493827d5",
+          "dtype": "float64",
+          "file": "gev_fit_exponential_500__scores.npy",
+          "shape": [
+            500
+          ]
+        },
+        "sf_points": {
+          "checksum": "f57a8636bc369bcfc9f40607b5d1cfe61674837c09ce49144333a42a16d8c935",
+          "dtype": "float64",
+          "file": "gev_fit_exponential_500__sf_points.npy",
+          "shape": [
+            5
+          ]
+        }
+      },
+      "description": "GEV fit on 500 Exp(1) scores",
+      "id": "gev_fit_exponential_500",
+      "metadata": {
+        "genextreme_params": [
+          -0.4738193438982986,
+          0.4528977662681939,
+          0.46004988452665696
+        ],
+        "n": 500,
+        "scipy_version": "1.17.0",
+        "sf_query_points": [
+          0.5,
+          1.0,
+          2.0,
+          5.0,
+          10.0
+        ]
+      }
+    },
+    {
+      "arrays": {
+        "scores": {
+          "checksum": "96a286b8ffc4f6b562ae3de933ef6da08b85dfc8c0da145ecc31d37804716cb8",
+          "dtype": "float64",
+          "file": "gev_fit_uniform_5000__scores.npy",
+          "shape": [
+            5000
+          ]
+        },
+        "sf_points": {
+          "checksum": "1db392f9e341675ffdba0c50ac4385ed982a5d9e4ef2d3cd4f5ffdad57f2d64c",
+          "dtype": "float64",
+          "file": "gev_fit_uniform_5000__sf_points.npy",
+          "shape": [
+            5
+          ]
+        }
+      },
+      "description": "GEV fit on 5000 Uniform(0,1) scores",
+      "id": "gev_fit_uniform_5000",
+      "metadata": {
+        "genextreme_params": [
+          0.422675601019221,
+          0.4159473678472674,
+          0.29698195395605126
+        ],
+        "n": 5000,
+        "scipy_version": "1.17.0",
+        "sf_query_points": [
+          0.2,
+          0.5,
+          0.8,
+          0.95,
+          1.0
+        ]
+      }
+    },
+    {
+      "description": "CLI JSON output for motif self-comparison pif4 pcc",
+      "id": "cli_motif_self_pif4_pcc",
+      "json": {
+        "checksum": "e482c43c32d78b36bcc3963b0284ef30ec897eb157a9e4298cd5e3e14bbdb1d4",
+        "file": "cli_motif_self_pif4_pcc.json"
+      },
+      "metadata": {
+        "keys": [
+          "metric",
+          "offset",
+          "orientation",
+          "query",
+          "score",
+          "target"
+        ]
+      }
+    }
+  ],
+  "format": "mimosa-compatibility-fixtures",
+  "format_version": 1,
+  "generated_at": "2026-07-10T06:54:42.531035+00:00",
+  "n_fixtures": 31,
+  "numpy_version": "2.3.5",
+  "platform": "Linux-6.19.6-arch1-1-x86_64-with-glibc2.43",
+  "python_commit": "95e8dbb22486faa8693783738860f4461c17c19e",
+  "python_version": "3.13.12 | packaged by Anaconda, Inc. | (main, Feb 24 2026, 16:13:31) [GCC 14.3.0]",
+  "scipy_version": "1.17.0"
+}

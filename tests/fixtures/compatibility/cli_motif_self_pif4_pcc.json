@@ -1,0 +1,8 @@
+{
+  "metric": "pcc",
+  "offset": 0,
+  "orientation": "++",
+  "query": "pwm_model",
+  "score": 1.0,
+  "target": "pwm_model"
+}
