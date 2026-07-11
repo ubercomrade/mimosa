@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-from numba import njit
+from numba import get_num_threads, njit, prange
 
 from mimosa.batches import (
     batch_with_values,
@@ -12,6 +12,14 @@ from mimosa.batches import (
     pack_batch,
     pack_profile_bundle,
 )
+
+TAIL_PARALLEL_WORK_THRESHOLD = 100_000
+
+
+def should_parallelize_tail_mapping(valid_values: int, table_length: int) -> bool:
+    """Dispatch independent rows in parallel only for substantial lookup work."""
+    lookup_cost = max(int(table_length).bit_length() - 1, 1)
+    return get_num_threads() > 1 and int(valid_values) * lookup_cost >= TAIL_PARALLEL_WORK_THRESHOLD
 
 
 def build_score_log_tail_table(scores: np.ndarray) -> np.ndarray:
@@ -68,6 +76,37 @@ def _apply_score_log_tail_table_numba(values, mask, scores_col, log_tail_col, pa
     return mapped
 
 
+@njit(cache=False, parallel=True, nogil=False)
+def _apply_score_log_tail_table_parallel_numba(values, mask, scores_col, log_tail_col, padding_value: float):
+    rows, cols = values.shape
+    mapped = np.empty((rows, cols), dtype=np.float32)
+    for row_index in prange(rows):
+        for col_index in range(cols):
+            if mask[row_index, col_index]:
+                idx = _lower_bound_desc(scores_col, values[row_index, col_index])
+                mapped[row_index, col_index] = log_tail_col[idx]
+            else:
+                mapped[row_index, col_index] = padding_value
+    return mapped
+
+
+@njit(cache=False, parallel=True, nogil=False)
+def _apply_score_log_tail_table_bundle_parallel_numba(values, lengths, scores_col, log_tail_col, padding_value: float):
+    strands, rows, cols = values.shape
+    mapped = np.empty_like(values)
+    for index in prange(strands * rows):
+        strand = index // rows
+        row = index % rows
+        length = min(int(lengths[row]), cols)
+        for col in range(cols):
+            if col < length:
+                idx = _lower_bound_desc(scores_col, values[strand, row, col])
+                mapped[strand, row, col] = log_tail_col[idx]
+            else:
+                mapped[strand, row, col] = padding_value
+    return mapped
+
+
 def apply_score_log_tail_table(score_batch, table: np.ndarray):
     """Map one score batch to empirical log-tail values using a lookup table."""
     table_arr = np.asarray(table, dtype=np.float32)
@@ -76,13 +115,15 @@ def apply_score_log_tail_table(score_batch, table: np.ndarray):
         empty_values = np.full_like(score_batch["values"], padding_value)
         return batch_with_values(score_batch, empty_values, padding_value=padding_value)
 
-    mapped = _apply_score_log_tail_table_numba(
-        np.ascontiguousarray(score_batch["values"], dtype=np.float32),
-        np.ascontiguousarray(score_batch["mask"], dtype=np.bool_),
-        np.ascontiguousarray(table_arr[:, 0], dtype=np.float32),
-        np.ascontiguousarray(table_arr[:, 1], dtype=np.float32),
-        np.float32(padding_value),
-    )
+    values = np.ascontiguousarray(score_batch["values"], dtype=np.float32)
+    mask = np.ascontiguousarray(score_batch["mask"], dtype=np.bool_)
+    scores_col = np.ascontiguousarray(table_arr[:, 0], dtype=np.float32)
+    log_tail_col = np.ascontiguousarray(table_arr[:, 1], dtype=np.float32)
+    if should_parallelize_tail_mapping(int(mask.sum()), scores_col.size):
+        kernel = _apply_score_log_tail_table_parallel_numba
+    else:
+        kernel = _apply_score_log_tail_table_numba
+    mapped = kernel(values, mask, scores_col, log_tail_col, np.float32(padding_value))
     return batch_with_values(score_batch, mapped, padding_value=padding_value)
 
 
@@ -102,19 +143,20 @@ def apply_score_log_tail_table_to_profile_bundle(profile_bundle, table: np.ndarr
         empty_values = np.full_like(values, padding_value)
         return pack_profile_bundle(empty_values, lengths, padding_value)
 
-    mask = np.ascontiguousarray(_build_length_mask(lengths, values.shape[2]), dtype=np.bool_)
-    mapped = np.empty_like(values)
     scores_col = np.ascontiguousarray(table_arr[:, 0], dtype=np.float32)
     log_tail_col = np.ascontiguousarray(table_arr[:, 1], dtype=np.float32)
-
-    for profile_index in range(values.shape[0]):
-        mapped[profile_index] = _apply_score_log_tail_table_numba(
-            values[profile_index],
-            mask,
-            scores_col,
-            log_tail_col,
-            np.float32(padding_value),
+    valid_values = int(np.minimum(lengths, values.shape[2]).sum()) * values.shape[0]
+    if should_parallelize_tail_mapping(valid_values, scores_col.size):
+        mapped = _apply_score_log_tail_table_bundle_parallel_numba(
+            values, np.ascontiguousarray(lengths, dtype=np.int64), scores_col, log_tail_col, np.float32(padding_value)
         )
+    else:
+        mask = np.ascontiguousarray(_build_length_mask(lengths, values.shape[2]), dtype=np.bool_)
+        mapped = np.empty_like(values)
+        for profile_index in range(values.shape[0]):
+            mapped[profile_index] = _apply_score_log_tail_table_numba(
+                values[profile_index], mask, scores_col, log_tail_col, np.float32(padding_value)
+            )
 
     return pack_profile_bundle(mapped, lengths, padding_value)
 

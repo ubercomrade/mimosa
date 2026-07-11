@@ -13,7 +13,7 @@ from mimosa.functions.profile import (
     rowwise_cosine,
     rowwise_dice,
 )
-from mimosa.functions.scanning import batch_all_scores, batch_all_scores_strands, score_seq
+from mimosa.functions.scanning import batch_all_scores, batch_all_scores_strands, score_seq, should_parallelize_scan
 from mimosa.functions.tails import (
     apply_score_log_tail_table,
     apply_score_log_tail_table_to_profile_bundle,
@@ -46,6 +46,7 @@ __all__ = [
     "rowwise_cosine",
     "rowwise_dice",
     "score_seq",
+    "should_parallelize_scan",
     "scores_to_empirical_log_tail",
     "scores_to_empirical_log_tail_bundle",
     "standardized_pauc",

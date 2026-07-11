@@ -22,3 +22,11 @@ def _cached_batch_fingerprint(runtime_cache: dict, batch, label: str) -> str:
     value = fingerprint_batch(batch) or f"no-{label}"
     runtime_cache[runtime_key] = value
     return value
+
+
+def make_batch_preparation_context(sequences, background) -> dict:
+    """Create the small shared, read-only part of a one-to-many runtime cache."""
+    context: dict = {}
+    _cached_batch_fingerprint(context, sequences, "sequences")
+    _cached_batch_fingerprint(context, background, "background")
+    return context

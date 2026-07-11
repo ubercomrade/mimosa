@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 from mimosa.cache import fingerprint_model
-from mimosa.comparison.common import _cached_batch_fingerprint, _select_best_orientation
+from mimosa.comparison.common import _cached_batch_fingerprint, _select_best_orientation, make_batch_preparation_context
 from mimosa.models import GenericModel
 from mimosa.sites import get_pfm
 from mimosa.types import ComparatorConfig, ComparisonResult
@@ -243,7 +243,7 @@ def _compare_motif_one_to_many(  # noqa: PLR0913
     if not target_list:
         return []
 
-    query_cache: dict[Any, Any] = {}
+    query_cache: dict[Any, Any] = make_batch_preparation_context(sequences, None)
     use_pfm_modes = {
         bool(cfg["pfm_mode"] or (query_model.type_key != target_model.type_key)) for target_model in target_list
     }
@@ -253,7 +253,7 @@ def _compare_motif_one_to_many(  # noqa: PLR0913
         prepared_query_by_mode[use_pfm_mode] = prepared_query
 
     def _score_target(target_model: GenericModel) -> ComparisonResult:
-        target_cache: dict[Any, Any] = {}
+        target_cache: dict[Any, Any] = dict(query_cache)
         try:
             use_pfm_mode = bool(cfg["pfm_mode"] or (query_model.type_key != target_model.type_key))
             prepared_query = prepared_query_by_mode[use_pfm_mode]

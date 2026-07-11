@@ -6,11 +6,11 @@ import logging
 from typing import Any
 
 import numpy as np
-from numba import get_num_threads, njit
+from numba import get_num_threads, njit, prange
 
 from mimosa.batches import flatten_profile_bundle
 from mimosa.cache import ProfileCacheSpec, fingerprint_model, load_profile_cache, store_profile_cache
-from mimosa.comparison.common import _cached_batch_fingerprint, _select_best_orientation
+from mimosa.comparison.common import _cached_batch_fingerprint, _select_best_orientation, make_batch_preparation_context
 from mimosa.comparison.config import SUPPORTED_PROFILE_METRICS
 from mimosa.functions import (
     apply_score_log_tail_table_to_profile_bundle,
@@ -33,6 +33,8 @@ from mimosa.scanning import scan_model_strands
 from mimosa.types import ComparatorConfig, ComparisonResult
 
 logger = logging.getLogger(__name__)
+
+ANCHOR_PARALLEL_WORK_THRESHOLD = 100_000
 
 PROFILE_ORIENTATION_PAIRS = (
     ("++", 0, 0),
@@ -185,6 +187,28 @@ def _collect_best_anchor_positions_numba(scores: np.ndarray, lengths: np.ndarray
     return rows[:out_index], positions[:out_index]
 
 
+@njit(cache=False, parallel=True, nogil=False)
+def _collect_best_anchor_positions_parallel_numba(scores: np.ndarray, lengths: np.ndarray):
+    """Collect one best anchor per row without a shared output index."""
+    n_rows = scores.shape[0]
+    rows = np.full(n_rows, -1, dtype=np.int32)
+    positions = np.empty(n_rows, dtype=np.int32)
+    for row_index in prange(n_rows):
+        length = int(lengths[row_index])
+        if length <= 0:
+            continue
+        best_position = 0
+        best_score = scores[row_index, 0]
+        for pos in range(1, length):
+            score = scores[row_index, pos]
+            if score > best_score:
+                best_score = score
+                best_position = pos
+        rows[row_index] = row_index
+        positions[row_index] = best_position
+    return rows, positions
+
+
 @njit(cache=False, nogil=False)
 def _count_threshold_anchor_positions_numba(scores: np.ndarray, lengths: np.ndarray, score_threshold: float) -> int:
     """Count threshold-selected anchors."""
@@ -220,6 +244,33 @@ def _collect_threshold_anchor_positions_numba(
     return rows, positions
 
 
+@njit(cache=False, parallel=True, nogil=False)
+def _count_threshold_anchors_by_row_numba(scores, lengths, score_threshold):
+    counts = np.zeros(scores.shape[0], dtype=np.int64)
+    for row_index in prange(scores.shape[0]):
+        count = 0
+        for pos in range(int(lengths[row_index])):
+            if scores[row_index, pos] >= score_threshold:
+                count += 1
+        counts[row_index] = count
+    return counts
+
+
+@njit(cache=False, parallel=True, nogil=False)
+def _fill_threshold_anchors_by_row_numba(scores, lengths, score_threshold, offsets, rows, positions):
+    for row_index in prange(scores.shape[0]):
+        out_index = offsets[row_index]
+        for pos in range(int(lengths[row_index])):
+            if scores[row_index, pos] >= score_threshold:
+                rows[out_index] = row_index
+                positions[out_index] = pos
+                out_index += 1
+
+
+def _should_parallelize_anchors(scores: np.ndarray) -> bool:
+    return get_num_threads() > 1 and scores.size >= ANCHOR_PARALLEL_WORK_THRESHOLD
+
+
 def _collect_anchor_sites(
     scores: np.ndarray,
     lengths: np.ndarray,
@@ -231,7 +282,22 @@ def _collect_anchor_sites(
     if scores_array.shape[0] == 0:
         return _empty_positions()
     if score_threshold is None:
+        if _should_parallelize_anchors(scores_array):
+            rows, positions = _collect_best_anchor_positions_parallel_numba(scores_array, lengths_array)
+            valid = rows >= 0
+            return rows[valid], positions[valid]
         return _collect_best_anchor_positions_numba(scores_array, lengths_array)
+    if _should_parallelize_anchors(scores_array):
+        counts = _count_threshold_anchors_by_row_numba(scores_array, lengths_array, float(score_threshold))
+        offsets = np.empty(counts.size + 1, dtype=np.int64)
+        offsets[0] = 0
+        np.cumsum(counts, out=offsets[1:])
+        rows = np.empty(int(offsets[-1]), dtype=np.int32)
+        positions = np.empty(int(offsets[-1]), dtype=np.int32)
+        _fill_threshold_anchors_by_row_numba(
+            scores_array, lengths_array, float(score_threshold), offsets, rows, positions
+        )
+        return rows, positions
     return _collect_threshold_anchor_positions_numba(scores_array, lengths_array, float(score_threshold))
 
 
@@ -399,6 +465,8 @@ def _score_profile_orientation_pair(
     query_anchors: tuple[np.ndarray, np.ndarray],
     target_anchors: tuple[np.ndarray, np.ndarray],
     cfg: ComparatorConfig,
+    workspace=None,
+    generation_offset: int = 0,
 ) -> dict:
     """Score one profile orientation across all tested shifts."""
     query_scores = query_bundle["values"][query_strand]
@@ -411,12 +479,13 @@ def _score_profile_orientation_pair(
 
     search_range = int(cfg["search_range"])
     window_radius = int(cfg["window_radius"])
-    workspace = make_alignment_workspace(int(query_scores.shape[0]), int(query_scores.shape[1]))
+    if workspace is None:
+        workspace = make_alignment_workspace(int(query_scores.shape[0]), int(query_scores.shape[1]))
     use_parallel = should_use_parallel(
         int(query_scores.shape[0]), int(query_scores.shape[1]), search_range, get_num_threads()
     )
     best = {"score": 0.0, "shift": 0, "n_sites": 0}
-    for generation, shift in enumerate(range(-search_range, search_range + 1), start=1):
+    for generation, shift in enumerate(range(-search_range, search_range + 1), start=generation_offset + 1):
         score, n_sites = score_shift(
             query_scores,
             query_lengths,
@@ -453,20 +522,28 @@ def _score_profile_orientation_pair(
     }
 
 
-def _score_profile_candidates(query_bundle: dict, target_bundle: dict, pair_specs, cfg: ComparatorConfig) -> list[dict]:
-    """Score all requested orientation pairs with the window-based profile algorithm."""
-    min_logfpr = cfg["min_logfpr"]
-    score_threshold = None if min_logfpr is None or float(min_logfpr) <= 0.0 else float(min_logfpr)
+def _prepare_query_anchor_cache(query_bundle: dict, pair_specs, score_threshold: float | None) -> dict:
+    """Prepare query anchors once; their values do not depend on a target."""
     n_rows = int(query_bundle["values"].shape[1])
-    query_strands = {int(query_strand) for _, query_strand, _ in pair_specs}
-    target_strands = {int(target_strand) for _, _, target_strand in pair_specs}
-    query_anchor_cache = {
+    return {
         strand_index: build_anchor_csr(
             *_collect_anchor_sites(query_bundle["values"][strand_index], query_bundle["lengths"], score_threshold),
             n_rows,
         )
-        for strand_index in query_strands
+        for strand_index in {int(query_strand) for _, query_strand, _ in pair_specs}
     }
+
+
+def _score_profile_candidates(
+    query_bundle: dict, target_bundle: dict, pair_specs, cfg: ComparatorConfig, query_anchor_cache: dict | None = None
+) -> list[dict]:
+    """Score all requested orientation pairs with the window-based profile algorithm."""
+    min_logfpr = cfg["min_logfpr"]
+    score_threshold = None if min_logfpr is None or float(min_logfpr) <= 0.0 else float(min_logfpr)
+    n_rows = int(query_bundle["values"].shape[1])
+    target_strands = {int(target_strand) for _, _, target_strand in pair_specs}
+    if query_anchor_cache is None:
+        query_anchor_cache = _prepare_query_anchor_cache(query_bundle, pair_specs, score_threshold)
     target_anchor_cache = {
         strand_index: build_anchor_csr(
             *_collect_anchor_sites(target_bundle["values"][strand_index], target_bundle["lengths"], score_threshold),
@@ -474,8 +551,10 @@ def _score_profile_candidates(query_bundle: dict, target_bundle: dict, pair_spec
         )
         for strand_index in target_strands
     }
+    workspace = make_alignment_workspace(int(query_bundle["values"].shape[1]), int(query_bundle["values"].shape[2]))
     candidates = []
-    for orientation, query_strand, target_strand in pair_specs:
+    shifts_per_orientation = 2 * int(cfg["search_range"]) + 1
+    for orientation_index, (orientation, query_strand, target_strand) in enumerate(pair_specs):
         best = _score_profile_orientation_pair(
             query_bundle,
             target_bundle,
@@ -484,6 +563,8 @@ def _score_profile_candidates(query_bundle: dict, target_bundle: dict, pair_spec
             query_anchor_cache[int(query_strand)],
             target_anchor_cache[int(target_strand)],
             cfg,
+            workspace,
+            orientation_index * shifts_per_orientation,
         )
         best["orientation"] = orientation
         candidates.append(best)
@@ -530,8 +611,8 @@ def _compare_profile_one_to_many(
     if not target_list:
         return []
 
-    query_cache: dict[Any, Any] = {}
     background_sequences = _get_profile_background_sequences(sequences, cfg)
+    query_cache: dict[Any, Any] = make_batch_preparation_context(sequences, background_sequences)
     query_bundle = _prepare_profile_model(
         query_model,
         sequences,
@@ -539,9 +620,11 @@ def _compare_profile_one_to_many(
         cfg,
         query_cache,
     )
+    score_threshold = None if cfg["min_logfpr"] is None or float(cfg["min_logfpr"]) <= 0.0 else float(cfg["min_logfpr"])
+    query_anchor_cache = _prepare_query_anchor_cache(query_bundle, PROFILE_ORIENTATION_PAIRS, score_threshold)
 
     def _score_target(target_model: GenericModel) -> ComparisonResult:
-        target_cache: dict[Any, Any] = {}
+        target_cache: dict[Any, Any] = dict(query_cache)
         try:
             target_bundle = _prepare_profile_model(
                 target_model,
@@ -551,7 +634,9 @@ def _compare_profile_one_to_many(
                 target_cache,
             )
             best = _select_best_orientation(
-                _score_profile_candidates(query_bundle, target_bundle, PROFILE_ORIENTATION_PAIRS, cfg)
+                _score_profile_candidates(
+                    query_bundle, target_bundle, PROFILE_ORIENTATION_PAIRS, cfg, query_anchor_cache
+                )
             )
             return _build_profile_result(query_model.name, target_model.name, best, cfg["metric"])
         finally:
