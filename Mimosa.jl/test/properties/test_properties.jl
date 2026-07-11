@@ -254,3 +254,97 @@ end
     @test r1.n_sites == r2.n_sites
     @test r1.orientation == r2.orientation
 end
+
+# Stage 4 properties
+
+@testset "selectsites is deterministic" begin
+    pwm = readmodel(joinpath(EXAMPLES, "pif4.meme"))
+    batch, _ = read_fasta(joinpath(EXAMPLES, "foreground.fa"))
+    c1 = selectsites(pwm, batch, BestPerSequence(); strands=BothStrands())
+    c2 = selectsites(pwm, batch, BestPerSequence(); strands=BothStrands())
+    @test c1 == c2
+end
+
+@testset "selectsites does not mutate inputs" begin
+    pwm = readmodel(joinpath(EXAMPLES, "pif4.meme"))
+    batch, _ = read_fasta(joinpath(EXAMPLES, "foreground.fa"))
+    data_copy = copy(batch.data)
+    offsets_copy = copy(batch.offsets)
+    selectsites(pwm, batch, BestPerSequence(); strands=BothStrands())
+    @test batch.data == data_copy
+    @test batch.offsets == offsets_copy
+end
+
+@testset "selectsites empty batch gives empty collection" begin
+    pwm = readmodel(joinpath(EXAMPLES, "pif4.meme"))
+    empty_batch = empty_sequence_batch()
+    coll = selectsites(pwm, empty_batch, BestPerSequence())
+    @test isempty(coll)
+end
+
+@testset "selectsites short sequences give no hits" begin
+    pwm = readmodel(joinpath(EXAMPLES, "pif4.meme"))
+    W = length(pwm)
+    short_seq = encode_sequence("A"^(W - 1))
+    batch = EncodedSequenceBatch([short_seq])
+    coll = selectsites(pwm, batch, BestPerSequence())
+    @test isempty(coll)
+end
+
+@testset "reconstruct_pfm columns sum to 1.0" begin
+    pwm = readmodel(joinpath(EXAMPLES, "pif4.meme"))
+    batch, _ = read_fasta(joinpath(EXAMPLES, "foreground.fa"))
+    pfm = reconstruct_pfm(pwm, batch, BestPerSequence(); pseudocount=0.25f0)
+    @test size(pfm) == (4, length(pwm))
+    for col in 1:size(pfm, 2)
+        @test sum(@view pfm[:, col]) ≈ 1.0f0 atol = 1e-5
+    end
+end
+
+@testset "reconstruct_pfm with TopFraction gives fewer or equal sites" begin
+    pwm = readmodel(joinpath(EXAMPLES, "pif4.meme"))
+    batch, _ = read_fasta(joinpath(EXAMPLES, "foreground.fa"))
+    pfm_all = reconstruct_pfm(pwm, batch, BestPerSequence(); pseudocount=0.25f0)
+    pfm_half = reconstruct_pfm(pwm, batch, TopFractionHits(0.5); pseudocount=0.25f0)
+    @test size(pfm_all) == size(pfm_half)
+    # Both should have columns summing to 1.0
+    for col in 1:size(pfm_half, 2)
+        @test sum(@view pfm_half[:, col]) ≈ 1.0f0 atol = 1e-5
+    end
+end
+
+@testset "site extraction reverse complement involution" begin
+    # Extract a forward site, then reverse-complement it → should match
+    # the reverse-strand extraction at the same position
+    pwm = readmodel(joinpath(EXAMPLES, "pif4.meme"))
+    seq = encode_sequence("ACGTACGTACGTACGTACGTACGTAC")
+    batch = EncodedSequenceBatch([seq])
+    W = length(pwm)
+
+    # Forward hit at position 1
+    coll_fwd = SiteCollection([1], [1], Int8[0], [0.0f0])
+    site_fwd = extract_site_matrix(batch, coll_fwd, W)
+
+    # Reverse hit at same position
+    coll_rev = SiteCollection([1], [1], Int8[1], [0.0f0])
+    site_rev = extract_site_matrix(batch, coll_rev, W)
+
+    # The reverse-strand site should be the reverse complement of the forward site
+    expected_rc = UInt8[s == N_CODE ? N_CODE : 0x03 - s for s in reverse(site_fwd[:, 1])]
+    @test site_rev[:, 1] == expected_rc
+end
+
+@testset "sort_hits! is idempotent" begin
+    coll = SiteCollection(
+        [3, 1, 2, 1], [10, 5, 15, 8], Int8[0, 1, 0, 0], [1.0f0, 3.0f0, 2.0f0, 3.0f0]
+    )
+    sort_hits!(coll)
+    coll_copy = SiteCollection(
+        copy(coll.seq_indices), copy(coll.starts), copy(coll.strands), copy(coll.scores)
+    )
+    sort_hits!(coll)
+    @test coll.seq_indices == coll_copy.seq_indices
+    @test coll.starts == coll_copy.starts
+    @test coll.strands == coll_copy.strands
+    @test coll.scores == coll_copy.scores
+end

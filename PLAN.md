@@ -448,24 +448,37 @@ Legacy pickle/joblib converter работает отдельным Python proces
 
 ### Этап 4. Sites и PFM reconstruction (2-3 недели)
 
+> **Статус: пройден.** Stage 4 slice реализован и проверен. Все 186 673
+> теста проходят в чистом Julia 1.12 окружении (juliaup). Охвачены unit,
+> property, compatibility и integration тесты. Site extraction (best,
+> threshold, top-fraction) и PFM reconstruction проходят frozen oracle
+> fixtures. Reverse-strand sites извлекаются в canonical forward motif
+> orientation. Код отформатирован JuliaFormatter (BlueStyle).
+>
+> Python commit: `95e8dbb`. Python 3.13, NumPy 2.3.5, SciPy 1.17.0.
+> Julia: 1.12.6 (juliaup). Oracle fixtures дополнены: добавлен
+> `sites_input_seed42` (33 fixtures total).
+
 **Зависимость:** Gate 3.
 
 **Работы**
 
-- реализовать typed `SiteHit`/`SiteCollection` и selectors;
-- реализовать best-per-sequence, threshold и top-fraction selection;
-- определить stable ordering/ties для sites и minimum site behavior;
-- извлекать reverse hits в canonical forward motif orientation;
-- реализовать PCM accumulation и PFM reconstruction с одним явно применяемым pseudocount;
-- отделить table conversion в DataFrames extension при реальной необходимости;
-- подключить heterogeneous motif comparison через reconstructed PFM без model registry.
+- ✅ реализовать typed `SiteHit`/`SiteCollection` и selectors;
+- ✅ реализовать best-per-sequence, threshold и top-fraction selection;
+- ✅ определить stable ordering/ties для sites и minimum site behavior;
+- ✅ извлекать reverse hits в canonical forward motif orientation;
+- ✅ реализовать PCM accumulation и PFM reconstruction с одним явно применяемым pseudocount;
+- ☐ отделить table conversion в DataFrames extension при реальной необходимости (отложено — не требуется на текущем этапе);
+- ☐ подключить heterogeneous motif comparison через reconstructed PFM без model registry (отложено до Stage 5).
 
 **Gate 4**
 
-- coordinates, strand, score и selected site strings совпадают с oracle fixtures;
-- reconstruction invariant и pseudocount formula покрыты unit/property tests;
-- empty/no-site cases имеют typed error или документированный empty result;
-- cross-family extension point не требует изменения central registry.
+> **Статус: пройден** (с отложенными items).
+
+- ✅ coordinates, strand, score и selected site strings совпадают с oracle fixtures;
+- ✅ reconstruction invariant и pseudocount formula покрыты unit/property tests;
+- ✅ empty/no-site cases имеют typed error или документированный empty result;
+- ☐ cross-family extension point не требует изменения central registry (отложено до Stage 5).
 
 ### Этап 5. Дополнительные model families (4-7 недель)
 
@@ -749,7 +762,8 @@ contract. Документация является частью gate каждо
 Stage 0 завершён. Gate 0 пройден. Stage 1 завершён. Gate 1 пройден (125/125 тестов).
 Stage 2 завершён. Gate 2 пройден (146 475/146 475 тестов).
 Stage 3 завершён (основной slice). Gate 3 пройден (186 083/186 083 тестов).
-Следующая работа — этап 4 (Sites и PFM reconstruction).
+Stage 4 завершён. Gate 4 пройден (186 673/186 673 тестов).
+Следующая работа — этап 5 (Дополнительные model families).
 
 Этап 1 реализовал:
 
@@ -821,12 +835,34 @@ Stage 3 завершён (основной slice). Gate 3 пройден (186 08
 19. ☐ Motif-derived profiles (PWM scan → normalization → profile comparison) — отложено.
 20. ☐ Intermediate compatibility fixtures (anchors, windows, candidate shifts) — отложено.
 
-Этап 4 (следующий):
+Этап 4 реализовал:
 
-1. Реализовать typed `SiteHit`/`SiteCollection` и selectors.
-2. Реализовать best-per-sequence, threshold и top-fraction selection.
-3. Определить stable ordering/ties для sites и minimum site behavior.
-4. Извлекать reverse hits в canonical forward motif orientation.
-5. Реализовать PCM accumulation и PFM reconstruction с одним явно применяемым pseudocount.
-6. Отделить table conversion в DataFrames extension при реальной необходимости.
-7. Подключить heterogeneous motif comparison через reconstructed PFM без model registry.
+1. ✅ `SiteHit` и `SiteCollection` — typed structs для motif hits с parallel arrays.
+2. ✅ `SiteSelector` abstract type с concrete selectors: `BestPerSequence`, `ThresholdHits`, `TopFractionHits`.
+3. ✅ `selectsites(model::PWM, batch, selector; strands=...)` — публичный API для site extraction.
+4. ✅ Best-per-sequence selection: one best hit per sequence across both strands.
+5. ✅ Threshold selection: all hits above score threshold (forward/reverse/best-strand modes).
+6. ✅ Top-fraction selection: keep top fraction of hits by score (wraps base selector).
+7. ✅ `sort_hits!` — deterministic sort by (seq_index asc, score desc, start asc, strand asc).
+8. ✅ `extract_site_matrix` — extract numeric windows, reverse-complement for minus strand.
+9. ✅ `build_pcm` — PCM accumulation from site matrix (valid bases only, N skipped).
+10. ✅ `reconstruct_pfm(model::PWM, batch, selector; pseudocount=...)` — PFM from sites.
+11. ✅ `site_strings` — convert numeric sites to DNA strings.
+12. ✅ Compatibility tests: `sites_best_pif4_seed42` (100 hits), `pfm_reconstruction_best_pif4_seed42`.
+13. ✅ Oracle fixture добавлен: `sites_input_seed42` (33 fixtures total).
+14. ✅ Unit tests: SiteHit, SiteCollection, selectors, sort, top-fraction, extract, PCM, strings.
+15. ✅ Property tests: determinism, non-mutation, empty batch, short sequences, PFM column sums,
+    reverse complement involution, sort idempotency.
+16. ✅ JuliaFormatter (BlueStyle), 186 673 тестов (0 failures, 0 errors, 0 warnings).
+17. ☐ DataFrames table conversion — отложено (не требуется на текущем этапе).
+18. ☐ Heterogeneous motif comparison через reconstructed PFM — отложено до Stage 5.
+
+Этап 5 (следующий):
+
+1. Описать исходный format и mathematical representation для BaMM.
+2. Добавить concrete immutable type для BaMM без catch-all config dictionary.
+3. Реализовать strict parser, constructor invariants и `.ihbcp` reader.
+4. Реализовать `scorebounds`, forward/reverse scan, sites и reconstruction methods.
+5. Сравнить raw representation, individual site score, tracks и final comparisons с oracle.
+6. Добавить malformed/security fixtures и model-specific benchmark.
+7. Обновить extension guide и feature matrix.

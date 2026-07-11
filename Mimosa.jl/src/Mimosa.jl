@@ -19,6 +19,7 @@ include("scanning/scanning.jl")
 include("io/io.jl")
 include("comparison/comparison.jl")
 include("profiles/profiles.jl")
+include("sites/sites.jl")
 include("serialization.jl")
 include("cli.jl")
 
@@ -52,6 +53,22 @@ export scan,
 
 # Model exports
 export ScoreProfile, scorebounds, profile_bundle
+
+# Sites and PFM reconstruction exports
+export SiteSelector,
+    BestPerSequence,
+    ThresholdHits,
+    TopFractionHits,
+    SiteHit,
+    SiteCollection,
+    selectsites,
+    reconstruct_pfm,
+    extract_site_matrix,
+    build_pcm,
+    site_strings,
+    sort_hits!,
+    select_top_fraction,
+    empty_site_collection
 
 # Profile comparison exports
 export AbstractProfileMetric,

@@ -186,6 +186,35 @@
     {
       "arrays": {
         "lengths": {
+          "checksum": "6719dcdd921de5ec3383aa4916e6268f70b0c38545f76ced3fbec7a44d0998d6",
+          "dtype": "int64",
+          "file": "sites_input_seed42__lengths.npy",
+          "shape": [
+            100
+          ]
+        },
+        "values": {
+          "checksum": "9e694c24ddc3d1adc5cbf9a4152236903b567571f0c3ad187c1e7633df0b9cd5",
+          "dtype": "int8",
+          "file": "sites_input_seed42__values.npy",
+          "shape": [
+            100,
+            200
+          ]
+        }
+      },
+      "description": "Input sequences for sites/PFM reconstruction fixtures (seed=42, n=100, len=200)",
+      "id": "sites_input_seed42",
+      "metadata": {
+        "n_sequences": 100,
+        "padding_value": 4,
+        "seed": 42,
+        "seq_length": 200
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
           "checksum": "d43e65f778f34b8875149a94fd2eb725331e095335a28ecc7d57b97e825125b5",
           "dtype": "int64",
           "file": "pwm_scan_forward_pif4_seed42__lengths.npy",
@@ -802,5 +831,6 @@
   "platform": "Linux-6.19.6-arch1-1-x86_64-with-glibc2.43",
   "python_commit": "a5f85da6b070d04766f9ad8256270e3414ec2206",
   "python_version": "3.13.12 | packaged by Anaconda, Inc. | (main, Feb 24 2026, 16:13:31) [GCC 14.3.0]",
-  "scipy_version": "1.17.0"
+  "scipy_version": "1.17.0",
+  "fixture_count": 33
 }
