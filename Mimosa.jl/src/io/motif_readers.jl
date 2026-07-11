@@ -247,6 +247,8 @@ function readmodel(
     elseif fmt === :bamm
         order_val = get(kwargs, :order, nothing)
         return read_bamm(path; order=order_val)
+    elseif fmt === :sitega
+        return read_sitega(path)
     else
         throw(ModelFormatError(path, "unsupported format: $(fmt)."))
     end
@@ -257,5 +259,6 @@ function _detect_format(path::AbstractString)
     endswith(lower, ".meme") && return :meme
     endswith(lower, ".pfm") && return :pfm
     endswith(lower, ".ihbcp") && return :bamm
+    endswith(lower, ".mat") && return :sitega
     return :unknown
 end

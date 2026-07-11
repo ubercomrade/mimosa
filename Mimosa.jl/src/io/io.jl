@@ -1,7 +1,8 @@
-# Motif model I/O: MEME, PFM, score profile, and BaMM readers.
+# Motif model I/O: MEME, PFM, score profile, BaMM, and SiteGA readers.
 
 include("motif_readers.jl")
 include("score_reader.jl")
 include("bamm_reader.jl")
+include("sitega_reader.jl")
 
-export readmodel, read_meme, read_pfm, read_scores, read_bamm
+export readmodel, read_meme, read_pfm, read_scores, read_bamm, read_sitega, write_sitega

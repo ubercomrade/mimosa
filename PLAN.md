@@ -764,7 +764,8 @@ Stage 2 завершён. Gate 2 пройден (146 475/146 475 тестов).
 Stage 3 завершён (основной slice). Gate 3 пройден (186 083/186 083 тестов).
 Stage 4 завершён. Gate 4 пройден (186 673/186 673 тестов).
 Stage 5a (BaMM) завершён. 186 985/186 985 тестов проходят.
-Следующая работа — этап 5b (SiteGA).
+Stage 5b (SiteGA) завершён. 187 258/187 258 тестов проходят.
+Следующая работа — этап 5c (Dimont).
 
 Этап 1 реализовал:
 
@@ -890,6 +891,46 @@ Stage 5a (BaMM) завершён. 186 985/186 985 тестов проходят.
 1. Описать исходный format `.mat` и mathematical representation для SiteGA.
 2. Добавить concrete immutable type для SiteGA без catch-all config dictionary.
 3. Реализовать strict parser, constructor invariants и `.mat` reader/writer.
+4. Реализовать `scorebounds`, forward/reverse scan, sites и reconstruction methods.
+5. Сравнить raw representation, individual site score, tracks и final comparisons с oracle.
+6. Добавить malformed/security fixtures и model-specific benchmark.
+7. Обновить extension guide и feature matrix.
+
+Этап 5b (SiteGA) реализовал:
+
+1. ✅ Описан исходный format `.mat` и mathematical representation для SiteGA.
+2. ✅ `SiteGA{T,M}` — concrete immutable struct с representation matrix `(25, motif_length)`,
+   motif_length, без catch-all config dictionary. Flattened из Python `(5, 5, length)` в
+   `(25, length)` с row indexing `code = base1 * 5 + base2`.
+3. ✅ Strict `.mat` parser с size limits, dinucleotide validation, range validation и понятными errors.
+4. ✅ `write_sitega(path, model)` — writer с segment grouping (contiguous equal-value runs),
+   matching Python format. Round-trip test проходит.
+5. ✅ Constructor invariants: row count (25), column/length match, non-finite check.
+6. ✅ `scorebounds(::SiteGA)` — per-column min/max across 25 dinucleotide codes, summed.
+   Совпадает с oracle.
+7. ✅ Forward/reverse/best/both scanning kernels для SiteGA с dinucleotide scoring
+   (kmer = 2, context = 0, n_terms = motif_length - 1, window = motif_length).
+8. ✅ `scan(::SiteGA, seq; strands=...)` и `scan(::SiteGA, batch; strands=...)` через multiple dispatch.
+9. ✅ `scan!(dest, ::SiteGA, seq; strands=...)` — in-place API.
+10. ✅ `scan_result_lengths(::SiteGA, batch)` — pre-allocate output buffers.
+11. ✅ `readmodel(path; format=:auto)` auto-detects `.mat` and dispatches to `read_sitega`.
+12. ✅ Compatibility tests: parsing (3 files), score bounds (3 fixtures),
+    forward/reverse scanning (2 files × 2 strands = 4 fixtures), readmodel auto-detect (2 tests).
+    All match oracle within Float32 tolerance.
+13. ✅ Oracle fixtures: 12 new fixtures added (61 total in manifest).
+14. ✅ Unit tests: constructor, show, equality, scorebounds, parsing, single-sequence scan,
+    batch scan, determinism, write round-trip.
+15. ✅ JuliaFormatter (BlueStyle), 187 258 тестов (0 failures, 0 errors, 0 warnings).
+16. ☐ Malformed/security fixtures — отложено до следующего подэтапа.
+17. ☐ SiteGA sites и reconstruction — отложено (requires sites API generalization for higher-order models).
+18. ☐ SiteGA comparison — отложено (requires comparison API generalization for higher-order models).
+19. ☐ Model-specific benchmark — отложено до benchmark suite.
+
+Этап 5c (следующий — Dimont):
+
+1. Описать исходный XML format и mathematical representation для Dimont.
+2. Добавить concrete immutable type для Dimont без catch-all config dictionary.
+3. Реализовать strict parser, constructor invariants и reader/writer.
 4. Реализовать `scorebounds`, forward/reverse scan, sites и reconstruction methods.
 5. Сравнить raw representation, individual site score, tracks и final comparisons с oracle.
 6. Добавить malformed/security fixtures и model-specific benchmark.

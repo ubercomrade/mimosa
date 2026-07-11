@@ -452,6 +452,24 @@ def generate_site_reconstruction_fixtures() -> list[dict]:
     model = read_model(str(EXAMPLES_DIR / "pif4.meme"), "pwm")
     seq_batch = make_random_sequence_batch(100, 200, seed=42)
 
+    # Save input sequences so Julia compatibility tests can load them
+    fixtures.append(
+        {
+            "id": "sites_input_seed42",
+            "description": "Input sequences for site extraction fixtures (seed=42, n=100, len=200)",
+            "arrays": {
+                "values": _save_npy("sites_input_seed42__values", seq_batch["values"]),
+                "lengths": _save_npy("sites_input_seed42__lengths", seq_batch["lengths"]),
+            },
+            "metadata": {
+                "n_sequences": 100,
+                "seq_length": 200,
+                "seed": 42,
+                "padding_value": int(seq_batch["padding_value"]),
+            },
+        }
+    )
+
     # Best-mode sites
     sites_df = get_sites(model, seq_batch, mode="best", strand="both")
     fixtures.append(
@@ -778,6 +796,185 @@ def generate_bamm_fixtures() -> list[dict]:
     return fixtures
 
 
+def generate_sitega_fixtures() -> list[dict]:
+    """Fixtures for SiteGA parsing, scanning, and score bounds."""
+    from mimosa.io.sitega import read_sitega
+
+    fixtures = []
+
+    # 1. Parse SiteGA and save representation for each example file
+    for fname in ["sitega.mat", "sitega_gata2.mat", "sitega_stat6.mat"]:
+        path = str(EXAMPLES_DIR / fname)
+        rep, name, length = read_sitega(path)
+        base = fname.replace(".mat", "")
+        flat_rep = rep.reshape(-1, length)  # (25, length) in C-order
+        fixture_id = f"sitega_parse_{base}"
+        fixtures.append(
+            {
+                "id": fixture_id,
+                "description": f"Parse {fname} to flattened (25, length) representation",
+                "arrays": {"representation": _save_npy(fixture_id + "__representation", flat_rep)},
+                "metadata": {
+                    "name": name,
+                    "motif_length": int(length),
+                    "shape": list(flat_rep.shape),
+                },
+            }
+        )
+
+    # 2. Score bounds for SiteGA
+    for fname in ["sitega.mat", "sitega_gata2.mat", "sitega_stat6.mat"]:
+        path = str(EXAMPLES_DIR / fname)
+        rep, name, length = read_sitega(path)
+        rep_arr = np.asarray(rep, dtype=np.float32)
+        min_score = float(rep_arr.min(axis=tuple(range(rep_arr.ndim - 1))).sum())
+        max_score = float(rep_arr.max(axis=tuple(range(rep_arr.ndim - 1))).sum())
+        base = fname.replace(".mat", "")
+        fixtures.append(
+            {
+                "id": f"sitega_score_bounds_{base}",
+                "description": f"Theoretical score bounds for {fname} SiteGA",
+                "metadata": {"min_score": min_score, "max_score": max_score},
+            }
+        )
+
+    # 3. SiteGA scanning (forward and reverse) using inline kernels
+    # Reuse the same random sequences as BaMM (5-ary encoding, seed=42)
+    rng = np.random.default_rng(42)
+    n_seq = 50
+    seq_len = 200
+    values = rng.integers(0, 5, size=(n_seq, seq_len), dtype=np.int8)
+    lengths = np.full(n_seq, seq_len, dtype=np.int64)
+
+    # Save input sequences if not already saved
+    seq_fixture_id = "sitega_scan_input_seed42"
+    fixtures.append(
+        {
+            "id": seq_fixture_id,
+            "description": "Input sequences for SiteGA scan fixtures (seed=42, n=50, len=200, 5-ary encoding)",
+            "arrays": {
+                "values": _save_npy(seq_fixture_id + "__values", values),
+                "lengths": _save_npy(seq_fixture_id + "__lengths", lengths),
+            },
+            "metadata": {"n_sequences": 50, "seq_length": 200, "seed": 42, "padding_value": 4},
+        }
+    )
+
+    def _scan_sitega_forward(values, lengths, model_rows, motif_len):
+        """Inline forward SiteGA scan kernel (kmer=2, context=0, n_terms=motif_len-1)."""
+        kmer = 2
+        context_len = 0
+        window_size = motif_len
+        n_terms = motif_len - 1
+        n_rows = values.shape[0]
+        max_scores = max(values.shape[1] - window_size + 1, 0)
+        scores = np.zeros((n_rows, max_scores), dtype=np.float32)
+        mask = np.zeros((n_rows, max_scores), dtype=bool)
+        for row in range(n_rows):
+            length = int(lengths[row])
+            n_pos = max(length - window_size + 1, 0)
+            if n_pos == 0:
+                continue
+            for pos in range(n_pos):
+                total = np.float32(0.0)
+                for term in range(n_terms):
+                    code = 0
+                    src_start = pos - context_len + term
+                    for offset in range(kmer):
+                        src = src_start + offset
+                        encoded = 4
+                        if 0 <= src < length:
+                            encoded = int(values[row, src])
+                        code = code * 5 + encoded
+                    total += model_rows[code, term]
+                scores[row, pos] = total
+                mask[row, pos] = True
+        return scores, mask
+
+    def _scan_sitega_reverse(values, lengths, model_rows, motif_len):
+        """Inline reverse SiteGA scan kernel (kmer=2, window=motif_len, n_terms=motif_len-1)."""
+        kmer = 2
+        window_size = motif_len
+        n_terms = motif_len - 1
+        n_rows = values.shape[0]
+        max_scores = max(values.shape[1] - window_size + 1, 0)
+        scores = np.zeros((n_rows, max_scores), dtype=np.float32)
+        mask = np.zeros((n_rows, max_scores), dtype=bool)
+        for row in range(n_rows):
+            length = int(lengths[row])
+            n_pos = max(length - window_size + 1, 0)
+            if n_pos == 0:
+                continue
+            for pos in range(n_pos):
+                total = np.float32(0.0)
+                for term in range(n_terms):
+                    code = 0
+                    for offset in range(kmer):
+                        src = pos + (window_size - 1 - (term + offset))
+                        encoded = 4
+                        if 0 <= src < length:
+                            base = int(values[row, src])
+                            encoded = 4 if base == 4 else 3 - base
+                        code = code * 5 + encoded
+                    total += model_rows[code, term]
+                scores[row, pos] = total
+                mask[row, pos] = True
+        return scores, mask
+
+    for fname in ["sitega.mat", "sitega_gata2.mat"]:
+        path = str(EXAMPLES_DIR / fname)
+        rep, name, length = read_sitega(path)
+        model_rows = np.asarray(rep, dtype=np.float32).reshape(-1, length)
+        motif_len = length
+        base = fname.replace(".mat", "")
+
+        fwd_scores, fwd_mask = _scan_sitega_forward(values, lengths, model_rows, motif_len)
+        fwd_id = f"sitega_scan_forward_{base}_seed42"
+        fixtures.append(
+            {
+                "id": fwd_id,
+                "description": f"Forward SiteGA scan of {fname} on 50 random sequences (seed=42, len=200)",
+                "arrays": {
+                    "values": _save_npy(fwd_id + "__values", fwd_scores),
+                    "mask": _save_npy(fwd_id + "__mask", fwd_mask),
+                    "lengths": _save_npy(fwd_id + "__lengths", lengths),
+                },
+                "metadata": {
+                    "n_sequences": 50,
+                    "seq_length": 200,
+                    "seed": 42,
+                    "motif_length": motif_len,
+                    "kmer": 2,
+                    "padding_value": 0.0,
+                },
+            }
+        )
+
+        rev_scores, rev_mask = _scan_sitega_reverse(values, lengths, model_rows, motif_len)
+        rev_id = f"sitega_scan_reverse_{base}_seed42"
+        fixtures.append(
+            {
+                "id": rev_id,
+                "description": f"Reverse SiteGA scan of {fname} on 50 random sequences (seed=42, len=200)",
+                "arrays": {
+                    "values": _save_npy(rev_id + "__values", rev_scores),
+                    "mask": _save_npy(rev_id + "__mask", rev_mask),
+                    "lengths": _save_npy(rev_id + "__lengths", lengths),
+                },
+                "metadata": {
+                    "n_sequences": 50,
+                    "seq_length": 200,
+                    "seed": 42,
+                    "motif_length": motif_len,
+                    "kmer": 2,
+                    "padding_value": 0.0,
+                },
+            }
+        )
+
+    return fixtures
+
+
 def generate_cli_fixtures() -> list[dict]:
     """Fixtures for CLI output comparison (scores only, not subprocess)."""
     fixtures = []
@@ -823,6 +1020,7 @@ def main() -> None:
     all_fixtures.extend(generate_site_reconstruction_fixtures())
     all_fixtures.extend(generate_gev_fixtures())
     all_fixtures.extend(generate_bamm_fixtures())
+    all_fixtures.extend(generate_sitega_fixtures())
     all_fixtures.extend(generate_cli_fixtures())
 
     manifest = {
