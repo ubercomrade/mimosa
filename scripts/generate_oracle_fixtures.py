@@ -192,6 +192,25 @@ def generate_scan_fixtures() -> list[dict]:
     # Scan on random sequences
     seq_batch = make_random_sequence_batch(50, 200, seed=42)
 
+    # Save input sequences so Julia compatibility tests can load them
+    # without needing to replicate NumPy's default_rng.
+    fixtures.append(
+        {
+            "id": "pwm_scan_input_seed42",
+            "description": "Input sequences for PWM scan fixtures (seed=42, n=50, len=200)",
+            "arrays": {
+                "values": _save_npy("pwm_scan_input_seed42__values", seq_batch["values"]),
+                "lengths": _save_npy("pwm_scan_input_seed42__lengths", seq_batch["lengths"]),
+            },
+            "metadata": {
+                "n_sequences": 50,
+                "seq_length": 200,
+                "seed": 42,
+                "padding_value": int(seq_batch["padding_value"]),
+            },
+        }
+    )
+
     # Forward scan
     forward_scores = scan_model(model, seq_batch, strand="+")
     fixtures.append(

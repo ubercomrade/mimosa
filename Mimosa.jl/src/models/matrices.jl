@@ -91,14 +91,28 @@ For the `(base, position)` layout this flips the base rows (A↔T, C↔G) and
 reverses the position columns, matching Python's `pwm[::-1, ::-1]`.
 """
 function reverse_complement(weights::AbstractMatrix{T}) where {T<:AbstractFloat}
-    if size(weights, 1) ∉ (NUCLEOTIDE_CARDINALITY, 5)
+    nrows_val = size(weights, 1)
+    if nrows_val == 4
+        # 4-row: reverse rows (A<->T, C<->G) and reverse columns (positions)
+        return reverse(reverse(weights; dims=1); dims=2)
+    elseif nrows_val == 5
+        # 5-row: complement A<->T (rows 1<->4), C<->G (rows 2<->3),
+        # keep N (row 5) in place, reverse position columns.
+        rc = similar(weights)
+        W = size(weights, 2)
+        @inbounds for p in 1:W
+            rc[1, p] = weights[4, W - p + 1]  # A <- T
+            rc[2, p] = weights[3, W - p + 1]  # C <- G
+            rc[3, p] = weights[2, W - p + 1]  # G <- C
+            rc[4, p] = weights[1, W - p + 1]  # T <- A
+            rc[5, p] = weights[5, W - p + 1]  # N <- N
+        end
+        return rc
+    else
         throw(
-            ModelDimensionError(
-                "reverse_complement expects 4 or 5 rows, got $(size(weights, 1))."
-            ),
+            ModelDimensionError("reverse_complement expects 4 or 5 rows, got $nrows_val.")
         )
     end
-    return reverse(reverse(weights; dims=1); dims=2)
 end
 
 function reverse_complement(model::PWM)

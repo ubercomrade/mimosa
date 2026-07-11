@@ -104,7 +104,7 @@ function _parse_shape(shape_str::AbstractString)
     s = strip(s)
     isempty(s) && return Int[]
     parts = split(s, ',')
-    return [parse(Int, strip(p)) for p in parts]
+    return [parse(Int, strip(p)) for p in parts if !isempty(strip(p))]
 end
 
 function _dtype_size(dtype::AbstractString)

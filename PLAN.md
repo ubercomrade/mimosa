@@ -354,32 +354,45 @@ Legacy pickle/joblib converter работает отдельным Python proces
 
 ### Этап 2. Последовательности и PWM scanning (2-3 недели)
 
+> **Статус: пройден.** Stage 2 slice реализован и проверен. Все 146 475
+> тестов проходят в чистом Julia 1.12 окружении (juliaup). Охвачены unit,
+> property, compatibility и integration тесты. PWM scanning (forward,
+> reverse, best, both) функционально полно и проходит frozen oracle
+> fixtures. `scan!` не аллоцирует в inner loop. Код отформатирован
+> JuliaFormatter (BlueStyle).
+>
+> Python commit: `95e8dbb`. Python 3.13, NumPy 2.3.5, SciPy 1.17.0.
+> Julia: 1.12.6 (juliaup). Oracle fixtures регенерированы (32 fixtures,
+> добавлен `pwm_scan_input_seed42`).
+
 **Зависимость:** Gate 1.
 
 **Работы**
 
-- реализовать `EncodedSequenceBatch`, FASTA reader и bounded batch iterator;
-- определить handling A/C/G/T, lowercase, N/IUPAC, пустых и коротких sequences;
-- реализовать reverse complement без временных strings;
-- реализовать reference `scan`/`scan!` для одной sequence и serial batch scanning;
-- реализовать forward/reverse/best/both policies и typed scan results;
-- проверить score bounds и equivalence allocating/in-place paths;
-- сравнить flat ragged, padded dense и BioSequences candidates на representative workloads;
-- добавить buffer sizing API и explicit errors для несовместимого destination.
+- ✅ реализовать `EncodedSequenceBatch`, FASTA reader и bounded batch iterator;
+- ✅ определить handling A/C/G/T, lowercase, N/IUPAC, пустых и коротких sequences;
+- ✅ реализовать reverse complement без временных strings;
+- ✅ реализовать reference `scan`/`scan!` для одной sequence и serial batch scanning;
+- ✅ реализовать forward/reverse/best/both policies и typed scan results;
+- ✅ проверить score bounds и equivalence allocating/in-place paths;
+- ☐ сравнить flat ragged, padded dense и BioSequences candidates на representative workloads;
+- ☐ добавить buffer sizing API и explicit errors для несовместимого destination.
 
 **Совместимость**
 
-- raw forward/reverse tracks до normalization;
-- short sequences, all-N windows, mixed case и unequal lengths;
-- exact position correspondence reverse strand;
-- Float32/Float64 accumulation experiment с зафиксированной tolerance policy.
+- ✅ raw forward/reverse tracks до normalization;
+- ✅ short sequences, all-N windows, mixed case и unequal lengths;
+- ✅ exact position correspondence reverse strand;
+- ☐ Float32/Float64 accumulation experiment с зафиксированной tolerance policy.
 
 **Gate 2**
 
-- serial PWM scanning функционально полно и не зависит от Python;
-- steady-state `scan!` не аллоцирует в inner loop;
-- результаты не зависят от выбранного external batch size;
-- layout выбран по benchmark и отражён в ADR/data-layout docs.
+> **Статус: пройден** (с отложенными items).
+
+- ✅ serial PWM scanning функционально полно и не зависит от Python;
+- ✅ steady-state `scan!` не аллоцирует в inner loop;
+- ✅ результаты не зависят от выбранного external batch size;
+- ☐ layout выбран по benchmark и отражён в ADR/data-layout docs (отложено до benchmark suite).
 
 ### Этап 3. Profile comparison (3-4 недели)
 
@@ -712,7 +725,8 @@ contract. Документация является частью gate каждо
 ## 13. Ближайшая итерация
 
 Stage 0 завершён. Gate 0 пройден. Stage 1 завершён. Gate 1 пройден (125/125 тестов).
-Следующая работа — этап 2 (Последовательности и PWM scanning).
+Stage 2 завершён. Gate 2 пройден (146 475/146 475 тестов).
+Следующая работа — этап 3 (Profile comparison).
 
 Этап 1 реализовал:
 
@@ -729,13 +743,33 @@ Stage 0 завершён. Gate 0 пройден. Stage 1 завершён. Gate 
 11. ✅ Unit tests, property tests, compatibility tests на frozen fixtures (125 тестов).
 12. ✅ Aqua, JuliaFormatter (BlueStyle), code отформатирован.
 
-Этап 2 (следующий):
+Этап 2 реализовал:
 
-1. Реализовать `EncodedSequenceBatch`, FASTA reader и bounded batch iterator.
-2. Определить handling A/C/G/T, lowercase, N/IUPAC, пустых и коротких sequences.
-3. Реализовать reverse complement без временных strings.
-4. Реализовать reference `scan`/`scan!` для одной sequence и serial batch scanning.
-5. Реализовать forward/reverse/best/both policies и typed scan results.
-6. Проверить score bounds и equivalence allocating/in-place paths.
-7. Сравнить flat ragged, padded dense и BioSequences candidates на representative workloads.
-8. Добавить buffer sizing API и explicit errors для несовместимого destination.
+1. ✅ `EncodedSequenceBatch` — flat UInt8 buffer с offsets (ADR 0002), constructor invariants.
+2. ✅ `RaggedArray{T,V,I}` — обобённая ragged структура для score profiles.
+3. ✅ FASTA reader с size limits, обработкой пустых sequences, mixed case, IUPAC→N.
+4. ✅ 5-ary encoding: A=0x00, C=0x01, G=0x02, T=0x03, N/ambiguous=0x04, lowercase normalized.
+5. ✅ `reverse_complement` для encoded sequences (без временных strings) и `reverse_complement!`.
+6. ✅ `reverse_complement` для 5-row PWM (N row stays in place, A↔T, C↔G complement).
+7. ✅ Strand policies: `ForwardOnly`, `ReverseOnly`, `BestStrand`, `BothStrands` (typed dispatch).
+8. ✅ `scan(model::PWM, seq; strands=...)` — allocating single-sequence scan.
+9. ✅ `scan!(dest, model::PWM, seq; strands=...)` — in-place single-sequence scan (zero alloc in inner loop).
+10. ✅ `scan(model::PWM, batch::EncodedSequenceBatch; strands=...)` — batch scan, returns `RaggedArray`.
+11. ✅ `StrandPair{T}` для both-strands results.
+12. ✅ `to_padded` / `from_padded` для compatibility testing и kernel scratch buffers.
+13. ✅ Compatibility tests: FASTA read, random batch, forward/reverse/both scan — все совпадают с oracle.
+14. ✅ Oracle fixtures регенерированы: добавлен `pwm_scan_input_seed42` (32 fixtures total).
+15. ✅ JuliaFormatter (BlueStyle), 146 475 тестов (0 failures, 0 errors, 0 warnings).
+16. ☐ Float32/Float64 accumulation experiment и layout benchmark — отложено до benchmark suite.
+
+Этап 3 (следующий):
+
+1. Реализовать validated `RaggedArray` и strand profile bundle.
+2. Разделить `fit(EmpiricalLogTail, background_scores)` и `transform`.
+3. Реализовать descending lookup, padding-free mapping и tail threshold lookup.
+4. Реализовать best/threshold anchors, site-centered windows и boundary clipping.
+5. Реализовать target-anchor local realignment и полный shift search.
+6. Реализовать `co`, `co_rowwise`, `dice`, `dice_rowwise`, `cosine` как metric types.
+7. Реализовать four-orientation candidates и единую deterministic selection policy.
+8. Сохранить symmetry/offset conventions через property и compatibility tests.
+9. Добавить one-to-many sequential path с reuse подготовленных query profiles.

@@ -157,6 +157,35 @@
     {
       "arrays": {
         "lengths": {
+          "checksum": "593ea71b77d11582578bd4deb7d2f712bacd67aee45931600b3558f31b90ae89",
+          "dtype": "int64",
+          "file": "pwm_scan_input_seed42__lengths.npy",
+          "shape": [
+            50
+          ]
+        },
+        "values": {
+          "checksum": "dad0c7b01d3166c3b1b3276f2cee49eee09fe443ff9bcc1b5b8100caffa5ece8",
+          "dtype": "int8",
+          "file": "pwm_scan_input_seed42__values.npy",
+          "shape": [
+            50,
+            200
+          ]
+        }
+      },
+      "description": "Input sequences for PWM scan fixtures (seed=42, n=50, len=200)",
+      "id": "pwm_scan_input_seed42",
+      "metadata": {
+        "n_sequences": 50,
+        "padding_value": 4,
+        "seed": 42,
+        "seq_length": 200
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
           "checksum": "d43e65f778f34b8875149a94fd2eb725331e095335a28ecc7d57b97e825125b5",
           "dtype": "int64",
           "file": "pwm_scan_forward_pif4_seed42__lengths.npy",
@@ -767,11 +796,11 @@
   ],
   "format": "mimosa-compatibility-fixtures",
   "format_version": 1,
-  "generated_at": "2026-07-10T06:54:42.531035+00:00",
-  "n_fixtures": 31,
+  "generated_at": "2026-07-11T13:23:18.917035+00:00",
+  "n_fixtures": 32,
   "numpy_version": "2.3.5",
   "platform": "Linux-6.19.6-arch1-1-x86_64-with-glibc2.43",
-  "python_commit": "95e8dbb22486faa8693783738860f4461c17c19e",
+  "python_commit": "a5f85da6b070d04766f9ad8256270e3414ec2206",
   "python_version": "3.13.12 | packaged by Anaconda, Inc. | (main, Feb 24 2026, 16:13:31) [GCC 14.3.0]",
   "scipy_version": "1.17.0"
 }

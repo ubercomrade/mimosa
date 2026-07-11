@@ -2,21 +2,8 @@ using Test
 using Mimosa
 using JSON3
 
-const REPO_ROOT = joinpath(dirname(dirname(@__DIR__)), "..")
-const EXAMPLES = joinpath(REPO_ROOT, "examples")
-const FIXTURE_COMPAT = joinpath(REPO_ROOT, "tests", "fixtures", "compatibility")
-
-include(joinpath(@__DIR__, "..", "npy_reader.jl"))
-using .NPYReader: read_npy
-
-const MANIFEST = JSON3.read(read(joinpath(FIXTURE_COMPAT, "manifest.json"), String))
-
-function fixture_metadata(id::AbstractString)
-    for f in MANIFEST["fixtures"]
-        f["id"] == id && return f["metadata"]
-    end
-    return error("fixture $id not found in manifest.")
-end
+# REPO_ROOT, EXAMPLES, FIXTURE_COMPAT, read_npy, fixture_metadata
+# are defined in runtests.jl
 
 @testset "pwm_parse_meme_pif4" begin
     pfm = read_meme(joinpath(EXAMPLES, "pif4.meme"); index=0)
