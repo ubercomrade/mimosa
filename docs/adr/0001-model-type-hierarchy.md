@@ -2,7 +2,9 @@
 
 ## Status
 
-Proposed (Stage 0)
+Implemented (Stage 1): `PFM` and `PWM` concrete types implemented in
+`Mimosa.jl/src/models/types.jl`. Higher-order model types are planned for
+Stage 5.
 
 ## Context
 

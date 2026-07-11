@@ -75,6 +75,13 @@ __pycache__/
 *$py.class
 *.so
 .Python
+
+# Julia
+Manifest.toml
+*.jl.cov
+*.jl.mem
+deps/build.log
+docs/build/
 env/
 venv/
 .venv/

@@ -311,6 +311,14 @@ Legacy pickle/joblib converter работает отдельным Python proces
 
 ### Этап 1. Package foundation и первый PWM vertical slice (2-3 недели)
 
+> **Статус: реализован.** Stage 1 slice создан: пакет `Mimosa.jl`, типы `PFM`/`PWM`,
+> парсеры MEME/PFM, метрики PCC/ED/Cosine, матричное выравнивание по 4 ориентациям
+> с детерминированным tie-breaking, `ComparisonResult`, JSON-сериализатор, thin CLI.
+> Тесты unit/property/compatibility/integration написаны; oracle fixtures загружаются
+> из `tests/fixtures/compatibility/` через минимальный NPY-ридер без PythonCall.
+> Gate 1 проверяется запуском `Pkg.test()` в чистом Julia окружении (Julia не установлена
+> в текущей среде — запустить тесты при наличии Julia).
+
 **Зависимость:** Gate 0.
 
 **Работы**
@@ -333,6 +341,10 @@ Legacy pickle/joblib converter работает отдельным Python proces
 - benchmark direct PWM comparison против Python warm path.
 
 **Gate 1**
+
+> **Статус: ожидает запуска тестов.** Stage 1 slice реализован; Gate 1 проверяется
+> запуском `julia --project=Mimosa.jl -e 'using Pkg; Pkg.test()'` в чистом Julia 1.10+
+> окружении (Julia не установлена в текущей среде разработки).
 
 - PWM/PFM parser и intermediate matrices совпадают с oracle;
 - scores/offset/orientation совпадают в согласованных tolerances, включая ties и reverse complements;

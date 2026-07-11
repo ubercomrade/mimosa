@@ -2,7 +2,9 @@
 
 ## Status
 
-Proposed (Stage 0)
+Implemented (Stage 1): offset traversal, orientation tie-breaking, and
+reverse-complement scoring semantics are implemented in
+`Mimosa.jl/src/comparison/alignment.jl` and `Mimosa.jl/src/models/matrices.jl`.
 
 ## Context
 

@@ -17,7 +17,7 @@
 
 | Model | Python type_key | Parser | Writer | Scanning | Sites | Reconstruction | Julia status |
 |---|---|---|---|---|---|---|---|
-| PWM | `pwm` | MEME, PFM, pickle | PFM | forward/reverse/best/both | yes | PFM | planned |
+| PWM | `pwm` | MEME, PFM, pickle | PFM | forward/reverse/best/both | yes | PFM | MEME/PFM parser done (Stage 1); scanning planned |
 | BaMM | `bamm` | `.ihbcp`, pickle | joblib | forward/reverse/best/both + context | yes | PFM | planned |
 | SiteGA | `sitega` | `.mat`, pickle | `.mat` | forward/reverse/best/both | yes | PFM | planned |
 | Dimont | `dimont` | XML, pickle | joblib | forward/reverse/best/both + context | yes | PFM | planned |
@@ -28,7 +28,7 @@
 
 | Strategy | Python entry | Metrics | Julia status |
 |---|---|---|---|
-| Motif (direct matrix alignment) | `strategy_motif` | `pcc`, `ed`, `cosine` | planned |
+| Motif (direct matrix alignment) | `strategy_motif` | `pcc`, `ed`, `cosine` | done (Stage 1) |
 | Profile (window-based) | `strategy_profile` | `co`, `co_rowwise`, `dice`, `dice_rowwise`, `cosine` | planned |
 | One-to-one | `compare_one_to_one` | all of the above | planned |
 | One-to-many | `compare_one_to_many` | all of the above | planned |
@@ -109,8 +109,8 @@ Tie-breaking: when scores are equal, the lower rank wins. Within the same orient
 
 | Format | Read | Write | Julia status |
 |---|---|---|---|
-| MEME | yes (single + multi) | — | planned |
-| PFM | yes | yes | planned |
+| MEME | yes (single + multi) | — | done (Stage 1) |
+| PFM | yes | yes | reader done (Stage 1); writer planned |
 | BaMM `.ihbcp` | yes | joblib only | planned (new writer) |
 | SiteGA `.mat` | yes | yes | planned |
 | Dimont XML | yes | joblib only | planned (new writer) |
