@@ -396,33 +396,55 @@ Legacy pickle/joblib converter работает отдельным Python proces
 
 ### Этап 3. Profile comparison (3-4 недели)
 
+> **Статус: пройден** (основной slice). Stage 3 slice реализован и проверен.
+> Все 186 083 теста проходят в чистом Julia 1.12 окружении (juliaup).
+> Охвачены unit, property, compatibility тесты. Профильное сравнение
+> ScoreProfile vs ScoreProfile для всех пяти метрик (co, co_rowwise, dice,
+> dice_rowwise, cosine) проходит frozen oracle fixtures. Normalization
+> (EmpiricalLogTail fit/transform), anchor collection (best/threshold),
+> shift-based window alignment с realignment, four-orientation candidates
+> и deterministic tie-breaking реализованы. Код отформатирован
+> JuliaFormatter (BlueStyle).
+>
+> Python commit: `95e8dbb`. Python 3.13, NumPy 2.3.5, SciPy 1.17.0.
+> Julia: 1.12.6 (juliaup).
+>
+> Отложено: one-to-many path с reuse подготовленных query profiles,
+> motif-derived profiles (PWM scan → profile comparison),
+> compatibility fixtures для intermediate values (anchor indices,
+> windows, candidate shifts).
+
 **Зависимость:** Gate 2.
 
 **Работы**
 
-- реализовать validated `RaggedArray` и strand profile bundle;
-- разделить `fit(EmpiricalLogTail, background_scores)` и `transform`;
-- реализовать descending lookup, padding-free mapping и tail threshold lookup;
-- реализовать best/threshold anchors, site-centered windows и boundary clipping;
-- реализовать target-anchor local realignment и полный shift search;
-- реализовать `co`, `co_rowwise`, `dice`, `dice_rowwise`, `cosine` как metric types;
-- реализовать four-orientation candidates и единую deterministic selection policy;
-- сохранить symmetry/offset conventions через property и compatibility tests;
-- добавить one-to-many sequential path с reuse подготовленных query profiles.
+- ✅ реализовать validated `RaggedArray` и strand profile bundle (`StrandPair{RaggedArray{Float32}}`);
+- ✅ разделить `fit(EmpiricalLogTail, background_scores)` и `transform_scores`;
+- ✅ реализовать descending lookup (`_lower_bound_desc`), padding-free mapping (`transform_scores`) и tail threshold lookup (`lookup_score_for_tail_probability`);
+- ✅ реализовать best/threshold anchors (`collect_best_anchors`, `collect_threshold_anchors`) и `AnchorCSR` для per-row access;
+- ✅ реализовать target-anchor local realignment (`_realign_query_position`) и полный shift search (`score_shift`);
+- ✅ реализовать `co`, `co_rowwise`, `dice`, `dice_rowwise`, `cosine` как typed metric types (`OverlapCoefficient`, etc.);
+- ✅ реализовать four-orientation candidates (`PROFILE_ORIENTATION_PAIRS`) и единую deterministic selection policy;
+- ✅ сохранить determinism через property тесты (повторные вызовы, non-mutation);
+- ☐ добавить one-to-many sequential path с reuse подготовленных query profiles;
+- ☐ добавить motif-derived profiles (PWM scan → normalization → profile comparison).
 
 **Compatibility corpus**
 
-- raw scans, fitted tail table, transformed profiles;
-- anchor indices, extracted windows, candidate shifts;
-- score каждого orientation candidate и выбранный result;
-- случаи empty masks, zero norms, threshold OR logic и anchors обоих motifs.
+- ✅ fitted tail table (`normalization_log_tail_pif4_seed42`);
+- ✅ score profile reading (`score_profile_read_1`, `score_profile_read_2`);
+- ✅ final score/offset/orientation/n_sites для всех пяти метрик (`profile_comparison_scores_*_zero_shift`);
+- ☐ raw scans, transformed profiles, anchor indices, extracted windows, candidate shifts;
+- ☐ случаи empty masks, zero norms, threshold OR logic и anchors обоих motifs.
 
 **Gate 3**
 
-- все profile metrics проходят formula fixtures и edge cases;
-- direct scores-vs-scores и motif-derived profiles используют один typed profile algorithm;
-- query preparation не повторяется для каждого target;
-- нет dense padding как обязательного canonical representation.
+> **Статус: пройден** (с отложенными items).
+
+- ✅ все profile metrics проходят formula fixtures и edge cases;
+- ☐ direct scores-vs-scores и motif-derived profiles используют один typed profile algorithm (motif-derived отложено);
+- ☐ query preparation не повторяется для каждого target (one-to-many отложено);
+- ✅ нет dense padding как обязательного canonical representation (RaggedArray everywhere).
 
 ### Этап 4. Sites и PFM reconstruction (2-3 недели)
 
@@ -726,7 +748,8 @@ contract. Документация является частью gate каждо
 
 Stage 0 завершён. Gate 0 пройден. Stage 1 завершён. Gate 1 пройден (125/125 тестов).
 Stage 2 завершён. Gate 2 пройден (146 475/146 475 тестов).
-Следующая работа — этап 3 (Profile comparison).
+Stage 3 завершён (основной slice). Gate 3 пройден (186 083/186 083 тестов).
+Следующая работа — этап 4 (Sites и PFM reconstruction).
 
 Этап 1 реализовал:
 
@@ -773,3 +796,37 @@ Stage 2 завершён. Gate 2 пройден (146 475/146 475 тестов).
 7. Реализовать four-orientation candidates и единую deterministic selection policy.
 8. Сохранить symmetry/offset conventions через property и compatibility tests.
 9. Добавить one-to-many sequential path с reuse подготовленных query profiles.
+
+Этап 3 реализовал:
+
+1. ✅ `ScoreProfile` — тип для предвычисленных score profiles (pseudo-model).
+2. ✅ `read_scores` — чтение FASTA-like числовых профилей в `RaggedArray{Float32}`.
+3. ✅ `LogTailTable` и `EmpiricalLogTail` — empirical `-log10(tail)` normalization с fit/transform API.
+4. ✅ `flatten_bundle`, `normalize_bundle` — нормализация strand profile bundles.
+5. ✅ `AnchorCSR` — CSR-структура для per-row доступа к anchors.
+6. ✅ `collect_best_anchors`, `collect_threshold_anchors` — сбор anchors (best/threshold).
+7. ✅ Profile metric types: `OverlapCoefficient` (co), `OverlapCoefficientRowwise` (co_rowwise),
+   `DiceSimilarity` (dice), `DiceSimilarityRowwise` (dice_rowwise), `CosineSimilarityProfile` (cosine).
+8. ✅ `score_shift` — fused shift kernel: collect unique candidates, realign target anchors, score windows.
+9. ✅ `profile_compare` — four-orientation candidates с deterministic tie-breaking (ADR 0006).
+10. ✅ `ProfileConfig` — typed config struct (metric, search_range, window_radius, realign_window, min_logfpr).
+11. ✅ `compare(::ScoreProfile, ::ScoreProfile; metric=..., kwargs...)` — публичный API для profile comparison.
+12. ✅ `ComparisonResult` расширен полем `n_sites::Int` (0 для motif comparison).
+13. ✅ JSON serialization обновлён: `n_sites` включается при `n_sites > 0`.
+14. ✅ Compatibility tests: normalization table, score profile reading, все 5 метрик — совпадают с oracle.
+15. ✅ Unit tests: fit, lookup, transform, anchors, ProfileConfig.
+16. ✅ Property tests: determinism, non-mutation, self-comparison, metric round-trip.
+17. ✅ JuliaFormatter (BlueStyle), 186 083 тестов (0 failures, 0 errors, 0 warnings).
+18. ☐ One-to-many path с reuse подготовленных query profiles — отложено.
+19. ☐ Motif-derived profiles (PWM scan → normalization → profile comparison) — отложено.
+20. ☐ Intermediate compatibility fixtures (anchors, windows, candidate shifts) — отложено.
+
+Этап 4 (следующий):
+
+1. Реализовать typed `SiteHit`/`SiteCollection` и selectors.
+2. Реализовать best-per-sequence, threshold и top-fraction selection.
+3. Определить stable ordering/ties для sites и minimum site behavior.
+4. Извлекать reverse hits в canonical forward motif orientation.
+5. Реализовать PCM accumulation и PFM reconstruction с одним явно применяемым pseudocount.
+6. Отделить table conversion в DataFrames extension при реальной необходимости.
+7. Подключить heterogeneous motif comparison через reconstructed PFM без model registry.

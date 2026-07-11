@@ -187,3 +187,70 @@ end
     rt = from_padded(padded, lengths)
     @test rt == batch
 end
+
+# Stage 3 properties
+
+@testset "profile comparison is deterministic" begin
+    sp1 = read_scores(joinpath(EXAMPLES, "scores_1.fasta"))
+    sp2 = read_scores(joinpath(EXAMPLES, "scores_2.fasta"))
+    r1 = compare(sp1, sp2; metric=:co, search_range=2, window_radius=2)
+    r2 = compare(sp1, sp2; metric=:co, search_range=2, window_radius=2)
+    @test r1.score == r2.score
+    @test r1.offset == r2.offset
+    @test r1.orientation == r2.orientation
+    @test r1.n_sites == r2.n_sites
+end
+
+@testset "profile comparison does not mutate inputs" begin
+    sp1 = read_scores(joinpath(EXAMPLES, "scores_1.fasta"))
+    sp2 = read_scores(joinpath(EXAMPLES, "scores_2.fasta"))
+    data1_copy = copy(sp1.scores.data)
+    offsets1_copy = copy(sp1.scores.offsets)
+    data2_copy = copy(sp2.scores.data)
+    offsets2_copy = copy(sp2.scores.offsets)
+    compare(sp1, sp2; metric=:co, search_range=2, window_radius=2)
+    @test sp1.scores.data == data1_copy
+    @test sp1.scores.offsets == offsets1_copy
+    @test sp2.scores.data == data2_copy
+    @test sp2.scores.offsets == offsets2_copy
+end
+
+@testset "self-comparison gives high scores" begin
+    sp1 = read_scores(joinpath(EXAMPLES, "scores_1.fasta"))
+    result = compare(sp1, sp1; metric=:co_rowwise, search_range=0, window_radius=0)
+    # Self-comparison with co_rowwise should give 1.0 (identical profiles)
+    @test result.score ≈ 1.0f0 atol = 1e-5
+    @test result.orientation == "++"
+end
+
+@testset "profile metric parse round-trip" begin
+    for name in ("co", "co_rowwise", "dice", "dice_rowwise", "cosine")
+        m = parse_profile_metric(name)
+        @test metric_name(m) == name
+    end
+end
+
+@testset "LogTailTable fit/transform round-trip" begin
+    # Fit from a sample, then transform the same sample
+    sample = Float32[0.1, 0.5, 0.9, 0.3, 0.7, 0.5, 0.1]
+    table = fit(EmpiricalLogTail(), sample)
+    rag = build_ragged([sample])
+    transformed = transform_scores(table, rag)
+    # Each unique score maps to a unique log-tail value
+    # Verify that equal scores map to equal log-tail values
+    for i in eachindex(sample)
+        @test lookup_score(table, sample[i]) == row(transformed, 1)[i]
+    end
+end
+
+@testset "profile comparison is deterministic across repeated calls" begin
+    sp1 = read_scores(joinpath(EXAMPLES, "scores_1.fasta"))
+    sp2 = read_scores(joinpath(EXAMPLES, "scores_2.fasta"))
+    # With default parameters (search_range=10, window_radius=10)
+    r1 = compare(sp1, sp2; metric=:co)
+    r2 = compare(sp1, sp2; metric=:co)
+    @test r1.score == r2.score
+    @test r1.offset == r2.offset
+    @test r1.n_sites == r2.n_sites
+    @test r1.orientation == r2.orientation
+end

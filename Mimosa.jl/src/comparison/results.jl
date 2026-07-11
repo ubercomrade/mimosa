@@ -3,16 +3,19 @@
 """
     ComparisonResult
 
-Immutable result of a motif comparison.
+Immutable result of a motif or profile comparison.
 
 Fields:
 - `query::String`: query model name.
 - `target::String`: target model name.
 - `score::Float32`: best alignment score (higher is better).
-- `offset::Int`: offset of the query relative to the target at the best
+- `offset::Int`: offset/shift of the query relative to the target at the best
   alignment. Positive means the query is shifted right.
 - `orientation::String`: one of `"++"`, `"+-"`, `"-+"`, `"--"`.
-- `metric::String`: canonical metric identifier (`pcc`, `ed`, `cosine`).
+- `metric::String`: canonical metric identifier (`pcc`, `ed`, `cosine`, `co`,
+  `co_rowwise`, `dice`, `dice_rowwise`, `cosine`).
+- `n_sites::Int`: number of site windows contributing to the score
+  (0 for motif comparison, >0 for profile comparison).
 """
 struct ComparisonResult
     query::String
@@ -21,6 +24,19 @@ struct ComparisonResult
     offset::Int
     orientation::String
     metric::String
+    n_sites::Int
+end
+
+# Convenience constructor for motif comparison (no n_sites)
+function ComparisonResult(
+    query::AbstractString,
+    target::AbstractString,
+    score,
+    offset::Int,
+    orientation::AbstractString,
+    metric::AbstractString,
+)
+    return ComparisonResult(query, target, score, offset, orientation, metric, 0)
 end
 
 """

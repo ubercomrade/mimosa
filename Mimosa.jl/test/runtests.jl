@@ -41,6 +41,7 @@ end
     include("unit/test_alignment.jl")
     include("unit/test_serialization.jl")
     include("unit/test_sequences.jl")
+    include("unit/test_profiles.jl")
 
     # Property tests
     include("properties/test_properties.jl")
@@ -48,6 +49,7 @@ end
     # Compatibility tests against frozen oracle fixtures
     include("compatibility/test_oracle_fixtures.jl")
     include("compatibility/test_scan_fixtures.jl")
+    include("compatibility/test_profile_fixtures.jl")
 
     # Integration tests (CLI path)
     include("integration/test_cli.jl")

@@ -1,8 +1,10 @@
-# Motif comparison: metrics, alignment, and results.
+# Motif comparison: metrics, alignment, results, and profile comparison.
 
 include("metrics.jl")
 include("alignment.jl")
+include("profile_metrics.jl")
 include("results.jl")
+include("profile_comparison.jl")
 
 export AbstractColumnMetric,
     PearsonCorrelation,
@@ -19,4 +21,13 @@ export AbstractColumnMetric,
     score_motif_candidates,
     select_best,
     prepare_motif,
-    compare
+    compare,
+    AbstractProfileMetric,
+    OverlapCoefficient,
+    OverlapCoefficientRowwise,
+    DiceSimilarity,
+    DiceSimilarityRowwise,
+    CosineSimilarityProfile,
+    parse_profile_metric,
+    ProfileConfig,
+    profile_compare

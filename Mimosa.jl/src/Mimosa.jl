@@ -14,13 +14,16 @@ module Mimosa
 include("errors.jl")
 include("models/models.jl")
 include("sequences/sequences.jl")
+include("models/score_profile.jl")
 include("scanning/scanning.jl")
 include("io/io.jl")
 include("comparison/comparison.jl")
+include("profiles/profiles.jl")
 include("serialization.jl")
 include("cli.jl")
 
-export readmodel, read_meme, read_pfm, read_fasta, compare, to_json, to_dict, main
+export readmodel,
+    read_meme, read_pfm, read_scores, read_fasta, compare, to_json, to_dict, main
 export MimosaError, ModelFormatError, ModelDimensionError, InvariantError
 
 # Sequence / scanning exports
@@ -46,5 +49,32 @@ export scan,
     scan_both!,
     npositions,
     scan_result_lengths
+
+# Model exports
+export ScoreProfile, scorebounds, profile_bundle
+
+# Profile comparison exports
+export AbstractProfileMetric,
+    OverlapCoefficient,
+    OverlapCoefficientRowwise,
+    DiceSimilarity,
+    DiceSimilarityRowwise,
+    CosineSimilarityProfile,
+    parse_profile_metric,
+    ProfileConfig,
+    profile_compare,
+    LogTailTable,
+    EmpiricalLogTail,
+    fit,
+    lookup_score,
+    transform_scores,
+    flatten_bundle,
+    normalize_bundle,
+    AnchorCSR,
+    build_anchor_csr,
+    collect_best_anchors,
+    collect_threshold_anchors,
+    collect_anchors,
+    score_shift
 
 end # module

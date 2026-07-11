@@ -10,7 +10,7 @@ the Python CLI JSON schema. Significance fields are omitted when not present
 (at Stage 1 they are always absent).
 """
 function to_dict(result::ComparisonResult)
-    return Dict{String,Any}(
+    d = Dict{String,Any}(
         "query" => result.query,
         "target" => result.target,
         "score" => Float64(result.score),
@@ -18,6 +18,10 @@ function to_dict(result::ComparisonResult)
         "orientation" => result.orientation,
         "metric" => result.metric,
     )
+    if result.n_sites > 0
+        d["n_sites"] = result.n_sites
+    end
+    return d
 end
 
 # Minimal JSON value escaping for strings and numbers, producing output
