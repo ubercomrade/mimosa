@@ -10,11 +10,13 @@ Convert a Position Count Matrix to a Position Frequency Matrix.
 
 `pcm` axes: `(base, position)` with `base ∈ 1:4`.
 """
-function pcm_to_pfm(pcm::AbstractMatrix{T}; pseudocount::AbstractFloat=0.25f0) where {T<:AbstractFloat}
+function pcm_to_pfm(
+    pcm::AbstractMatrix{T}; pseudocount::AbstractFloat=0.25f0
+) where {T<:AbstractFloat}
     if size(pcm, 1) != NUCLEOTIDE_CARDINALITY
         throw(ModelDimensionError("PCM must have 4 rows, got $(size(pcm, 1))."))
     end
-    n_sites = vec(sum(pcm; dims=1))
+    n_sites = sum(pcm; dims=1)
     pc = T(pseudocount)
     denom = n_sites .+ T(4) * pc
     return (pcm .+ pc) ./ denom
@@ -28,7 +30,9 @@ Convert a Position Frequency Matrix to a log-odds Position Weight Matrix.
 The result has 4 rows (base × position), matching the Python `pfm_to_pwm`
 which computes `log((pfm + 0.0001) / 0.25)`.
 """
-function pfm_to_pwm(pfm::AbstractMatrix{T}; background::AbstractFloat=0.25f0) where {T<:AbstractFloat}
+function pfm_to_pwm(
+    pfm::AbstractMatrix{T}; background::AbstractFloat=0.25f0
+) where {T<:AbstractFloat}
     if size(pfm, 1) != NUCLEOTIDE_CARDINALITY
         throw(ModelDimensionError("PFM must have 4 rows, got $(size(pfm, 1))."))
     end
@@ -45,7 +49,11 @@ per-column minimum, matching Python's `pwm_model_from_pfm`.
 """
 function extend_pwm_with_n(weights4::AbstractMatrix{T}) where {T<:AbstractFloat}
     if size(weights4, 1) != NUCLEOTIDE_CARDINALITY
-        throw(ModelDimensionError("PWM weights must have 4 rows to extend, got $(size(weights4, 1))."))
+        throw(
+            ModelDimensionError(
+                "PWM weights must have 4 rows to extend, got $(size(weights4, 1))."
+            ),
+        )
     end
     n_row = vec(minimum(weights4; dims=1))
     return vcat(weights4, reshape(n_row, 1, :))
@@ -59,15 +67,19 @@ Build a ready-to-scan [`PWM`](@ref) from a [`PFM`](@ref) or raw frequency matrix
 This mirrors Python's `pwm_model_from_pfm`: `pfm_to_pwm` then extend with the
 per-column minimum as the N-state row.
 """
-function pwm_from_pfm(pfm::AbstractMatrix{T}; background::AbstractFloat=0.25f0, name::AbstractString="") where {T<:AbstractFloat}
+function pwm_from_pfm(
+    pfm::AbstractMatrix{T}; background::AbstractFloat=0.25f0, name::AbstractString=""
+) where {T<:AbstractFloat}
     pwm4 = pfm_to_pwm(pfm; background=background)
     weights = extend_pwm_with_n(pwm4)
     bg = ntuple(_ -> T(background), 4)
     return PWM(name, weights, bg)
 end
 
-function pwm_from_pfm(model::PFM; background::AbstractFloat=0.25f0)
-    return pwm_from_pfm(model.frequencies; background=background, name=model.name)
+function pwm_from_pfm(
+    model::PFM; background::AbstractFloat=0.25f0, name::AbstractString=model.name
+)
+    return pwm_from_pfm(model.frequencies; background=background, name=name)
 end
 
 """
@@ -80,12 +92,18 @@ reverses the position columns, matching Python's `pwm[::-1, ::-1]`.
 """
 function reverse_complement(weights::AbstractMatrix{T}) where {T<:AbstractFloat}
     if size(weights, 1) ∉ (NUCLEOTIDE_CARDINALITY, 5)
-        throw(ModelDimensionError("reverse_complement expects 4 or 5 rows, got $(size(weights, 1))."))
+        throw(
+            ModelDimensionError(
+                "reverse_complement expects 4 or 5 rows, got $(size(weights, 1))."
+            ),
+        )
     end
     return reverse(reverse(weights; dims=1); dims=2)
 end
 
-reverse_complement(model::PWM) = PWM(model.name, reverse_complement(model.weights), model.background)
+function reverse_complement(model::PWM)
+    return PWM(model.name, reverse_complement(model.weights), model.background)
+end
 reverse_complement(model::PFM) = PFM(model.name, reverse_complement(model.frequencies))
 
 """

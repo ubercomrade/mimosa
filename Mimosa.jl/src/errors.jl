@@ -37,13 +37,13 @@ struct InvariantError <: MimosaError
 end
 
 function Base.showerror(io::IO, e::ModelFormatError)
-    print(io, "ModelFormatError: $(e.path): $(e.message)")
+    return print(io, "ModelFormatError: $(e.path): $(e.message)")
 end
 
 function Base.showerror(io::IO, e::ModelDimensionError)
-    print(io, "ModelDimensionError: $(e.message)")
+    return print(io, "ModelDimensionError: $(e.message)")
 end
 
 function Base.showerror(io::IO, e::InvariantError)
-    print(io, "InvariantError: $(e.message)")
+    return print(io, "InvariantError: $(e.message)")
 end

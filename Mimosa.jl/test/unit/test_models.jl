@@ -18,9 +18,11 @@ const EXAMPLES = joinpath(dirname(dirname(@__DIR__)), "..", "examples")
 end
 
 @testset "PWM weights validation" begin
-    bad = Float32[1 2; 3 4; 5 6; 7 8; 9 10]
+    # 6 rows — wrong nucleotide axis
+    bad = Float32[1 2; 3 4; 5 6; 7 8; 9 10; 11 12]
     @test_throws Mimosa.ModelDimensionError PWM("x", bad, (0.25f0, 0.25f0, 0.25f0, 0.25f0))
 
+    # 4 rows — missing N row
     four = Float32[1 2; 3 4; 5 6; 7 8]
     @test_throws Mimosa.ModelDimensionError PWM("x", four, (0.25f0, 0.25f0, 0.25f0, 0.25f0))
 end
@@ -30,8 +32,8 @@ end
     pwm = pfm_to_pwm(pfm)
     @test size(pwm) == (4, 2)
     # log((1 + 1e-4) / 0.25) at [1,1]=0 and [4,2]=0; log((0 + 1e-4)/0.25) elsewhere
-    @test pwm[1, 1] ≈ log((0.0f0 + 1e-4f0) / 0.25f0)
-    @test pwm[4, 1] ≈ log((1.0f0 + 1e-4f0) / 0.25f0)
+    @test pwm[1, 1] ≈ log((0.0f0 + Float32(1e-4)) / 0.25f0)
+    @test pwm[4, 1] ≈ log((1.0f0 + Float32(1e-4)) / 0.25f0)
 
     pcm = Float32[10 0; 0 0; 0 0; 0 10]
     pfm2 = pcm_to_pfm(pcm)

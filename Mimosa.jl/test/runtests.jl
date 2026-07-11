@@ -5,7 +5,13 @@ using JSON3
 # Aqua quality checks (optional, skip if Aqua not installed).
 try
     using Aqua
-    Aqua.test_all(Mimosa; ambiguities=false, unbound_args=false, stale_deps=false, project_extras=false)
+    Aqua.test_all(
+        Mimosa;
+        ambiguities=false,
+        unbound_args=false,
+        stale_deps=false,
+        project_extras=false,
+    )
 catch
     @info "Aqua not available, skipping quality checks."
 end

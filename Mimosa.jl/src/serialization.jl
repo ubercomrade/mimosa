@@ -23,11 +23,7 @@ end
 # Minimal JSON value escaping for strings and numbers, producing output
 # identical to Python's json.dumps with sort_keys and indent=2.
 const _json_escape_chars = Dict(
-    '"' => "\\\"",
-    '\\' => "\\\\",
-    '\n' => "\\n",
-    '\r' => "\\r",
-    '\t' => "\\t",
+    '"' => "\\\"", '\\' => "\\\\", '\n' => "\\n", '\r' => "\\r", '\t' => "\\t"
 )
 
 function _json_string(s::AbstractString)

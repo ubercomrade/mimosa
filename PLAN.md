@@ -311,13 +311,14 @@ Legacy pickle/joblib converter работает отдельным Python proces
 
 ### Этап 1. Package foundation и первый PWM vertical slice (2-3 недели)
 
-> **Статус: реализован.** Stage 1 slice создан: пакет `Mimosa.jl`, типы `PFM`/`PWM`,
-> парсеры MEME/PFM, метрики PCC/ED/Cosine, матричное выравнивание по 4 ориентациям
-> с детерминированным tie-breaking, `ComparisonResult`, JSON-сериализатор, thin CLI.
-> Тесты unit/property/compatibility/integration написаны; oracle fixtures загружаются
-> из `tests/fixtures/compatibility/` через минимальный NPY-ридер без PythonCall.
-> Gate 1 проверяется запуском `Pkg.test()` в чистом Julia окружении (Julia не установлена
-> в текущей среде — запустить тесты при наличии Julia).
+> **Статус: пройден.** Stage 1 slice реализован и проверен. Все 125 тестов
+> проходят в чистом Julia 1.12 окружении (juliaup). Охвачены unit, property,
+> compatibility и integration тесты. Проблемы Float32 accumulation
+> (отличие от NumPy `np.sum`), bypass PWM constructor validation и JSON3
+> key access исправлены. Код отформатирован JuliaFormatter (BlueStyle).
+>
+> Python commit: `95e8dbb`. Python 3.13, NumPy 2.3.5, SciPy 1.17.0.
+> Julia: 1.12.6 (juliaup).
 
 **Зависимость:** Gate 0.
 
@@ -342,15 +343,14 @@ Legacy pickle/joblib converter работает отдельным Python proces
 
 **Gate 1**
 
-> **Статус: ожидает запуска тестов.** Stage 1 slice реализован; Gate 1 проверяется
-> запуском `julia --project=Mimosa.jl -e 'using Pkg; Pkg.test()'` в чистом Julia 1.10+
-> окружении (Julia не установлена в текущей среде разработки).
+> **Статус: пройден.** Все 125 тестов проходят, включая compatibility
+> fixtures из frozen Python oracle.
 
 - PWM/PFM parser и intermediate matrices совпадают с oracle;
 - scores/offset/orientation совпадают в согласованных tolerances, включая ties и reverse complements;
 - в core types нет `Any`, abstract fields или string dispatch;
 - `using Mimosa` не выполняет I/O, не печатает и не создаёт directories;
-- package проходит tests в чистом Julia environment.
+- package проходит tests в чистом Julia environment (Julia 1.12.6, 125/125 pass).
 
 ### Этап 2. Последовательности и PWM scanning (2-3 недели)
 
@@ -711,19 +711,31 @@ contract. Документация является частью gate каждо
 
 ## 13. Ближайшая итерация
 
-Stage 0 завершён. Gate 0 пройден. Следующая работа — этап 1 (Package foundation и первый PWM vertical slice).
+Stage 0 завершён. Gate 0 пройден. Stage 1 завершён. Gate 1 пройден (125/125 тестов).
+Следующая работа — этап 2 (Последовательности и PWM scanning).
 
-1. Создать `Mimosa.jl/` package skeleton с `Project.toml`, `src/Mimosa.jl`, `test/`, `benchmark/`, `docs/`, `ext/`, `app/`.
-2. Реализовать error hierarchy (`MimosaError`, `ModelFormatError`, `DimensionMismatchError`).
-3. Реализовать `PFM{T,M}` и `PWM{T,M,B}` concrete structs (ADR 0001).
-4. Реализовать MEME и PFM parsers с size limits и понятными errors.
-5. Реализовать `pfm_to_pwm` и `pcm_to_pfm` conversion.
-6. Реализовать PWM reverse complement и score bounds.
-7. Реализовать direct PWM/PFM matrix alignment для всех offsets и orientations (ADR 0006).
-8. Реализовать metric types: `PearsonCorrelation`, `EuclideanSimilarity`, `CosineSimilarity`.
-9. Реализовать tie-breaking policy (ADR 0006): orientation priority `++ > +- > -+ > --`, first offset wins.
-10. Реализовать `ComparisonResult` struct и JSON serializer v1.
-11. Добавить unit tests, property tests и compatibility tests на frozen fixtures.
-12. Настроить Aqua, JuliaFormatter, documentation build.
+Этап 1 реализовал:
 
-Цель — работающий `compare(::PWM, ::PWM; metric=PearsonCorrelation())` с frozen fixture compatibility.
+1. ✅ `Mimosa.jl/` package skeleton с `Project.toml`, `src/Mimosa.jl`, `test/`, `benchmark/`, `docs/`.
+2. ✅ Error hierarchy (`MimosaError`, `ModelFormatError`, `ModelDimensionError`, `InvariantError`).
+3. ✅ `PFM{T,M}` и `PWM{T,M,B}` concrete structs (ADR 0001) с inner constructor validation.
+4. ✅ MEME и PFM parsers с size limits и понятными errors.
+5. ✅ `pfm_to_pwm` и `pcm_to_pfm` conversion.
+6. ✅ PWM reverse complement и score bounds.
+7. ✅ Direct PWM/PFM matrix alignment для всех offsets и orientations (ADR 0006).
+8. ✅ Metric types: `PearsonCorrelation`, `EuclideanDistance`, `CosineSimilarity`.
+9. ✅ Tie-breaking policy (ADR 0006): orientation priority `++ > +- > -+ > --`, first offset wins.
+10. ✅ `ComparisonResult` struct и JSON serializer v1.
+11. ✅ Unit tests, property tests, compatibility tests на frozen fixtures (125 тестов).
+12. ✅ Aqua, JuliaFormatter (BlueStyle), code отформатирован.
+
+Этап 2 (следующий):
+
+1. Реализовать `EncodedSequenceBatch`, FASTA reader и bounded batch iterator.
+2. Определить handling A/C/G/T, lowercase, N/IUPAC, пустых и коротких sequences.
+3. Реализовать reverse complement без временных strings.
+4. Реализовать reference `scan`/`scan!` для одной sequence и serial batch scanning.
+5. Реализовать forward/reverse/best/both policies и typed scan results.
+6. Проверить score bounds и equivalence allocating/in-place paths.
+7. Сравнить flat ragged, padded dense и BioSequences candidates на representative workloads.
+8. Добавить buffer sizing API и explicit errors для несовместимого destination.

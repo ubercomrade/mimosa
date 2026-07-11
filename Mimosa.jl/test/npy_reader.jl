@@ -49,7 +49,8 @@ function _parse_header(s::AbstractString)
     end
     dtype = _parse_dtype(fields["descr"])
     shape = _parse_shape(fields["shape"])
-    fortran_order = haskey(fields, "fortran_order") ? strip(fields["fortran_order"]) == "True" : false
+    fortran_order =
+        haskey(fields, "fortran_order") ? strip(fields["fortran_order"]) == "True" : false
     n_elements = prod(shape; init=1)
     n_bytes = n_elements * _dtype_size(dtype)
     return NPYHeader(dtype, shape, fortran_order, n_bytes)
@@ -95,6 +96,17 @@ function _parse_dtype(descr::AbstractString)
     return s
 end
 
+function _parse_shape(shape_str::AbstractString)
+    s = strip(shape_str)
+    if startswith(s, "(") && endswith(s, ")")
+        s = s[2:(end - 1)]
+    end
+    s = strip(s)
+    isempty(s) && return Int[]
+    parts = split(s, ',')
+    return [parse(Int, strip(p)) for p in parts]
+end
+
 function _dtype_size(dtype::AbstractString)
     endswith(dtype, "i1") && return 1
     endswith(dtype, "b1") && return 1
@@ -104,7 +116,7 @@ function _dtype_size(dtype::AbstractString)
     endswith(dtype, "f4") && return 4
     endswith(dtype, "i8") && return 8
     endswith(dtype, "f8") && return 8
-    error("unsupported dtype: $dtype")
+    return error("unsupported dtype: $dtype")
 end
 
 function _julia_type(dtype::AbstractString)
@@ -116,7 +128,7 @@ function _julia_type(dtype::AbstractString)
     endswith(dtype, "f4") && return Float32
     endswith(dtype, "i8") && return Int64
     endswith(dtype, "f8") && return Float64
-    error("unsupported dtype: $dtype")
+    return error("unsupported dtype: $dtype")
 end
 
 function read_npy(path::AbstractString)
@@ -127,7 +139,9 @@ function read_npy(path::AbstractString)
         n = div(header.n_bytes, _dtype_size(header.dtype))
         data = Vector{T}(undef, n)
         for i in 1:n
-            bytes = raw[(i - 1) * _dtype_size(header.dtype) + 1:i * _dtype_size(header.dtype)]
+            bytes = raw[((i - 1) * _dtype_size(header.dtype) + 1):(i * _dtype_size(
+                header.dtype
+            ))]
             data[i] = _read_le(T, bytes)
         end
         if length(header.shape) == 0

@@ -15,9 +15,10 @@ the Python API; internally converted to one-based).
 function read_meme(path::AbstractString; index::Integer=0)
     isfile(path) || throw(ModelFormatError(path, "file not found."))
     idx = Int(index)
-    idx < 0 && throw(ModelFormatError(path, "motif index must be non-negative, got $index."))
+    idx < 0 &&
+        throw(ModelFormatError(path, "motif index must be non-negative, got $index."))
     return open(path, "r") do io
-        _read_meme_io(io, path, idx)
+        return _read_meme_io(io, path, idx)
     end
 end
 
@@ -40,9 +41,14 @@ function _read_meme_io(io::IO, path::AbstractString, target_index::Int)
                 pfm = _orient_meme_matrix(matrix, motif_length)
                 return PFM(name, pfm)
             else
-                motif_length <= 0 && throw(ModelFormatError(path, "motif $(name) has invalid length."))
+                motif_length <= 0 &&
+                    throw(ModelFormatError(path, "motif $(name) has invalid length."))
                 for _ in 1:motif_length
-                    eof(io) && throw(ModelFormatError(path, "motif $(name) has fewer rows than declared length."))
+                    eof(io) && throw(
+                        ModelFormatError(
+                            path, "motif $(name) has fewer rows than declared length."
+                        ),
+                    )
                     readline(io)
                 end
             end
@@ -51,40 +57,68 @@ function _read_meme_io(io::IO, path::AbstractString, target_index::Int)
     if motif_count == 0
         throw(ModelFormatError(path, "no motifs found."))
     end
-    throw(ModelFormatError(path, "motif index $(target_index) out of range. File contains $(motif_count) motifs."))
+    return throw(
+        ModelFormatError(
+            path,
+            "motif index $(target_index) out of range. File contains $(motif_count) motifs.",
+        ),
+    )
 end
 
-function _meme_length_from_header(header_line::AbstractString, path::AbstractString, name::AbstractString)
+function _meme_length_from_header(
+    header_line::AbstractString, path::AbstractString, name::AbstractString
+)
     header = split(strip(header_line))
     idx = findfirst(==("w="), header)
     if idx === nothing || idx >= length(header)
-        throw(ModelFormatError(path, "motif $(name) header has no valid 'w=' length field."))
+        throw(
+            ModelFormatError(path, "motif $(name) header has no valid 'w=' length field.")
+        )
     end
     motif_length = tryparse(Int, header[idx + 1])
     if motif_length === nothing
-        throw(ModelFormatError(path, "motif $(name) length is not an integer: $(header[idx + 1])."))
+        throw(
+            ModelFormatError(
+                path, "motif $(name) length is not an integer: $(header[idx + 1])."
+            ),
+        )
     end
     return motif_length
 end
 
-function _read_meme_matrix_rows(io::IO, path::AbstractString, name::AbstractString, nrows::Int)
+function _read_meme_matrix_rows(
+    io::IO, path::AbstractString, name::AbstractString, nrows::Int
+)
     nrows <= 0 && throw(ModelFormatError(path, "motif $(name) has invalid length."))
-    nrows > MAX_MEME_MOTIF_LENGTH && throw(ModelFormatError(path, "motif $(name) length $nrows exceeds limit $MAX_MEME_MOTIF_LENGTH."))
+    nrows > MAX_MEME_MOTIF_LENGTH && throw(
+        ModelFormatError(
+            path, "motif $(name) length $nrows exceeds limit $MAX_MEME_MOTIF_LENGTH."
+        ),
+    )
     rows = Vector{Vector{Float32}}(undef, nrows)
     for i in 1:nrows
-        eof(io) && throw(ModelFormatError(path, "motif $(name) has fewer rows than declared length."))
+        eof(io) && throw(
+            ModelFormatError(path, "motif $(name) has fewer rows than declared length.")
+        )
         line = readline(io)
         if length(line) > MAX_LINE_LENGTH
             throw(ModelFormatError(path, "motif $(name) row exceeds line length limit."))
         end
         parts = split(strip(line))
         if length(parts) != NUCLEOTIDE_CARDINALITY
-            throw(ModelFormatError(path, "motif $(name) row $i has $(length(parts)) columns, expected $NUCLEOTIDE_CARDINALITY."))
+            throw(
+                ModelFormatError(
+                    path,
+                    "motif $(name) row $i has $(length(parts)) columns, expected $NUCLEOTIDE_CARDINALITY.",
+                ),
+            )
         end
         row = Vector{Float32}(undef, NUCLEOTIDE_CARDINALITY)
         for (j, p) in enumerate(parts)
             v = tryparse(Float32, p)
-            v === nothing && throw(ModelFormatError(path, "motif $(name) row $i has non-numeric value: $(p)."))
+            v === nothing && throw(
+                ModelFormatError(path, "motif $(name) row $i has non-numeric value: $(p)."),
+            )
             row[j] = v
         end
         rows[i] = row
@@ -92,13 +126,19 @@ function _read_meme_matrix_rows(io::IO, path::AbstractString, name::AbstractStri
     return rows
 end
 
-function _validate_meme_matrix(rows::Vector{Vector{Float32}}, path::AbstractString, name::AbstractString, nrows::Int)
+function _validate_meme_matrix(
+    rows::Vector{Vector{Float32}}, path::AbstractString, name::AbstractString, nrows::Int
+)
     for (i, row) in enumerate(rows)
         if !all(isfinite, row)
-            throw(ModelFormatError(path, "motif $(name) contains non-finite values in row $i."))
+            throw(
+                ModelFormatError(
+                    path, "motif $(name) contains non-finite values in row $i."
+                ),
+            )
         end
     end
-    nothing
+    return nothing
 end
 
 # MEME stores `position × base`; transpose to `(base, position)` PFM.
@@ -126,7 +166,8 @@ function read_pfm(path::AbstractString)
     open(path, "r") do io
         while !eof(io)
             line = readline(io)
-            length(line) > MAX_LINE_LENGTH && throw(ModelFormatError(path, "line exceeds length limit."))
+            length(line) > MAX_LINE_LENGTH &&
+                throw(ModelFormatError(path, "line exceeds length limit."))
             stripped = strip(line)
             isempty(stripped) && continue
             startswith(stripped, ">") && continue
@@ -142,7 +183,8 @@ function read_pfm(path::AbstractString)
     end
     isempty(rows) && throw(ModelFormatError(path, "PFM file is empty."))
     ncols = length(rows[1])
-    all(r -> length(r) == ncols, rows) || throw(ModelFormatError(path, "PFM rows have inconsistent column counts."))
+    all(r -> length(r) == ncols, rows) ||
+        throw(ModelFormatError(path, "PFM rows have inconsistent column counts."))
     n_rows = length(rows)
     raw = Matrix{Float32}(undef, n_rows, ncols)
     for (i, row) in enumerate(rows)
@@ -150,8 +192,11 @@ function read_pfm(path::AbstractString)
             raw[i, j] = row[j]
         end
     end
-    n_rows > MAX_PFM_LENGTH && throw(ModelFormatError(path, "PFM dimension $n_rows exceeds limit $MAX_PFM_LENGTH."))
-    ncols > MAX_PFM_LENGTH && throw(ModelFormatError(path, "PFM dimension $ncols exceeds limit $MAX_PFM_LENGTH."))
+    n_rows > MAX_PFM_LENGTH && throw(
+        ModelFormatError(path, "PFM dimension $n_rows exceeds limit $MAX_PFM_LENGTH.")
+    )
+    ncols > MAX_PFM_LENGTH &&
+        throw(ModelFormatError(path, "PFM dimension $ncols exceeds limit $MAX_PFM_LENGTH."))
     if ncols in (NUCLEOTIDE_CARDINALITY, 5)
         pfm = Matrix(transpose(raw))
     elseif n_rows in (NUCLEOTIDE_CARDINALITY, 5)
@@ -185,7 +230,13 @@ Read a motif model from `path`. Currently supports MEME (`.meme`) and PFM
 (`.pfm`) files producing [`PWM`](@ref) via PFM conversion with the default
 background of 0.25.
 """
-function readmodel(path::AbstractString; format::Symbol=:auto, index::Integer=0, background::AbstractFloat=0.25f0, kwargs...)
+function readmodel(
+    path::AbstractString;
+    format::Symbol=:auto,
+    index::Integer=0,
+    background::AbstractFloat=0.25f0,
+    kwargs...,
+)
     fmt = format === :auto ? _detect_format(path) : format
     if fmt === :meme
         pfm = read_meme(path; index=index)

@@ -4,16 +4,8 @@ authors = ["Mimosa contributors"]
 version = "0.1.0"
 
 [deps]
-Printf = "de0878c8-c7e2-4e37-9d99-3c29cbc99c6e"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 
 [compat]
-JSON3 = "1"
 julia = "1.10"
-
-[extras]
-Aqua = "4c88cf16-ebf9-4aef-93af-23735c2b8a72"
-JSON3 = "0f8b85d8-7281-11e9-16a2-39a1bdd69121"
-Test = "8dfed614-e22c-5e08-85e1-d7282d6c477d"
-
-[targets]
-test = ["Aqua", "JSON3", "Test"]
+Printf = "1.11.0"

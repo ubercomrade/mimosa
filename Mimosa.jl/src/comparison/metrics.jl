@@ -26,7 +26,8 @@ Higher is better. Zero-norm columns contribute 0.
 """
 struct CosineSimilarity <: AbstractColumnMetric end
 
-const SIMILARITY_EPS = Float32(1e-9)
+const SIMILARITY_EPS_F32 = Float32(1e-9)
+const SIMILARITY_EPS_F64 = Float64(1e-9)
 
 """
     metric_name(::AbstractColumnMetric)
@@ -47,14 +48,22 @@ function parse_metric(name::AbstractString)
     name == "pcc" && return PearsonCorrelation()
     name == "ed" && return EuclideanDistance()
     name == "cosine" && return CosineSimilarity()
-    throw(ArgumentError("metric must be one of: 'pcc', 'ed', 'cosine', got '$name'."))
+    return throw(
+        ArgumentError("metric must be one of: 'pcc', 'ed', 'cosine', got '$name'.")
+    )
 end
 
 # Column-wise Pearson correlation of two `(base, overlap)` matrices.
+#
+# Per-column PCC is computed in Float32 (matching Python's `_vectorized_pcc`),
+# then clamped to [-1, 1] since PCC is mathematically bounded and values like
+# 1.0000001 are Float32 artifacts from `sqrt(x)*sqrt(x) != x`. The sum across
+# columns uses Float64 accumulation to match NumPy's `np.sum` for float32
+# arrays. The final result is T(Float32(Float64_sum)) / T(overlap).
 function _column_pcc(x1::AbstractMatrix{T}, x2::AbstractMatrix{T}) where {T<:AbstractFloat}
     base_count = size(x1, 1)
     overlap = size(x1, 2)
-    total = zero(T)
+    total = zero(Float64)
     for col in 1:overlap
         mean1 = zero(T)
         mean2 = zero(T)
@@ -75,16 +84,28 @@ function _column_pcc(x1::AbstractMatrix{T}, x2::AbstractMatrix{T}) where {T<:Abs
             d2 += c2 * c2
         end
         denom = sqrt(d1) * sqrt(d2)
-        total += denom > SIMILARITY_EPS ? num / denom : zero(T)
+        if denom > SIMILARITY_EPS_F32
+            pcc_val = num / denom
+            # Clamp to [-1, 1]: PCC is mathematically bounded, and Float32
+            # sqrt(x)*sqrt(x) can give values like 1.0000001.
+            pcc_val = clamp(pcc_val, T(-1), T(1))
+        else
+            pcc_val = zero(T)
+        end
+        total += Float64(pcc_val)
     end
-    return total / T(overlap)
+    return T(Float32(total)) / T(overlap)
 end
 
 # Column-wise cosine similarity.
-function _column_cosine(x1::AbstractMatrix{T}, x2::AbstractMatrix{T}) where {T<:AbstractFloat}
+# Per-column cosine is computed in Float32 (matching Python's
+# `_vectorized_cosine`), summed with Float64 accumulation.
+function _column_cosine(
+    x1::AbstractMatrix{T}, x2::AbstractMatrix{T}
+) where {T<:AbstractFloat}
     base_count = size(x1, 1)
     overlap = size(x1, 2)
-    total = zero(T)
+    total = zero(Float64)
     for col in 1:overlap
         num = zero(T)
         n1 = zero(T)
@@ -95,25 +116,36 @@ function _column_cosine(x1::AbstractMatrix{T}, x2::AbstractMatrix{T}) where {T<:
             n2 += x2[b, col] * x2[b, col]
         end
         denom = sqrt(n1) * sqrt(n2)
-        total += denom > SIMILARITY_EPS ? num / denom : zero(T)
+        if denom > SIMILARITY_EPS_F32
+            cos_val = num / denom
+            # Clamp to [-1, 1]: cosine similarity is mathematically bounded.
+            cos_val = clamp(cos_val, T(-1), T(1))
+        else
+            cos_val = zero(T)
+        end
+        total += Float64(cos_val)
     end
-    return total / T(overlap)
+    return T(Float32(total)) / T(overlap)
 end
 
 # Column-wise Euclidean similarity = -mean distance.
-function _column_euclidean(x1::AbstractMatrix{T}, x2::AbstractMatrix{T}) where {T<:AbstractFloat}
+# Per-column distance is computed in Float32, summed with Float64 accumulation.
+function _column_euclidean(
+    x1::AbstractMatrix{T}, x2::AbstractMatrix{T}
+) where {T<:AbstractFloat}
     base_count = size(x1, 1)
     overlap = size(x1, 2)
-    total = zero(T)
+    total = zero(Float64)
     for col in 1:overlap
         dist_sq = zero(T)
         for b in 1:base_count
             d = x1[b, col] - x2[b, col]
             dist_sq += d * d
         end
-        total -= sqrt(dist_sq)
+        dist_val = sqrt(dist_sq)
+        total -= Float64(dist_val)
     end
-    return total / T(overlap)
+    return T(Float32(total)) / T(overlap)
 end
 
 """
@@ -122,12 +154,18 @@ end
 Score one aligned column block using the given metric. Returns the aggregated
 similarity (higher is better) matching Python's `_score_motif_columns`.
 """
-function score_columns(metric::AbstractColumnMetric, query::AbstractMatrix{T}, target::AbstractMatrix{T}) where {T<:AbstractFloat}
+function score_columns(
+    metric::AbstractColumnMetric, query::AbstractMatrix{T}, target::AbstractMatrix{T}
+) where {T<:AbstractFloat}
     if size(query) != size(target)
-        throw(ModelDimensionError("column block shape mismatch: $(size(query)) vs $(size(target))."))
+        throw(
+            ModelDimensionError(
+                "column block shape mismatch: $(size(query)) vs $(size(target))."
+            ),
+        )
     end
     metric isa PearsonCorrelation && return _column_pcc(query, target)
     metric isa CosineSimilarity && return _column_cosine(query, target)
     metric isa EuclideanDistance && return _column_euclidean(query, target)
-    throw(ArgumentError("unsupported metric: $(metric)."))
+    return throw(ArgumentError("unsupported metric: $(metric)."))
 end

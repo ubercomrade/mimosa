@@ -30,20 +30,35 @@ Compare two [`PWM`](@ref) models by direct matrix alignment across all offsets
 and four orientations, returning the best [`ComparisonResult`](@ref) with
 deterministic tie-breaking per ADR 0006.
 """
-function compare(query::PWM, target::PWM; metric::Union{AbstractString,Symbol,AbstractColumnMetric}=:pcc)
+function compare(
+    query::PWM, target::PWM; metric::Union{AbstractString,Symbol,AbstractColumnMetric}=:pcc
+)
     m = _resolve_metric(metric)
     q_fwd, q_rev = prepare_motif(query.weights)
     t_fwd, t_rev = prepare_motif(target.weights)
     candidates = score_motif_candidates(q_fwd, q_rev, t_fwd, t_rev, m)
     best = select_best(candidates)
-    return ComparisonResult(query.name, target.name, best.score, best.offset, best.orientation, metric_name(m))
+    return ComparisonResult(
+        query.name,
+        target.name,
+        best.score,
+        best.offset,
+        best.orientation.label,
+        metric_name(m),
+    )
 end
 
 function compare(query::PWM, target::PFM; kwargs...)
-    throw(ArgumentError("PWM vs PFM direct comparison is not supported at Stage 1; convert PFM to PWM first."))
+    return throw(
+        ArgumentError(
+            "PWM vs PFM direct comparison is not supported at Stage 1; convert PFM to PWM first.",
+        ),
+    )
 end
 
-function compare(query::PFM, target::PFM; metric::Union{AbstractString,Symbol,AbstractColumnMetric}=:pcc)
+function compare(
+    query::PFM, target::PFM; metric::Union{AbstractString,Symbol,AbstractColumnMetric}=:pcc
+)
     m = _resolve_metric(metric)
     q_fwd = query.frequencies
     q_rev = reverse_complement(q_fwd)
@@ -51,7 +66,14 @@ function compare(query::PFM, target::PFM; metric::Union{AbstractString,Symbol,Ab
     t_rev = reverse_complement(t_fwd)
     candidates = score_motif_candidates(q_fwd, q_rev, t_fwd, t_rev, m)
     best = select_best(candidates)
-    return ComparisonResult(query.name, target.name, best.score, best.offset, best.orientation, metric_name(m))
+    return ComparisonResult(
+        query.name,
+        target.name,
+        best.score,
+        best.offset,
+        best.orientation.label,
+        metric_name(m),
+    )
 end
 
 function _resolve_metric(metric)

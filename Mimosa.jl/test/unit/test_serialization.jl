@@ -4,7 +4,8 @@ using Mimosa
 @testset "to_dict produces expected keys" begin
     result = ComparisonResult("q", "t", 1.0f0, 0, "++", "pcc")
     d = Mimosa.to_dict(result)
-    @test Set(keys(d)) == Set(["query", "target", "score", "offset", "orientation", "metric"])
+    @test Set(keys(d)) ==
+        Set(["query", "target", "score", "offset", "orientation", "metric"])
     @test d["score"] == 1.0
     @test d["offset"] == 0
 end

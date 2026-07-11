@@ -31,7 +31,10 @@ end
 end
 
 @testset "MEME multi-motif index selection" begin
-    pfm0 = read_meme(joinpath(TEST_FIXTURES, "models", "pwm", "PEAKS036274_FOXA1_P35582_MACS2.meme"); index=0)
+    pfm0 = read_meme(
+        joinpath(TEST_FIXTURES, "models", "pwm", "PEAKS036274_FOXA1_P35582_MACS2.meme");
+        index=0,
+    )
     @test size(pfm0.frequencies) == (4, 13)
 end
 
@@ -55,7 +58,9 @@ end
     end
     @test_throws Mimosa.ModelFormatError read_meme(tmp2)
 
-    @test_throws Mimosa.ModelFormatError read_meme(joinpath(EXAMPLES, "pif4.meme"); index=99)
+    @test_throws Mimosa.ModelFormatError read_meme(
+        joinpath(EXAMPLES, "pif4.meme"); index=99
+    )
     @test_throws Mimosa.ModelFormatError read_meme("/nonexistent/path.meme")
 end
 
