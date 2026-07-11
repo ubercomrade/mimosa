@@ -244,8 +244,11 @@ function readmodel(
     elseif fmt === :pfm
         pfm = read_pfm(path)
         return pwm_from_pfm(pfm; background=background)
+    elseif fmt === :bamm
+        order_val = get(kwargs, :order, nothing)
+        return read_bamm(path; order=order_val)
     else
-        throw(ModelFormatError(path, "unsupported PWM format: $(fmt)."))
+        throw(ModelFormatError(path, "unsupported format: $(fmt)."))
     end
 end
 
@@ -253,5 +256,6 @@ function _detect_format(path::AbstractString)
     lower = lowercase(path)
     endswith(lower, ".meme") && return :meme
     endswith(lower, ".pfm") && return :pfm
+    endswith(lower, ".ihbcp") && return :bamm
     return :unknown
 end

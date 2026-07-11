@@ -24,7 +24,7 @@ include("serialization.jl")
 include("cli.jl")
 
 export readmodel,
-    read_meme, read_pfm, read_scores, read_fasta, compare, to_json, to_dict, main
+    read_meme, read_pfm, read_scores, read_bamm, read_fasta, compare, to_json, to_dict, main
 export MimosaError, ModelFormatError, ModelDimensionError, InvariantError
 
 # Sequence / scanning exports
@@ -49,10 +49,11 @@ export scan,
     scan_best!,
     scan_both!,
     npositions,
+    npositions_bamm,
     scan_result_lengths
 
 # Model exports
-export ScoreProfile, scorebounds, profile_bundle
+export ScoreProfile, BaMM, scorebounds, profile_bundle
 
 # Sites and PFM reconstruction exports
 export SiteSelector,

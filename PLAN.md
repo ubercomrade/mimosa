@@ -763,7 +763,8 @@ Stage 0 завершён. Gate 0 пройден. Stage 1 завершён. Gate 
 Stage 2 завершён. Gate 2 пройден (146 475/146 475 тестов).
 Stage 3 завершён (основной slice). Gate 3 пройден (186 083/186 083 тестов).
 Stage 4 завершён. Gate 4 пройден (186 673/186 673 тестов).
-Следующая работа — этап 5 (Дополнительные model families).
+Stage 5a (BaMM) завершён. 186 985/186 985 тестов проходят.
+Следующая работа — этап 5b (SiteGA).
 
 Этап 1 реализовал:
 
@@ -857,11 +858,38 @@ Stage 4 завершён. Gate 4 пройден (186 673/186 673 тестов).
 17. ☐ DataFrames table conversion — отложено (не требуется на текущем этапе).
 18. ☐ Heterogeneous motif comparison через reconstructed PFM — отложено до Stage 5.
 
-Этап 5 (следующий):
+Этап 5a (BaMM) реализовал:
 
-1. Описать исходный format и mathematical representation для BaMM.
-2. Добавить concrete immutable type для BaMM без catch-all config dictionary.
-3. Реализовать strict parser, constructor invariants и `.ihbcp` reader.
+1. ✅ Описан исходный format `.ihbcp` и mathematical representation для BaMM.
+2. ✅ `BaMM{T,M}` — concrete immutable struct с representation matrix `(5^(order+1), motif_length)`,
+   order и motif_length, без catch-all config dictionary.
+3. ✅ Strict `.ihbcp` parser с size limits, comment handling, consistency validation и понятными errors.
+4. ✅ Constructor invariants: row count validation, non-finite check, non-negative order.
+5. ✅ `scorebounds(::BaMM)` — per-column min/max summed across positions, совпадает с oracle.
+6. ✅ Forward/reverse/best/both scanning kernels для BaMM с context-aware scoring
+   (kmer = order + 1, context = order, window = motif_len + order).
+7. ✅ `scan(::BaMM, seq; strands=...)` и `scan(::BaMM, batch; strands=...)` через multiple dispatch.
+8. ✅ `scan!(dest, ::BaMM, seq; strands=...)` — in-place API.
+9. ✅ `scan_result_lengths(::BaMM, batch)` — pre-allocate output buffers.
+10. ✅ `readmodel(path; format=:auto)` auto-detects `.ihbcp` and dispatches to `read_bamm`.
+11. ✅ Compatibility tests: parsing (3 files × 3 orders = 9 fixtures), score bounds (3 fixtures),
+    forward/reverse scanning (2 orders × 2 strands = 4 fixtures), readmodel auto-detect (2 tests).
+    All match oracle within Float32 tolerance (max_diff < 1e-5).
+12. ✅ Oracle fixtures: 17 new fixtures added (49 total in manifest).
+13. ✅ Unit tests: constructor, show, equality, scorebounds, parsing, single-sequence scan,
+    batch scan, order=0 equivalence to PWM scan, determinism.
+14. ✅ JuliaFormatter (BlueStyle), 186 985 тестов (0 failures, 0 errors, 0 warnings).
+15. ☐ Malformed/security fixtures — отложено до следующего подэтапа.
+16. ☐ BaMM writer — не определён в Python (joblib dump only); отложено.
+17. ☐ BaMM sites и reconstruction — отложено (requires sites API generalization for higher-order models).
+18. ☐ BaMM comparison — отложено (requires comparison API generalization for higher-order models).
+19. ☐ Model-specific benchmark — отложено до benchmark suite.
+
+Этап 5b (следующий — SiteGA):
+
+1. Описать исходный format `.mat` и mathematical representation для SiteGA.
+2. Добавить concrete immutable type для SiteGA без catch-all config dictionary.
+3. Реализовать strict parser, constructor invariants и `.mat` reader/writer.
 4. Реализовать `scorebounds`, forward/reverse scan, sites и reconstruction methods.
 5. Сравнить raw representation, individual site score, tracks и final comparisons с oracle.
 6. Добавить malformed/security fixtures и model-specific benchmark.

@@ -1,7 +1,8 @@
-# Scanning module: strand policies and PWM scanning kernels.
+# Scanning module: strand policies, PWM scanning, and BaMM scanning kernels.
 
 include("strands.jl")
 include("pwm_scan.jl")
+include("bamm_scan.jl")
 
 export StrandPolicy,
     ForwardOnly,

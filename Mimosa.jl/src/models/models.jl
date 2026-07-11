@@ -2,12 +2,14 @@
 
 include("types.jl")
 include("matrices.jl")
+include("bamm.jl")
 
 export AbstractMotifModel,
     AbstractMatrixMotif,
     AbstractHigherOrderMotif,
     PFM,
     PWM,
+    BaMM,
     pcm_to_pfm,
     pfm_to_pwm,
     pwm_from_pfm,

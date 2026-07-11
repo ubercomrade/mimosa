@@ -1,4 +1,5 @@
 {
+  "fixture_count": 33,
   "fixtures": [
     {
       "arrays": {
@@ -821,16 +822,478 @@
           "target"
         ]
       }
+    },
+    {
+      "arrays": {
+        "representation": {
+          "checksum": "cf9f9bee040cc3e09895e92cc959751b8059b6cbce56851afdec9d7d0a87aae4",
+          "dtype": "float32",
+          "file": "bamm_parse_myog_order0__representation.npy",
+          "shape": [
+            5,
+            14
+          ]
+        }
+      },
+      "description": "Parse myog.ihbcp with target_order=0",
+      "id": "bamm_parse_myog_order0",
+      "metadata": {
+        "max_order": 4,
+        "motif_length": 14,
+        "name": "myog",
+        "shape": [
+          5,
+          14
+        ],
+        "target_order": 0
+      }
+    },
+    {
+      "arrays": {
+        "representation": {
+          "checksum": "351bf07a77c7db28ef7384f2277bfe1d16912964960fdd2ecc6f2e05e9b25b43",
+          "dtype": "float32",
+          "file": "bamm_parse_myog_order1__representation.npy",
+          "shape": [
+            5,
+            5,
+            14
+          ]
+        }
+      },
+      "description": "Parse myog.ihbcp with target_order=1",
+      "id": "bamm_parse_myog_order1",
+      "metadata": {
+        "max_order": 4,
+        "motif_length": 14,
+        "name": "myog",
+        "shape": [
+          5,
+          5,
+          14
+        ],
+        "target_order": 1
+      }
+    },
+    {
+      "arrays": {
+        "representation": {
+          "checksum": "c04895d5c16757b4f5c39648e82a0bca03dd35b03249314a4ebb238cf5db614b",
+          "dtype": "float32",
+          "file": "bamm_parse_myog_order2__representation.npy",
+          "shape": [
+            5,
+            5,
+            5,
+            14
+          ]
+        }
+      },
+      "description": "Parse myog.ihbcp with target_order=2",
+      "id": "bamm_parse_myog_order2",
+      "metadata": {
+        "max_order": 4,
+        "motif_length": 14,
+        "name": "myog",
+        "shape": [
+          5,
+          5,
+          5,
+          14
+        ],
+        "target_order": 2
+      }
+    },
+    {
+      "arrays": {
+        "representation": {
+          "checksum": "0f1c274ca4ed125b5ed1e86cc041bb733539c4fbe34a985e904994ab47c53255",
+          "dtype": "float32",
+          "file": "bamm_parse_gata2_order0__representation.npy",
+          "shape": [
+            5,
+            16
+          ]
+        }
+      },
+      "description": "Parse gata2.ihbcp with target_order=0",
+      "id": "bamm_parse_gata2_order0",
+      "metadata": {
+        "max_order": 4,
+        "motif_length": 16,
+        "name": "gata2",
+        "shape": [
+          5,
+          16
+        ],
+        "target_order": 0
+      }
+    },
+    {
+      "arrays": {
+        "representation": {
+          "checksum": "fb601e758802a61849f73851ba737ff8025e9d9d29cd9518db6d7bc6ed5c81e3",
+          "dtype": "float32",
+          "file": "bamm_parse_gata2_order1__representation.npy",
+          "shape": [
+            5,
+            5,
+            16
+          ]
+        }
+      },
+      "description": "Parse gata2.ihbcp with target_order=1",
+      "id": "bamm_parse_gata2_order1",
+      "metadata": {
+        "max_order": 4,
+        "motif_length": 16,
+        "name": "gata2",
+        "shape": [
+          5,
+          5,
+          16
+        ],
+        "target_order": 1
+      }
+    },
+    {
+      "arrays": {
+        "representation": {
+          "checksum": "2a0dd1736c2eaee2aedd9da8bf19627db920c9262563f871cff716a52184ce3c",
+          "dtype": "float32",
+          "file": "bamm_parse_gata2_order2__representation.npy",
+          "shape": [
+            5,
+            5,
+            5,
+            16
+          ]
+        }
+      },
+      "description": "Parse gata2.ihbcp with target_order=2",
+      "id": "bamm_parse_gata2_order2",
+      "metadata": {
+        "max_order": 4,
+        "motif_length": 16,
+        "name": "gata2",
+        "shape": [
+          5,
+          5,
+          5,
+          16
+        ],
+        "target_order": 2
+      }
+    },
+    {
+      "arrays": {
+        "representation": {
+          "checksum": "03f4ccf32df7f4a54eb7d9ae56455446c0767af23680ec12b25581c658dece71",
+          "dtype": "float32",
+          "file": "bamm_parse_foxa2_order0__representation.npy",
+          "shape": [
+            5,
+            16
+          ]
+        }
+      },
+      "description": "Parse foxa2.ihbcp with target_order=0",
+      "id": "bamm_parse_foxa2_order0",
+      "metadata": {
+        "max_order": 4,
+        "motif_length": 16,
+        "name": "foxa2",
+        "shape": [
+          5,
+          16
+        ],
+        "target_order": 0
+      }
+    },
+    {
+      "arrays": {
+        "representation": {
+          "checksum": "a7087c1a11fb24123881bf229afd529b05bd0fd463f869b33de01712330d82bc",
+          "dtype": "float32",
+          "file": "bamm_parse_foxa2_order1__representation.npy",
+          "shape": [
+            5,
+            5,
+            16
+          ]
+        }
+      },
+      "description": "Parse foxa2.ihbcp with target_order=1",
+      "id": "bamm_parse_foxa2_order1",
+      "metadata": {
+        "max_order": 4,
+        "motif_length": 16,
+        "name": "foxa2",
+        "shape": [
+          5,
+          5,
+          16
+        ],
+        "target_order": 1
+      }
+    },
+    {
+      "arrays": {
+        "representation": {
+          "checksum": "447879de79fb7583563be5bd9e8b515af0cc945611b89a06863cad49f7e396c8",
+          "dtype": "float32",
+          "file": "bamm_parse_foxa2_order2__representation.npy",
+          "shape": [
+            5,
+            5,
+            5,
+            16
+          ]
+        }
+      },
+      "description": "Parse foxa2.ihbcp with target_order=2",
+      "id": "bamm_parse_foxa2_order2",
+      "metadata": {
+        "max_order": 4,
+        "motif_length": 16,
+        "name": "foxa2",
+        "shape": [
+          5,
+          5,
+          5,
+          16
+        ],
+        "target_order": 2
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "checksum": "593ea71b77d11582578bd4deb7d2f712bacd67aee45931600b3558f31b90ae89",
+          "dtype": "int64",
+          "file": "bamm_scan_input_seed42__lengths.npy",
+          "shape": [
+            50
+          ]
+        },
+        "values": {
+          "checksum": "9be9f525fc50aab4f83609f6510e334c263a7cc99273783da40e99699ff21176",
+          "dtype": "int8",
+          "file": "bamm_scan_input_seed42__values.npy",
+          "shape": [
+            50,
+            200
+          ]
+        }
+      },
+      "description": "Input sequences for BaMM scan fixtures (seed=42, n=50, len=200, 5-ary encoding)",
+      "id": "bamm_scan_input_seed42",
+      "metadata": {
+        "n_sequences": 50,
+        "padding_value": 4,
+        "seed": 42,
+        "seq_length": 200
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "checksum": "593ea71b77d11582578bd4deb7d2f712bacd67aee45931600b3558f31b90ae89",
+          "dtype": "int64",
+          "file": "bamm_scan_forward_myog_order1_seed42__lengths.npy",
+          "shape": [
+            50
+          ]
+        },
+        "mask": {
+          "checksum": "88546ea3e22f1281ab6763f724416c74b4cd032b153dd1129292989ca168730d",
+          "dtype": "bool",
+          "file": "bamm_scan_forward_myog_order1_seed42__mask.npy",
+          "shape": [
+            50,
+            186
+          ]
+        },
+        "values": {
+          "checksum": "4a1a2467aa68155c96bcb961c6643016571232b045e137dbb8888a930e41db3c",
+          "dtype": "float32",
+          "file": "bamm_scan_forward_myog_order1_seed42__values.npy",
+          "shape": [
+            50,
+            186
+          ]
+        }
+      },
+      "description": "Forward BaMM scan of myog.ihbcp (order=1) on 50 random sequences (seed=42, len=200)",
+      "id": "bamm_scan_forward_myog_order1_seed42",
+      "metadata": {
+        "kmer": 2,
+        "motif_length": 14,
+        "n_sequences": 50,
+        "order": 1,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "checksum": "593ea71b77d11582578bd4deb7d2f712bacd67aee45931600b3558f31b90ae89",
+          "dtype": "int64",
+          "file": "bamm_scan_reverse_myog_order1_seed42__lengths.npy",
+          "shape": [
+            50
+          ]
+        },
+        "mask": {
+          "checksum": "88546ea3e22f1281ab6763f724416c74b4cd032b153dd1129292989ca168730d",
+          "dtype": "bool",
+          "file": "bamm_scan_reverse_myog_order1_seed42__mask.npy",
+          "shape": [
+            50,
+            186
+          ]
+        },
+        "values": {
+          "checksum": "ed16639c8800c2ae2556dcabd87e077e719ade427f894d19cbd872531f91391a",
+          "dtype": "float32",
+          "file": "bamm_scan_reverse_myog_order1_seed42__values.npy",
+          "shape": [
+            50,
+            186
+          ]
+        }
+      },
+      "description": "Reverse BaMM scan of myog.ihbcp (order=1) on 50 random sequences (seed=42, len=200)",
+      "id": "bamm_scan_reverse_myog_order1_seed42",
+      "metadata": {
+        "kmer": 2,
+        "motif_length": 14,
+        "n_sequences": 50,
+        "order": 1,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "checksum": "593ea71b77d11582578bd4deb7d2f712bacd67aee45931600b3558f31b90ae89",
+          "dtype": "int64",
+          "file": "bamm_scan_forward_myog_order0_seed42__lengths.npy",
+          "shape": [
+            50
+          ]
+        },
+        "mask": {
+          "checksum": "b67cbf0a21fde684ae506a81e1349aa2be723c9df5e47aeb0f0d288ffcf5ddc4",
+          "dtype": "bool",
+          "file": "bamm_scan_forward_myog_order0_seed42__mask.npy",
+          "shape": [
+            50,
+            187
+          ]
+        },
+        "values": {
+          "checksum": "2a232bf550b2765e1a900b17ceca41f2a7eb9e8ab3756bd6ee6034c5ff0fe242",
+          "dtype": "float32",
+          "file": "bamm_scan_forward_myog_order0_seed42__values.npy",
+          "shape": [
+            50,
+            187
+          ]
+        }
+      },
+      "description": "Forward BaMM scan of myog.ihbcp (order=0) on 50 random sequences (seed=42, len=200)",
+      "id": "bamm_scan_forward_myog_order0_seed42",
+      "metadata": {
+        "kmer": 1,
+        "motif_length": 14,
+        "n_sequences": 50,
+        "order": 0,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "checksum": "593ea71b77d11582578bd4deb7d2f712bacd67aee45931600b3558f31b90ae89",
+          "dtype": "int64",
+          "file": "bamm_scan_reverse_myog_order0_seed42__lengths.npy",
+          "shape": [
+            50
+          ]
+        },
+        "mask": {
+          "checksum": "b67cbf0a21fde684ae506a81e1349aa2be723c9df5e47aeb0f0d288ffcf5ddc4",
+          "dtype": "bool",
+          "file": "bamm_scan_reverse_myog_order0_seed42__mask.npy",
+          "shape": [
+            50,
+            187
+          ]
+        },
+        "values": {
+          "checksum": "21ebda5e13ac866796847c28a531db7335ef95615aa584cdb12468f307d3cd1d",
+          "dtype": "float32",
+          "file": "bamm_scan_reverse_myog_order0_seed42__values.npy",
+          "shape": [
+            50,
+            187
+          ]
+        }
+      },
+      "description": "Reverse BaMM scan of myog.ihbcp (order=0) on 50 random sequences (seed=42, len=200)",
+      "id": "bamm_scan_reverse_myog_order0_seed42",
+      "metadata": {
+        "kmer": 1,
+        "motif_length": 14,
+        "n_sequences": 50,
+        "order": 0,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200
+      }
+    },
+    {
+      "description": "Theoretical score bounds for myog.ihbcp BaMM order=1",
+      "id": "bamm_score_bounds_myog_order1",
+      "metadata": {
+        "max_score": 32.097015380859375,
+        "min_score": -57.5969352722168,
+        "order": 1
+      }
+    },
+    {
+      "description": "Theoretical score bounds for myog.ihbcp BaMM order=0",
+      "id": "bamm_score_bounds_myog_order0",
+      "metadata": {
+        "max_score": 11.783260345458984,
+        "min_score": -50.04041290283203,
+        "order": 0
+      }
+    },
+    {
+      "description": "Theoretical score bounds for gata2.ihbcp BaMM order=2",
+      "id": "bamm_score_bounds_gata2_order2",
+      "metadata": {
+        "max_score": 55.68046569824219,
+        "min_score": -43.333431243896484,
+        "order": 2
+      }
     }
   ],
   "format": "mimosa-compatibility-fixtures",
   "format_version": 1,
   "generated_at": "2026-07-11T13:23:18.917035+00:00",
-  "n_fixtures": 32,
+  "n_fixtures": 49,
   "numpy_version": "2.3.5",
   "platform": "Linux-6.19.6-arch1-1-x86_64-with-glibc2.43",
   "python_commit": "a5f85da6b070d04766f9ad8256270e3414ec2206",
   "python_version": "3.13.12 | packaged by Anaconda, Inc. | (main, Feb 24 2026, 16:13:31) [GCC 14.3.0]",
-  "scipy_version": "1.17.0",
-  "fixture_count": 33
+  "scipy_version": "1.17.0"
 }

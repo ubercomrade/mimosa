@@ -596,6 +596,188 @@ def generate_gev_fixtures() -> list[dict]:
     return fixtures
 
 
+
+def generate_bamm_fixtures() -> list[dict]:
+    """Fixtures for BaMM parsing, scanning, and score bounds."""
+    from mimosa.io.bamm import parse_file_content, read_bamm
+
+    fixtures = []
+
+    # 1. Parse BaMM and save representation for different files and orders
+    for fname in ["myog.ihbcp", "gata2.ihbcp", "foxa2.ihbcp"]:
+        path = str(EXAMPLES_DIR / fname)
+        raw_data, max_order, n_positions = parse_file_content(path)
+
+        for target_order in [0, 1, min(2, max_order)]:
+            rep = read_bamm(path, target_order)
+            base = fname.replace(".ihbcp", "")
+            fixture_id = f"bamm_parse_{base}_order{target_order}"
+            fixtures.append(
+                {
+                    "id": fixture_id,
+                    "description": f"Parse {fname} with target_order={target_order}",
+                    "arrays": {"representation": _save_npy(fixture_id + "__representation", rep)},
+                    "metadata": {
+                        "name": base,
+                        "max_order": max_order,
+                        "target_order": target_order,
+                        "motif_length": n_positions,
+                        "shape": list(rep.shape),
+                    },
+                }
+            )
+
+    # 2. Generate random sequences for BaMM scanning (5-ary encoding)
+    rng = np.random.default_rng(42)
+    n_seq = 50
+    seq_len = 200
+    values = rng.integers(0, 5, size=(n_seq, seq_len), dtype=np.int8)
+    lengths = np.full(n_seq, seq_len, dtype=np.int64)
+
+    seq_fixture_id = "bamm_scan_input_seed42"
+    fixtures.append(
+        {
+            "id": seq_fixture_id,
+            "description": "Input sequences for BaMM scan fixtures (seed=42, n=50, len=200, 5-ary encoding)",
+            "arrays": {
+                "values": _save_npy(seq_fixture_id + "__values", values),
+                "lengths": _save_npy(seq_fixture_id + "__lengths", lengths),
+            },
+            "metadata": {"n_sequences": 50, "seq_length": 200, "seed": 42, "padding_value": 4},
+        }
+    )
+
+    # 3. BaMM scanning (forward and reverse) using inline kernels
+    def _scan_forward(values, lengths, model_rows, kmer, motif_len):
+        context_len = kmer - 1
+        window_size = motif_len + context_len
+        n_terms = window_size - kmer + 1
+        n_rows = values.shape[0]
+        max_scores = max(values.shape[1] - window_size + 1, 0)
+        scores = np.zeros((n_rows, max_scores), dtype=np.float32)
+        mask = np.zeros((n_rows, max_scores), dtype=bool)
+        for row in range(n_rows):
+            length = int(lengths[row])
+            n_pos = max(length - window_size + 1, 0)
+            if n_pos == 0:
+                continue
+            for pos in range(n_pos):
+                total = np.float32(0.0)
+                for term in range(n_terms):
+                    code = 0
+                    src_start = pos - context_len + term
+                    for offset in range(kmer):
+                        src = src_start + offset
+                        encoded = 4
+                        if 0 <= src < length:
+                            encoded = int(values[row, src])
+                        code = code * 5 + encoded
+                    total += model_rows[code, term]
+                scores[row, pos] = total
+                mask[row, pos] = True
+        return scores, mask
+
+    def _scan_reverse(values, lengths, model_rows, kmer, motif_len):
+        context_len = kmer - 1
+        window_size = motif_len + context_len
+        n_terms = window_size - kmer + 1
+        n_rows = values.shape[0]
+        max_scores = max(values.shape[1] - window_size + 1, 0)
+        scores = np.zeros((n_rows, max_scores), dtype=np.float32)
+        mask = np.zeros((n_rows, max_scores), dtype=bool)
+        for row in range(n_rows):
+            length = int(lengths[row])
+            n_pos = max(length - window_size + 1, 0)
+            if n_pos == 0:
+                continue
+            for pos in range(n_pos):
+                total = np.float32(0.0)
+                for term in range(n_terms):
+                    code = 0
+                    for offset in range(kmer):
+                        src = pos + (window_size - 1 - (term + offset))
+                        encoded = 4
+                        if 0 <= src < length:
+                            base = int(values[row, src])
+                            encoded = 4 if base == 4 else 3 - base
+                        code = code * 5 + encoded
+                    total += model_rows[code, term]
+                scores[row, pos] = total
+                mask[row, pos] = True
+        return scores, mask
+
+    for fname, target_order in [("myog.ihbcp", 1), ("myog.ihbcp", 0)]:
+        path = str(EXAMPLES_DIR / fname)
+        rep = read_bamm(path, target_order)
+        model_rows = rep.reshape(-1, rep.shape[-1])
+        motif_len = rep.shape[-1]
+        kmer = target_order + 1
+        base = fname.replace(".ihbcp", "")
+
+        fwd_scores, fwd_mask = _scan_forward(values, lengths, model_rows, kmer, motif_len)
+        fwd_id = f"bamm_scan_forward_{base}_order{target_order}_seed42"
+        fixtures.append(
+            {
+                "id": fwd_id,
+                "description": f"Forward BaMM scan of {fname} (order={target_order}) on 50 random sequences (seed=42, len=200)",
+                "arrays": {
+                    "values": _save_npy(fwd_id + "__values", fwd_scores),
+                    "mask": _save_npy(fwd_id + "__mask", fwd_mask),
+                    "lengths": _save_npy(fwd_id + "__lengths", lengths),
+                },
+                "metadata": {
+                    "n_sequences": 50,
+                    "seq_length": 200,
+                    "seed": 42,
+                    "motif_length": motif_len,
+                    "order": target_order,
+                    "kmer": kmer,
+                    "padding_value": 0.0,
+                },
+            }
+        )
+
+        rev_scores, rev_mask = _scan_reverse(values, lengths, model_rows, kmer, motif_len)
+        rev_id = f"bamm_scan_reverse_{base}_order{target_order}_seed42"
+        fixtures.append(
+            {
+                "id": rev_id,
+                "description": f"Reverse BaMM scan of {fname} (order={target_order}) on 50 random sequences (seed=42, len=200)",
+                "arrays": {
+                    "values": _save_npy(rev_id + "__values", rev_scores),
+                    "mask": _save_npy(rev_id + "__mask", rev_mask),
+                    "lengths": _save_npy(rev_id + "__lengths", lengths),
+                },
+                "metadata": {
+                    "n_sequences": 50,
+                    "seq_length": 200,
+                    "seed": 42,
+                    "motif_length": motif_len,
+                    "order": target_order,
+                    "kmer": kmer,
+                    "padding_value": 0.0,
+                },
+            }
+        )
+
+    # 4. Score bounds for BaMM
+    for fname, target_order in [("myog.ihbcp", 1), ("myog.ihbcp", 0), ("gata2.ihbcp", 2)]:
+        path = str(EXAMPLES_DIR / fname)
+        rep = read_bamm(path, target_order)
+        min_score = float(rep.min(axis=tuple(range(rep.ndim - 1))).sum())
+        max_score = float(rep.max(axis=tuple(range(rep.ndim - 1))).sum())
+        base = fname.replace(".ihbcp", "")
+        fixtures.append(
+            {
+                "id": f"bamm_score_bounds_{base}_order{target_order}",
+                "description": f"Theoretical score bounds for {fname} BaMM order={target_order}",
+                "metadata": {"min_score": min_score, "max_score": max_score, "order": target_order},
+            }
+        )
+
+    return fixtures
+
+
 def generate_cli_fixtures() -> list[dict]:
     """Fixtures for CLI output comparison (scores only, not subprocess)."""
     fixtures = []
@@ -640,6 +822,7 @@ def main() -> None:
     all_fixtures.extend(generate_profile_comparison_fixtures())
     all_fixtures.extend(generate_site_reconstruction_fixtures())
     all_fixtures.extend(generate_gev_fixtures())
+    all_fixtures.extend(generate_bamm_fixtures())
     all_fixtures.extend(generate_cli_fixtures())
 
     manifest = {
