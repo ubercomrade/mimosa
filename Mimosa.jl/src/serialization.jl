@@ -2,6 +2,9 @@
 
 using Printf
 
+"""Version of the JSON contract used for CLI significance annotations."""
+const ANNOTATED_RESULT_SCHEMA_VERSION = 1
+
 """
     to_dict(result::ComparisonResult)
 
@@ -32,6 +35,7 @@ including significance fields (`p-value`, `adj.p-value`, `E-value`, `null_id`,
 """
 function to_dict(result::AnnotatedResult)
     d = Dict{String,Any}(
+        "annotation_schema_version" => ANNOTATED_RESULT_SCHEMA_VERSION,
         "query" => result.query,
         "target" => result.target,
         "score" => Float64(result.score),

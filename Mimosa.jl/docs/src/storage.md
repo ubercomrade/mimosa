@@ -10,7 +10,8 @@ distribution storage: a TOML manifest + binary NPY blobs.
 - **Language-neutral**: NPY binary format is compatible with NumPy
 - **Versioned**: Schema version in manifest enables future migrations
 - **Checksum-verified**: SHA-256 of all binary blobs
-- **Atomic writes**: Temp files + rename, no partial files
+- **Atomic writes**: Complete sibling staging directory + rename; orphan
+  staging directories are ignored by readers
 
 ## Model bundle structure
 
@@ -25,24 +26,28 @@ output_dir/
 
 | Field | Description |
 |-------|-------------|
-| `format` | `"mimosa-model"` magic identifier |
-| `schema_version` | Integer (currently 1) |
-| `model_type` | `"pwm"`, `"pfm"`, `"bamm"`, `"sitega"`, `"dimont"`, `"slim"` |
+| `format` | `"mimosa"` magic identifier |
+| `format_version` | Positive integer (currently 1) |
+| `kind` | `"pwm"`, `"pfm"`, `"bamm"`, `"sitega"`, `"dimont"`, `"slim"` |
 | `name` | Model name string |
-| `motif_length` | Number of columns |
+| `dtype` / `shape` | Top-level array declaration; v1 uses `"<f4"` and `[rows, columns]` |
+| `layout` | `"row_major"` |
 | `background` | 4-element tuple (PWM only) |
 | `order` / `span` | Higher-order model parameter (if applicable) |
-| `weights_shape` | Matrix shape `[rows, cols]` |
-| `weights_dtype` | `"<f4"` (little-endian Float32) |
-| `weights_checksum` | SHA-256 of `weights.npy` |
+| `arrays.<name>` | Relative file, dtype, shape and exact SHA-256 checksum |
 
 ### NPY format
 
 Binary blobs use the standard NumPy `.npy` format with:
 - Magic: `\x93NUMPY`
-- Version header
+- Supported version headers: NPY 1.0 and 2.0
 - Little-endian Float32 (`<f4`)
 - Row-major (C-contiguous) layout for Python compatibility
+
+Readers reject malformed headers, unsupported dtypes/endianness, rank or shape
+mismatches, truncated or extra payload bytes, and non-finite model/null data.
+Manifest paths must remain inside the bundle root, and every referenced blob
+requires a checksum in the exact form `sha256:<64 lowercase hex>`.
 
 ## Null distribution format
 
@@ -57,8 +62,9 @@ output_dir/
 
 | Field | Description |
 |-------|-------------|
-| `format` | `"mimosa-null"` |
-| `schema_version` | Integer (currently 1) |
+| `format` | `"mimosa"` |
+| `format_version` | Positive integer (currently 1) |
+| `kind` | `"null_distribution"` |
 | `strategy` | `"motif"` or `"profile"` |
 | `metric` | Metric name |
 | `n_null` | Number of null comparisons |
@@ -67,15 +73,16 @@ output_dir/
 | `gev_location` | GEV location μ |
 | `gev_scale` | GEV scale σ |
 | `gev_converged` | Boolean |
-| `raw_scores_checksum` | SHA-256 of `raw_scores.npy` |
+| `arrays.raw_null_scores` | Relative file, `<f8` shape and exact SHA-256 checksum |
 
 ## Atomic writes
 
-1. Write data to `tempfile` in target directory
-2. Write manifest to `manifest.toml.tmp`
-3. `fsync` both files
-4. `rename` atomically to final names
-5. If any step fails, temp files are cleaned up
+1. Create a sibling staging directory in the target parent
+2. Write all blobs and the manifest into the staging directory
+3. Flush each completed file
+4. Rename the complete staging directory to the target
+5. If any step fails, the target is not committed and the staging directory is
+   removed best-effort; a process-termination orphan is ignored by readers
 
 ## Legacy format conversion
 

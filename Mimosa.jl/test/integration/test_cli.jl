@@ -362,6 +362,41 @@ end
     @test code == 0
     # Null output is a directory with manifest.toml
     @test isfile(joinpath(output_path, "manifest.toml"))
+
+    # Annotation accepts only a bundle built for the executed strategy and metric.
+    code = Mimosa.main([
+        "motif",
+        joinpath(EXAMPLES, "foxa2.meme"),
+        joinpath(EXAMPLES, "gata2.meme"),
+        "--model1-type",
+        "pwm",
+        "--model2-type",
+        "pwm",
+        "--metric",
+        "pcc",
+        "--pvalue",
+        "--null-distribution",
+        output_path,
+        "--effective-number-of-targets",
+        "3",
+    ])
+    @test code == 0
+
+    code = Mimosa.main([
+        "motif",
+        joinpath(EXAMPLES, "foxa2.meme"),
+        joinpath(EXAMPLES, "gata2.meme"),
+        "--model1-type",
+        "pwm",
+        "--model2-type",
+        "pwm",
+        "--metric",
+        "ed",
+        "--pvalue",
+        "--null-distribution",
+        output_path,
+    ])
+    @test code == 1
 end
 
 @testset "CLI build-null: profile strategy passes FASTA and metric" begin
@@ -404,6 +439,32 @@ end
     @test dist.strategy == "profile"
     @test dist.metric == "dice"
     @test dist.sequence_fingerprint != "none"
+
+    code = Mimosa.main([
+        "profile",
+        joinpath(EXAMPLES, "foxa2.meme"),
+        joinpath(EXAMPLES, "gata2.meme"),
+        "--model1-type",
+        "pwm",
+        "--model2-type",
+        "pwm",
+        "--metric",
+        "dice",
+        "--fasta",
+        joinpath(EXAMPLES, "foreground.fa"),
+        "--search-range",
+        "2",
+        "--window-radius",
+        "2",
+        "--realign-window",
+        "1",
+        "--min-logfpr",
+        "-2.0",
+        "--pvalue",
+        "--null-distribution",
+        output_path,
+    ])
+    @test code == 0
 end
 
 @testset "CLI build-null: invalid strategy" begin

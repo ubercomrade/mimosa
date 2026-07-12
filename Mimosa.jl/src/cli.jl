@@ -240,6 +240,67 @@ function _println_json(d::Dict{String})
     return nothing
 end
 
+function _validate_null_compatibility(
+    dist::NullDistribution;
+    strategy::AbstractString,
+    metric::AbstractString,
+    sequences::Union{Nothing,EncodedSequenceBatch}=nothing,
+    background::Union{Nothing,EncodedSequenceBatch}=nothing,
+)
+    dist.strategy == strategy || throw(
+        CLIError(
+            "null distribution strategy '$(dist.strategy)' is incompatible with $strategy comparison.",
+        ),
+    )
+    dist.metric == metric || throw(
+        CLIError(
+            "null distribution metric '$(dist.metric)' is incompatible with requested metric '$metric'.",
+        ),
+    )
+
+    expected_sequences = isnothing(sequences) ? "none" : sequence_fingerprint(sequences)
+    expected_background = isnothing(background) ? "none" : sequence_fingerprint(background)
+    dist.sequence_fingerprint == expected_sequences || throw(
+        CLIError(
+            "null distribution sequence fingerprint is incompatible with this comparison.",
+        ),
+    )
+    dist.background_fingerprint == expected_background || throw(
+        CLIError(
+            "null distribution background fingerprint is incompatible with this comparison.",
+        ),
+    )
+    return nothing
+end
+
+function _annotate_cli_result(
+    result::ComparisonResult,
+    parsed::CLIParsed;
+    strategy::AbstractString,
+    metric::AbstractString,
+    sequences::Union{Nothing,EncodedSequenceBatch}=nothing,
+    background::Union{Nothing,EncodedSequenceBatch}=nothing,
+)
+    "pvalue" in parsed.flags || return result
+    haskey(parsed.options, "null-distribution") ||
+        throw(CLIError("--pvalue requires an explicit --null-distribution bundle."))
+    dist = loadnull(parsed.options["null-distribution"])
+    _validate_null_compatibility(
+        dist; strategy=strategy, metric=metric, sequences=sequences, background=background
+    )
+    effective = if haskey(parsed.options, "effective-number-of-targets")
+        value = tryparse(Int, parsed.options["effective-number-of-targets"])
+        value === nothing &&
+            throw(CLIError("--effective-number-of-targets must be a positive integer."))
+        value > 0 ||
+            throw(CLIError("--effective-number-of-targets must be a positive integer."))
+        value
+    else
+        nothing
+    end
+    return only(annotate_results([result], dist; effective_number_of_targets=effective))
+end
+
 # ── Command: motif ──────────────────────────────────────────────────────────
 
 function _print_motif_help(io::IO)
@@ -275,6 +336,11 @@ function _print_motif_help(io::IO)
     println(io, "  --query-index <n>        MEME motif index for model1 (default: 0)")
     println(io, "  --target-index <n>       MEME motif index for model2 (default: 0)")
     println(io, "  --threads <n>            Number of threads (default: 1)")
+    println(
+        io, "  --pvalue                 Annotate using an explicit compatible null bundle"
+    )
+    println(io, "  --null-distribution <p>  Portable null-distribution bundle for --pvalue")
+    println(io, "  --effective-number-of-targets <n>  E-value target-count override")
     println(io, "  --quiet                  Suppress informational output")
     println(io, "  --verbose                Verbose diagnostics to stderr")
     return nothing
@@ -331,7 +397,8 @@ function _run_motif(parsed::CLIParsed)
         result = compare(model1, model2; metric=metric)
     end
 
-    _println_json(to_dict(result))
+    annotated = _annotate_cli_result(result, parsed; strategy="motif", metric=metric)
+    _println_json(to_dict(annotated))
     return 0
 end
 
@@ -394,6 +461,13 @@ function _print_profile_help(io::IO)
     println(io, "  --seq-length <n>          Random sequence length (default: 200)")
     println(io, "  --seed <n>                Random seed (default: 127)")
     println(io, "  --background-freq <f>      Background freq for PWM (default: 0.25)")
+    println(
+        io, "  --pvalue                   Annotate using an explicit compatible null bundle"
+    )
+    println(
+        io, "  --null-distribution <p>    Portable null-distribution bundle for --pvalue"
+    )
+    println(io, "  --effective-number-of-targets <n>  E-value target-count override")
     println(io, "")
     println(io, "Technical options:")
     println(io, "  --threads <n>             Number of threads (default: 1)")
@@ -439,7 +513,9 @@ function _run_profile(parsed::CLIParsed)
     model1 = _read_typed_model(path1, type1; background=bg_freq)
     model2 = _read_typed_model(path2, type2; background=bg_freq)
 
-    # If both are ScoreProfile, compare directly
+    # If both are ScoreProfile, compare directly.
+    sequences = nothing
+    bg_sequences = nothing
     if model1 isa ScoreProfile && model2 isa ScoreProfile
         result = compare(
             model1,
@@ -467,7 +543,15 @@ function _run_profile(parsed::CLIParsed)
         )
     end
 
-    _println_json(to_dict(result))
+    annotated = _annotate_cli_result(
+        result,
+        parsed;
+        strategy="profile",
+        metric=metric,
+        sequences=sequences,
+        background=bg_sequences,
+    )
+    _println_json(to_dict(annotated))
     return 0
 end
 
@@ -890,8 +974,10 @@ function main(args::Vector{String}=ARGS)::Int
                 "threads" => true,
                 "jobs" => true,
                 "pfm-top-fraction" => true,
+                "null-distribution" => true,
+                "effective-number-of-targets" => true,
             )
-            flag_names = Set(["pfm-mode", "quiet", "verbose"])
+            flag_names = Set(["pfm-mode", "pvalue", "quiet", "verbose"])
             cp = _parse_command_args(command, cmd_args, nothing, option_specs, flag_names)
             cp === :help && (_print_motif_help(stdout); return 0)
             return _run_motif(cp)
@@ -913,8 +999,10 @@ function main(args::Vector{String}=ARGS)::Int
                 "background-freq" => true,
                 "threads" => true,
                 "jobs" => true,
+                "null-distribution" => true,
+                "effective-number-of-targets" => true,
             )
-            flag_names = Set(["quiet", "verbose"])
+            flag_names = Set(["pvalue", "quiet", "verbose"])
             cp = _parse_command_args(command, cmd_args, nothing, option_specs, flag_names)
             cp === :help && (_print_profile_help(stdout); return 0)
             return _run_profile(cp)

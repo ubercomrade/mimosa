@@ -77,14 +77,14 @@ end
             write(io, UInt8(0xFF))
         end
 
-        @test_throws ArgumentError loadnull(path)
+        @test_throws ModelFormatError loadnull(path)
     end
 end
 
 @testset "Null storage format validation" begin
     mktempdir() do path
         # Missing manifest
-        @test_throws ArgumentError loadnull(path)
+        @test_throws ModelFormatError loadnull(path)
 
         # Wrong format
         mkpath(joinpath(path, "data"))
@@ -93,6 +93,46 @@ end
                 io, "format = \"other\"\nformat_version = 1\nkind = \"null_distribution\"\n"
             )
         end
-        @test_throws ArgumentError loadnull(path)
+        @test_throws ModelFormatError loadnull(path)
+    end
+end
+
+@testset "Null storage: hostile manifest validation" begin
+    gev = GEVFit(0.0, 0.5, 1.2, true, 42, -100.0)
+    dist = NullDistribution(
+        "motif",
+        "pcc",
+        gev,
+        Float64[1.0, 2.0, 3.0],
+        NullPair[],
+        3,
+        1,
+        NamedTuple{(:query, :reason),Tuple{String,String}}[],
+        nothing,
+        nothing,
+        "none",
+        "none",
+    )
+
+    mktempdir() do path
+        savenull(path, dist)
+        manifest_path = joinpath(path, "manifest.toml")
+        original = read(manifest_path, String)
+        checksum = match(r"checksum = \"(sha256:[0-9a-f]+)\"", original).captures[1]
+
+        for bad_path in ["../outside.npy", "/tmp/outside.npy", raw"..\outside.npy"]
+            write(manifest_path, replace(original, "data/raw_null_scores.npy" => bad_path))
+            @test_throws ModelFormatError loadnull(path)
+        end
+
+        write(manifest_path, replace(original, checksum => "sha256:"))
+        @test_throws ModelFormatError loadnull(path)
+
+        write(manifest_path, replace(original, "n_null = 3" => "n_null = 300000000"))
+        @test_throws ModelFormatError loadnull(path)
+
+        write(manifest_path, original)
+        rm(manifest_path)
+        @test_throws ModelFormatError loadnull(path)
     end
 end

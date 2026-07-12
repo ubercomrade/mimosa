@@ -139,6 +139,12 @@ alignment options, `--strict`, `--min-null-targets`, `--name-column`, `--group-c
 
 ### A3. Завершить CLI statistical annotation contract
 
+**Статус: реализовано 12 июля 2026 года.** `motif` и `profile` принимают
+`--pvalue`, явный `--null-distribution` и `--effective-number-of-targets`.
+Перед annotation CLI проверяет strategy, metric и sequence/background fingerprints,
+а annotated JSON маркируется `annotation_schema_version = 1`. Автоматический поиск
+null bundles и workflow cache сознательно остаются deferred; global cache не переносится.
+
 **Работы:**
 
 - сверить Python CLI feature set для `--pvalue`, `--null-distribution`, cache options и output handling;
@@ -153,6 +159,15 @@ alignment options, `--strict`, `--min-null-targets`, `--name-column`, `--group-c
 ## 6. Этап B. Security и invariant hardening
 
 ### B1. Защитить portable model/null bundles
+
+**Статус: реализовано 12 июля 2026 года.** Model и null storage используют общий
+bounded TOML/NPY boundary: v1 manifest и checksum обязательны и типизированы,
+пути проверяются до `realpath` и не могут выйти из bundle root, NPY headers и
+payload length разбираются строго до allocation, а model-specific shape/order/span
+инварианты проверяются до чтения blob. Запись собирается в sibling staging
+directory и коммитится одной rename-операцией; orphan stages не читаются.
+Hostile tests покрывают traversal, symlink escape, checksum/version/type/size
+violations, malformed NPY и staged-write cleanup.
 
 **Работы:**
 
@@ -453,11 +468,11 @@ Manifest files. Benchmark suite запускается отдельно и не 
 
 ### Gate R2 — Untrusted input hardened
 
-- [ ] bundle path traversal и symlink escape запрещены;
-- [ ] checksum обязателен и строго валидируется;
-- [ ] NPY schema и size limits проверяются до allocation;
+- [x] bundle path traversal и symlink escape запрещены;
+- [x] checksum обязателен и строго валидируется;
+- [x] NPY schema и size limits проверяются до allocation;
 - [ ] encoded bases и destination sizes валидируются до `@inbounds`;
-- [ ] hostile corpus возвращает controlled typed errors.
+- [x] hostile corpus возвращает controlled typed errors для bundle boundary.
 
 ### Gate R3 — CI and contracts enforced
 

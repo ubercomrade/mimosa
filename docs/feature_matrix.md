@@ -75,12 +75,12 @@ Tie-breaking: when scores are equal, the lower rank wins. Within the same orient
 | Eligible pair scheduling | sorted by name, cross-group only | planned |
 | Score collection | `compare_one_to_many` per query | planned |
 | GEV fitting | `scipy.stats.genextreme.fit` | planned (native, ADR 0005) |
-| P-value (upper tail) | `scipy.stats.genextreme.sf` | planned (native) |
-| E-value | `pvalue * effective_number_of_targets` | planned |
-| BH FDR | `scipy.stats.false_discovery_control(method="bh")` | planned (native) |
-| Storage | `joblib.dump` (pickle) | planned (versioned JSON+binary schema) |
-| Compatibility check | metadata fingerprint comparison | planned |
-| Auto-search | `~/.cache/mimosa/nulls/*.joblib` | planned (explicit dirs) |
+| P-value (upper tail) | `scipy.stats.genextreme.sf` | done (`pvalue`, `annotate_results`) |
+| E-value | `pvalue * effective_number_of_targets` | done (`annotate_results`; CLI override) |
+| BH FDR | `scipy.stats.false_discovery_control(method="bh")` | done (native Benjamini-Hochberg) |
+| Storage | `joblib.dump` (pickle) | done (hardened TOML + NPY bundle; bounded, checksummed, staged writes) |
+| Compatibility check | metadata fingerprint comparison | done for CLI annotation (strategy, metric, sequence/background fingerprints) |
+| Auto-search | `~/.cache/mimosa/nulls/*.joblib` | deferred (explicit bundle path only; no hidden global search) |
 
 ## Cache
 
@@ -97,10 +97,10 @@ Tie-breaking: when scores are equal, the lower rank wins. Within the same orient
 
 | Command | Python subcommand | Key arguments | Julia status |
 |---|---|---|---|
-| Profile comparison | `mimosa profile` | model1, model2, --model1-type, --model2-type, --metric, --fasta, --background, --search-range, --window-radius, --realign-window, --min-logfpr, --cache, --pvalue, --null-distribution | planned |
-| Motif comparison | `mimosa motif` | model1, model2, --model1-type, --model2-type, --metric, --pfm-mode, --pfm-top-fraction, --pvalue, --null-distribution | planned |
-| Build null | `mimosa build-null` | motifs, --model-type, --groups, --strategy, --metric, --output, --fasta, --background | planned |
-| Cache clear | `mimosa cache clear` | --cache-dir | planned |
+| Profile comparison | `mimosa profile` | model1, model2, --model1-type, --model2-type, --metric, --fasta, --background, --search-range, --window-radius, --realign-window, --min-logfpr, --pvalue, --null-distribution, --effective-number-of-targets | partial (workflow cache deferred) |
+| Motif comparison | `mimosa motif` | model1, model2, --model1-type, --model2-type, --metric, --pfm-mode, --pfm-top-fraction, --pvalue, --null-distribution, --effective-number-of-targets | done |
+| Build null | `mimosa build-null` | motifs, --model-type, --groups, --strategy, --metric, --output, --fasta, --background | done |
+| Cache clear | `mimosa cache clear` | --cache-dir | done |
 | (new) Inspect model | — | — | planned |
 | (new) Convert model | — | — | planned |
 | (new) Convert null | — | — | planned |

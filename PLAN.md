@@ -603,8 +603,7 @@ SiteGA проверяет dinucleotide representation и writer; XML-модел�
 > Python commit: `95e8dbb`. Python 3.13, NumPy 2.3.5, SciPy 1.17.0.
 > Julia: 1.12.6 (juliaup).
 >
-> Отложено: benchmark suite для serial vs threaded scaling, size limits
-> и path traversal guards для bundle reads, cross-language fixture
+> Отложено: benchmark suite для serial vs threaded scaling, cross-language fixture
 > exchange с Python, cache integration в scan/compare/build_null hot
 > paths, migration tooling для legacy pickle/joblib.
 
@@ -654,9 +653,10 @@ SiteGA проверяет dinucleotide representation и writer; XML-модел�
 11. ✅ `clearcache(cache)` — clear all entries. `clearcache(cache, key)` —
     clear single entry.
 12. ✅ Portable model storage: `writemodel(path, model)` / `readmodel(path)` —
-    TOML manifest + NPY binary blobs. Schema version 1. Supports all 6 model
-    families (PWM, PFM, BaMM, SiteGA, Dimont, Slim). Checksum validation on
-    load. Atomic manifest write.
+    bounded TOML manifest + NPY binary blobs. Schema version 1. Supports all 6
+    model families (PWM, PFM, BaMM, SiteGA, Dimont, Slim). Strict checksum,
+    path, NPY header/payload and constructor-invariant validation on load;
+    complete staged-directory commit on write.
 13. ✅ `readmodel` auto-detects: directory with `manifest.toml` → bundle;
     legacy file → format detection (.meme, .pfm, .ihbcp, .mat, .xml).
 14. ✅ `_write_npy_2d` / `_read_npy_f32_2d` — NPY writer/reader for 2D
@@ -674,7 +674,8 @@ SiteGA проверяет dinucleotide representation и writer; XML-модел�
     model storage compatibility.
 19. ✅ JuliaFormatter (BlueStyle), 188 236 тестов (0 failures, 0 errors, 0 warnings).
 20. ☐ Benchmark suite для serial vs threaded scaling — отложено до Stage 9.
-21. ☐ Size limits и path traversal guards для bundle reads — отложено.
+21. ✅ Size limits, path traversal/symlink guards, strict NPY parsing and
+    typed errors for bundle reads (Stage 10 B1).
 22. ☐ Cross-language fixture exchange с Python — отложено.
 23. ☐ Cache integration в hot paths (scan/compare/build_null) — отложено.
 24. ☐ Legacy pickle/joblib migration tooling — отложено до Stage 8.

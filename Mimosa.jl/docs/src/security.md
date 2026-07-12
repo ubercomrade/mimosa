@@ -13,6 +13,11 @@ Mimosa.jl is designed to safely parse untrusted user input:
 - **No global state**: `using Mimosa` does not touch the filesystem, create
   directories, launch threads, or modify global settings
 
+Portable model and null bundles additionally limit manifests, blob sizes,
+array counts, ranks, dimensions, element counts and total declared allocation.
+Manifest paths are relative and resolved targets must stay below the bundle
+root; checksum and NPY metadata validation happens before array allocation.
+
 ## Error handling
 
 ```julia
@@ -33,8 +38,8 @@ end
 
 - **Cache**: Directory not created on `Cache()` construction; only on first
   `cache_set`. `using Mimosa` never creates directories.
-- **Atomic writes**: Model and null storage use temp + rename to prevent
-  partial files
+- **Atomic writes**: Model and null storage commit a complete sibling staging
+  directory with rename; orphan staging directories are ignored by readers
 - **Checksum validation**: Model bundles and cache entries validate SHA-256
   on every access. Corrupted files result in cache misses or typed errors,
   not silent corruption.

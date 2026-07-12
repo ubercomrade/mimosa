@@ -19,3 +19,10 @@ end
     @test contains(s, "\"++\"")
     @test contains(s, "\"pcc\"")
 end
+
+@testset "annotated result declares its JSON contract version" begin
+    result = ComparisonResult("q", "t", 1.0f0, 0, "++", "pcc")
+    annotated = AnnotatedResult(result; p_value=0.1, adj_p_value=0.1, e_value=0.1)
+    payload = Mimosa.to_dict(annotated)
+    @test payload["annotation_schema_version"] == ANNOTATED_RESULT_SCHEMA_VERSION
+end

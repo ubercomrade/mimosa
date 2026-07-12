@@ -200,3 +200,163 @@ end
     @test model isa PWM
     @test size(model.weights) == (5, 4)
 end
+
+function _storage_test_pwm()
+    weights = Float32[
+        0.5 -0.5
+        -0.3 0.7
+        0.1 0.1
+        -0.2 0.3
+        -0.3 -0.3
+    ]
+    return PWM("hostile_test", weights, (0.25f0, 0.25f0, 0.25f0, 0.25f0))
+end
+
+function _refresh_model_checksum!(manifest_path, data_path)
+    content = read(manifest_path, String)
+    old = match(r"checksum = \"(sha256:[0-9a-f]+)\"", content)
+    old === nothing && error("test fixture has no checksum")
+    updated = replace(
+        content, old.captures[1] => "sha256:" * Mimosa._file_sha256(data_path)
+    )
+    write(manifest_path, updated)
+    return nothing
+end
+
+function _replace_npy_bytes(bytes::Vector{UInt8}, old::Vector{UInt8}, new::Vector{UInt8})
+    length(old) == length(new) || error("test replacement must preserve length")
+    for start in 1:(length(bytes) - length(old) + 1)
+        bytes[start:(start + length(old) - 1)] == old || continue
+        result = copy(bytes)
+        result[start:(start + length(new) - 1)] .= new
+        return result
+    end
+    return error("test NPY token not found")
+end
+
+@testset "Model storage: hostile bundle validation" begin
+    mktempdir() do root
+        bundle = joinpath(root, "model_bundle")
+        writemodel(bundle, _storage_test_pwm())
+        manifest_path = joinpath(bundle, "manifest.toml")
+        data_path = joinpath(bundle, "data", "weights.npy")
+        original_manifest = read(manifest_path, String)
+        original_data = read(data_path)
+
+        for bad_path in [
+            "../outside.npy",
+            "/tmp/outside.npy",
+            raw"..\outside.npy",
+            raw"C:\tmp\outside.npy",
+            raw"C:/tmp/outside.npy",
+        ]
+            write(manifest_path, replace(original_manifest, "data/weights.npy" => bad_path))
+            @test_throws ModelFormatError readmodel(bundle)
+        end
+
+        checksum = match(r"checksum = \"(sha256:[0-9a-f]+)\"", original_manifest).captures[1]
+        for bad_checksum in [
+            "sha256:",
+            "sha256:" * repeat("A", 64),
+            "md5:" * repeat("0", 32),
+            "sha256:" * repeat("0", 63),
+        ]
+            write(manifest_path, replace(original_manifest, checksum => bad_checksum))
+            @test_throws ModelFormatError readmodel(bundle)
+        end
+
+        write(manifest_path, replace(original_manifest, "checksum = \"$checksum\"\n" => ""))
+        @test_throws ModelFormatError readmodel(bundle)
+
+        for version in ["0", "-1", "1.0", "\"1\""]
+            write(
+                manifest_path,
+                replace(
+                    original_manifest, "format_version = 1" => "format_version = $version"
+                ),
+            )
+            @test_throws ModelFormatError readmodel(bundle)
+        end
+
+        write(
+            manifest_path,
+            replace(original_manifest, "shape = [5, 2]" => "shape = [100000001, 2]"),
+        )
+        @test_throws ModelFormatError readmodel(bundle)
+
+        write(
+            manifest_path,
+            replace(original_manifest, "name = \"hostile_test\"" => "name = [1]"),
+        )
+        @test_throws ModelFormatError readmodel(bundle)
+
+        write(manifest_path, "format = [\n")
+        @test_throws ModelFormatError readmodel(bundle)
+
+        write(manifest_path, repeat("# oversized manifest\n", 60_000))
+        @test_throws ModelFormatError readmodel(bundle)
+
+        write(manifest_path, original_manifest)
+        bad_data = copy(original_data)
+        bad_data[1] = 0x00
+        write(data_path, bad_data)
+        _refresh_model_checksum!(manifest_path, data_path)
+        @test_throws ModelFormatError readmodel(bundle)
+
+        write(data_path, original_data[1:(end - 1)])
+        _refresh_model_checksum!(manifest_path, data_path)
+        @test_throws ModelFormatError readmodel(bundle)
+
+        write(data_path, original_data)
+        _refresh_model_checksum!(manifest_path, data_path)
+        @test readmodel(bundle) isa PWM
+
+        wrong_endian = _replace_npy_bytes(
+            original_data, Vector{UInt8}(codeunits("<f4")), Vector{UInt8}(codeunits(">f4"))
+        )
+        write(data_path, wrong_endian)
+        _refresh_model_checksum!(manifest_path, data_path)
+        @test_throws ModelFormatError readmodel(bundle)
+
+        write(data_path, vcat(original_data, UInt8[0xff]))
+        _refresh_model_checksum!(manifest_path, data_path)
+        @test_throws ModelFormatError readmodel(bundle)
+
+        write(data_path, original_data)
+        _refresh_model_checksum!(manifest_path, data_path)
+        @test_throws ModelFormatError Mimosa._read_npy_array(
+            data_path; expected_dtype="<f4", expected_rank=1
+        )
+
+        if !Sys.iswindows()
+            outside = joinpath(root, "outside.npy")
+            write(outside, original_data)
+            rm(data_path)
+            symlink(outside, data_path)
+            @test_throws ModelFormatError readmodel(bundle)
+            rm(data_path)
+            writemodel(bundle, _storage_test_pwm())
+        end
+
+        @test isempty(
+            filter(name -> startswith(name, ".model_bundle.mimosa-stage-"), readdir(root))
+        )
+    end
+end
+
+@testset "Model storage: staged writes leave complete bundles" begin
+    mktempdir() do root
+        bundle = joinpath(root, "model_bundle")
+        writemodel(bundle, _storage_test_pwm())
+        @test readmodel(bundle) isa PWM
+        write(joinpath(root, "not_a_directory"), "occupied")
+        @test_throws InvariantError writemodel(
+            joinpath(root, "not_a_directory"), _storage_test_pwm()
+        )
+        @test isempty(
+            filter(
+                name -> startswith(name, ".not_a_directory.mimosa-stage-"), readdir(root)
+            ),
+        )
+    end
+end

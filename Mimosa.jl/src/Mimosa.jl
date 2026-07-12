@@ -143,6 +143,7 @@ export GEVFit,
     AnnotatedResult,
     build_null,
     annotate_results,
+    ANNOTATED_RESULT_SCHEMA_VERSION,
     savenull,
     loadnull,
     NULL_FORMAT_VERSION
