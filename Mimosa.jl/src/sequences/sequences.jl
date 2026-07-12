@@ -1,5 +1,7 @@
 # Sequence representation, encoding, FASTA I/O, and ragged arrays for Mimosa.
 
+using Random
+
 include("ragged.jl")
 include("encoding.jl")
 include("fasta.jl")
@@ -15,6 +17,7 @@ export RaggedArray,
     seqlength,
     sequence,
     empty_sequence_batch,
+    make_random_sequences,
     encode_base,
     encode_sequence,
     reverse_complement,

@@ -4,25 +4,433 @@ using Mimosa
 const REPO_ROOT = joinpath(dirname(dirname(@__DIR__)), "..")
 const EXAMPLES = joinpath(REPO_ROOT, "examples")
 
-@testset "CLI main: motif comparison" begin
+@testset "CLI main: help and version" begin
+    # Global help
+    @test Mimosa.main(["--help"]) == 0
+    @test Mimosa.main(["--version"]) == 0
+    @test Mimosa.main(["-h"]) == 0
+    @test Mimosa.main(["-V"]) == 0
+
+    # No args → help to stderr, exit 1
+    @test Mimosa.main(String[]) == 1
+end
+
+@testset "CLI main: unknown command" begin
+    @test Mimosa.main(["bogus"]) == 1
+end
+
+@testset "CLI motif: basic PWM comparison" begin
     query = joinpath(EXAMPLES, "pif4.meme")
     target = joinpath(EXAMPLES, "pif4.meme")
-    code = Mimosa.main(["--query", query, "--target", target, "--metric", "pcc"])
+    code = Mimosa.main([
+        "motif",
+        query,
+        target,
+        "--model1-type",
+        "pwm",
+        "--model2-type",
+        "pwm",
+        "--metric",
+        "pcc",
+    ])
     @test code == 0
 end
 
-@testset "CLI main: missing args returns 1" begin
-    code = Mimosa.main(String[])
+@testset "CLI motif: all metrics" begin
+    query = joinpath(EXAMPLES, "pif4.meme")
+    target = joinpath(EXAMPLES, "pif4.meme")
+    for metric in ("pcc", "ed", "cosine")
+        code = Mimosa.main([
+            "motif",
+            query,
+            target,
+            "--model1-type",
+            "pwm",
+            "--model2-type",
+            "pwm",
+            "--metric",
+            metric,
+        ])
+        @test code == 0
+    end
+end
+
+@testset "CLI motif: help" begin
+    @test Mimosa.main(["motif", "--help"]) == 0
+end
+
+@testset "CLI motif: missing required args" begin
+    # Missing --model1-type
+    code = Mimosa.main(["motif", "a.meme", "b.meme"])
+    @test code == 1
+
+    # Missing positional args
+    code = Mimosa.main(["motif", "--model1-type", "pwm", "--model2-type", "pwm"])
+    @test code == 1
+
+    # Invalid metric
+    query = joinpath(EXAMPLES, "pif4.meme")
+    code = Mimosa.main([
+        "motif",
+        query,
+        query,
+        "--model1-type",
+        "pwm",
+        "--model2-type",
+        "pwm",
+        "--metric",
+        "bogus",
+    ])
     @test code == 1
 end
 
-@testset "CLI main: nonexistent file returns 1" begin
-    code = Mimosa.main(["--query", "/nope.meme", "--target", "/nope2.meme"])
+@testset "CLI motif: nonexistent file" begin
+    code = Mimosa.main([
+        "motif", "/nope.meme", "/nope2.meme", "--model1-type", "pwm", "--model2-type", "pwm"
+    ])
+    @test code == 2
+end
+
+@testset "CLI motif: PFM mode (cross-type)" begin
+    query = joinpath(EXAMPLES, "pif4.meme")
+    target = joinpath(EXAMPLES, "pif4.pfm")
+    code = Mimosa.main([
+        "motif",
+        query,
+        target,
+        "--model1-type",
+        "pwm",
+        "--model2-type",
+        "pwm",
+        "--pfm-mode",
+        "--num-sequences",
+        "100",
+        "--seq-length",
+        "50",
+        "--seed",
+        "42",
+    ])
+    @test code == 0
+end
+
+@testset "CLI motif: PFM file comparison" begin
+    query = joinpath(EXAMPLES, "pif4.pfm")
+    target = joinpath(EXAMPLES, "pif4.pfm")
+    code = Mimosa.main([
+        "motif",
+        query,
+        target,
+        "--model1-type",
+        "pwm",
+        "--model2-type",
+        "pwm",
+        "--metric",
+        "pcc",
+    ])
+    @test code == 0
+end
+
+@testset "CLI profile: score profile comparison" begin
+    query = joinpath(EXAMPLES, "scores_1.fasta")
+    target = joinpath(EXAMPLES, "scores_2.fasta")
+    for metric in ("co", "co_rowwise", "dice", "dice_rowwise", "cosine")
+        code = Mimosa.main([
+            "profile",
+            query,
+            target,
+            "--model1-type",
+            "scores",
+            "--model2-type",
+            "scores",
+            "--metric",
+            metric,
+        ])
+        @test code == 0
+    end
+end
+
+@testset "CLI profile: help" begin
+    @test Mimosa.main(["profile", "--help"]) == 0
+end
+
+@testset "CLI profile: missing required args" begin
+    code = Mimosa.main(["profile", "a.fasta", "b.fasta"])
     @test code == 1
+
+    code = Mimosa.main(["profile", "--model1-type", "scores", "--model2-type", "scores"])
+    @test code == 1
+end
+
+@testset "CLI profile: motif-derived with random sequences" begin
+    query = joinpath(EXAMPLES, "pif4.meme")
+    target = joinpath(EXAMPLES, "pif4.meme")
+    code = Mimosa.main([
+        "profile",
+        query,
+        target,
+        "--model1-type",
+        "pwm",
+        "--model2-type",
+        "pwm",
+        "--metric",
+        "co",
+        "--num-sequences",
+        "50",
+        "--seq-length",
+        "100",
+        "--seed",
+        "42",
+    ])
+    @test code == 0
+end
+
+@testset "CLI profile: motif-derived with FASTA" begin
+    query = joinpath(EXAMPLES, "pif4.meme")
+    fasta = joinpath(EXAMPLES, "foreground.fa")
+    code = Mimosa.main([
+        "profile",
+        query,
+        query,
+        "--model1-type",
+        "pwm",
+        "--model2-type",
+        "pwm",
+        "--metric",
+        "co",
+        "--fasta",
+        fasta,
+    ])
+    @test code == 0
+end
+
+@testset "CLI profile: BaMM model-derived" begin
+    query = joinpath(EXAMPLES, "foxa2.ihbcp")
+    target = joinpath(EXAMPLES, "gata2.ihbcp")
+    code = Mimosa.main([
+        "profile",
+        query,
+        target,
+        "--model1-type",
+        "bamm",
+        "--model2-type",
+        "bamm",
+        "--metric",
+        "co",
+        "--num-sequences",
+        "50",
+        "--seq-length",
+        "100",
+        "--seed",
+        "42",
+    ])
+    @test code == 0
+end
+
+@testset "CLI inspect-model: PWM via MEME" begin
+    path = joinpath(EXAMPLES, "pif4.meme")
+    code = Mimosa.main(["inspect-model", path])
+    @test code == 0
+end
+
+@testset "CLI inspect-model: BaMM" begin
+    path = joinpath(EXAMPLES, "foxa2.ihbcp")
+    code = Mimosa.main(["inspect-model", path, "--type", "bamm"])
+    @test code == 0
+end
+
+@testset "CLI inspect-model: SiteGA" begin
+    path = joinpath(EXAMPLES, "sitega.mat")
+    code = Mimosa.main(["inspect-model", path, "--type", "sitega"])
+    @test code == 0
+end
+
+@testset "CLI inspect-model: help" begin
+    @test Mimosa.main(["inspect-model", "--help"]) == 0
+end
+
+@testset "CLI inspect-model: missing file" begin
+    code = Mimosa.main(["inspect-model", "/nonexistent.meme"])
+    @test code == 2
+end
+
+@testset "CLI convert-model: MEME to bundle" begin
+    path = joinpath(EXAMPLES, "pif4.meme")
+    dir = mktempdir()
+    output = joinpath(dir, "pif4_bundle")
+    code = Mimosa.main(["convert-model", path, output])
+    @test code == 0
+    @test isdir(output)
+    @test isfile(joinpath(output, "manifest.toml"))
+
+    # Verify round-trip
+    loaded = readmodel(output)
+    @test loaded isa PWM
+    @test loaded.name == "pwm_model"
+end
+
+@testset "CLI convert-model: BaMM to bundle" begin
+    path = joinpath(EXAMPLES, "foxa2.ihbcp")
+    dir = mktempdir()
+    output = joinpath(dir, "foxa2_bundle")
+    code = Mimosa.main(["convert-model", path, output, "--type", "bamm"])
+    @test code == 0
+    @test isdir(output)
+
+    loaded = readmodel(output)
+    @test loaded isa BaMM
+end
+
+@testset "CLI convert-model: help" begin
+    @test Mimosa.main(["convert-model", "--help"]) == 0
+end
+
+@testset "CLI convert-model: missing output" begin
+    path = joinpath(EXAMPLES, "pif4.meme")
+    code = Mimosa.main(["convert-model", path])
+    @test code == 1
+end
+
+@testset "CLI cache: clear empty cache" begin
+    dir = mktempdir()
+    cache_dir = joinpath(dir, "mimosa-cache")
+    code = Mimosa.main(["cache", "clear", "--cache-dir", cache_dir])
+    @test code == 0
+end
+
+@testset "CLI cache: clear with entries" begin
+    dir = mktempdir()
+    cache_dir = joinpath(dir, "mimosa-cache")
+    cache = Cache(cache_dir)
+    cache_set(cache, "test-key", b"test-data")
+    @test cache_has(cache, "test-key")
+
+    code = Mimosa.main(["cache", "clear", "--cache-dir", cache_dir])
+    @test code == 0
+    @test !cache_has(cache, "test-key")
+end
+
+@testset "CLI cache: help" begin
+    @test Mimosa.main(["cache", "--help"]) == 0
+end
+
+@testset "CLI cache: invalid subcommand" begin
+    code = Mimosa.main(["cache", "bogus"])
+    @test code == 1
+end
+
+@testset "CLI build-null: help" begin
+    @test Mimosa.main(["build-null", "--help"]) == 0
+end
+
+@testset "CLI build-null: missing required args" begin
+    code = Mimosa.main(["build-null"])
+    @test code == 1
+
+    code = Mimosa.main(["build-null", "motifs.meme"])
+    @test code == 1
+end
+
+@testset "CLI build-null: PWM motif strategy" begin
+    dir = mktempdir()
+    # Use multiple MEME files as motif collection (directory)
+    coll_dir = joinpath(dir, "motifs")
+    mkpath(coll_dir)
+    cp(joinpath(EXAMPLES, "foxa2.meme"), joinpath(coll_dir, "foxa2.meme"))
+    cp(joinpath(EXAMPLES, "gata2.meme"), joinpath(coll_dir, "gata2.meme"))
+    cp(joinpath(EXAMPLES, "gata4.meme"), joinpath(coll_dir, "gata4.meme"))
+
+    # Create groups TSV with motif names in different groups
+    groups_path = joinpath(dir, "groups.tsv")
+    write(groups_path, "motif\tgroup\nMA0047.3\tA\nMA0036.2\tB\nMA0482.2\tC\n")
+
+    output_path = joinpath(dir, "null")
+
+    code = Mimosa.main([
+        "build-null",
+        coll_dir,
+        "--model-type",
+        "pwm",
+        "--groups",
+        groups_path,
+        "--strategy",
+        "motif",
+        "--metric",
+        "pcc",
+        "--output",
+        output_path,
+    ])
+    @test code == 0
+    # Null output is a directory with manifest.toml
+    @test isfile(joinpath(output_path, "manifest.toml"))
+end
+
+@testset "CLI build-null: invalid strategy" begin
+    code = Mimosa.main([
+        "build-null",
+        "motifs.meme",
+        "--model-type",
+        "pwm",
+        "--groups",
+        "groups.tsv",
+        "--strategy",
+        "bogus",
+        "--output",
+        "out",
+    ])
+    @test code == 1
+end
+
+@testset "CLI build-null: invalid metric for strategy" begin
+    code = Mimosa.main([
+        "build-null",
+        "motifs.meme",
+        "--model-type",
+        "pwm",
+        "--groups",
+        "groups.tsv",
+        "--strategy",
+        "motif",
+        "--metric",
+        "co",
+        "--output",
+        "out",
+    ])
+    @test code == 1
+end
+
+@testset "CLI build-null: threads alias works" begin
+    dir = mktempdir()
+    coll_dir = joinpath(dir, "motifs")
+    mkpath(coll_dir)
+    cp(joinpath(EXAMPLES, "foxa2.meme"), joinpath(coll_dir, "foxa2.meme"))
+    cp(joinpath(EXAMPLES, "gata2.meme"), joinpath(coll_dir, "gata2.meme"))
+    cp(joinpath(EXAMPLES, "gata4.meme"), joinpath(coll_dir, "gata4.meme"))
+    groups_path = joinpath(dir, "groups.tsv")
+    write(groups_path, "motif\tgroup\nMA0047.3\tA\nMA0036.2\tB\nMA0482.2\tC\n")
+    output_path = joinpath(dir, "null_threaded")
+
+    # --jobs alias should work same as --threads
+    code = Mimosa.main([
+        "build-null",
+        coll_dir,
+        "--model-type",
+        "pwm",
+        "--groups",
+        groups_path,
+        "--strategy",
+        "motif",
+        "--metric",
+        "pcc",
+        "--output",
+        output_path,
+        "--jobs",
+        "2",
+    ])
+    @test code == 0
+    @test isfile(joinpath(output_path, "manifest.toml"))
 end
 
 @testset "Parallel null build: serial == threaded" begin
-    # Build a small model collection and relations
     weights1 = Float32[
         0.5 -0.5 0.3
         -0.3 0.7 -0.2
@@ -51,18 +459,15 @@ end
 
     models = [m1, m2, m3]
 
-    # Relations: all in different groups → all pairs eligible
     tsv_content = "motif\tgroup\nm1\tA\nm2\tB\nm3\tC\n"
     dir = mktempdir()
     rel_path = joinpath(dir, "relations.tsv")
     write(rel_path, tsv_content)
     relations = parse_group_relations(rel_path; known_names=Set(["m1", "m2", "m3"]))
 
-    # Serial null build
     serial_result = build_null(models, relations; execution=SerialExecution())
     serial_scores = serial_result.distribution.raw_scores
 
-    # Threaded null build
     for nt in (1, 2, 4)
         threaded_result = build_null(models, relations; execution=ThreadedExecution(nt))
         threaded_scores = threaded_result.distribution.raw_scores
@@ -72,7 +477,6 @@ end
 end
 
 @testset "Model storage: cross-format compatibility" begin
-    # Write a model to bundle, read it back, and compare scan results
     pwm = readmodel(joinpath(EXAMPLES, "pif4.meme"))
     dir = mktempdir()
     bundle = joinpath(dir, "pif4_bundle")

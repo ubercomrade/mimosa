@@ -121,6 +121,40 @@ Return an empty [`EncodedSequenceBatch`](@ref) with zero sequences.
 """
 empty_sequence_batch() = EncodedSequenceBatch(UInt8[], [1])
 
+# ── Random sequence generation ──────────────────────────────────────────────
+
+# Lookup from a uniform Float64 in [0, 1) to a nucleotide code.
+# Bases are assigned equal-width intervals: A=[0,0.25), C=[0.25,0.5),
+# G=[0.5,0.75), T=[0.75,1.0).
+const _BASE_LOOKUP = (0x00, 0x01, 0x02, 0x03)
+
+"""
+    make_random_sequences(n::Int, len::Int; seed::Integer=127)
+
+Generate `n` random DNA sequences of length `len` each, using a seeded
+`MersenneTwister` RNG. Bases are drawn uniformly from A, C, G, T.
+
+Returns an [`EncodedSequenceBatch`](@ref). Reproducible within Julia but
+not bit-compatible with Python's `np.random.default_rng` (different RNG
+algorithm). This is acceptable for CLI fallback sequences; users should
+provide explicit FASTA for scientific reproducibility across languages.
+"""
+function make_random_sequences(n::Int, len::Int; seed::Integer=127)
+    n < 0 && throw(ArgumentError("n must be non-negative, got $n."))
+    len < 0 && throw(ArgumentError("len must be non-negative, got $len."))
+    rng = Random.MersenneTwister(seed)
+    rows = Vector{Vector{UInt8}}(undef, n)
+    for i in 1:n
+        row = Vector{UInt8}(undef, len)
+        for j in 1:len
+            idx = floor(Int, rand(rng) * 4.0) + 1
+            row[j] = _BASE_LOOKUP[idx]
+        end
+        rows[i] = row
+    end
+    return EncodedSequenceBatch(rows)
+end
+
 """
     EncodedSequenceBatch(rows::AbstractVector{<:AbstractVector{UInt8}})
 
