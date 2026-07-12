@@ -1,6 +1,8 @@
 [deps]
-BenchmarkTools = "4e9a59a9-11b6-4a36-ba5f-2f3e4f5e6f7a"
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 Mimosa = "2e41fa5d-e7f2-4070-8a6b-25ce77bfeb85"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [compat]
 BenchmarkTools = "1"

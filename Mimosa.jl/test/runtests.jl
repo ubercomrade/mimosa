@@ -72,4 +72,7 @@ end
 
     # Integration tests (CLI path)
     include("integration/test_cli.jl")
+
+    # Downstream contract test
+    include("downstream/runtests.jl")
 end

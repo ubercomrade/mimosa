@@ -1,34 +1,43 @@
-# Mimosa.jl Documentation
+# Mimosa.jl
 
-## Data Layout
+A Julia package for motif scanning, comparison, and statistical evaluation.
 
-PWM weights use `(base, position)` layout (column-major Julia), where `base ∈ 1:5`
-(A, C, G, T, N) and the fifth row holds the N-state score (per-column minimum).
-PFM frequencies use `(base, position)` with `base ∈ 1:4`.
+Mimosa.jl is an independent Julia implementation of the [MIMOSA](https://github.com/mimosa/mimosa)
+motif comparison toolkit, redesigned for Julia's multiple dispatch, parametric types,
+and column-major layout.
 
-## Offset and Orientation Conventions
+## Features
 
-See [ADR 0006](../../docs/adr/0006-coordinate-offset-orientation-conventions.md)
-for the full convention. Summary:
+- **Multiple model families:** PWM, PFM, BaMM, SiteGA, Dimont, Slim
+- **Multiple file formats:** MEME, PFM, BaMM `.ihbcp`, SiteGA `.mat`, Dimont/Slim XML
+- **Motif comparison:** Direct matrix alignment with PCC, Euclidean distance, and cosine similarity
+- **Profile comparison:** Score-profile-based comparison with overlap, dice, and cosine metrics
+- **Site extraction:** Best-per-sequence, threshold, and top-fraction selection
+- **PFM reconstruction:** From selected sites with pseudocount and orientation correction
+- **Null distributions:** Native GEV fitting, BH FDR, E-values
+- **Parallelism:** Serial and threaded execution with deterministic results
+- **Portable storage:** Versioned TOML manifest + NPY binary blobs
+- **Content-based cache:** Atomic writes, checksum validation, corruption recovery
+- **CLI:** Thin adapter over public API, JSON output, stable exit codes
 
-- Internal Julia indexing is one-based inclusive.
-- CLI JSON output uses zero-based half-open coordinates.
-- Offset is the displacement of the query relative to the target (positive =
-  query shifted right). Iteration goes from negative to positive; first wins
-  on equal score.
-- Four orientation candidates: `++`, `+-`, `-+`, `--` with tie-break ranks
-  0-3. Lower rank wins on equal score.
-- Reverse complement of a PWM: flip base rows (A↔T, C↔G) and reverse position
-  columns.
+## Package overview
 
-## Numerical Compatibility
+```@docs
+Mimosa
+```
 
-- PFM-to-PWM conversion: `log((pfm + 1e-4) / background)`.
-- PCC: zero-variance columns contribute 0 (denominator <= 1e-9 → 0).
-- ED: `-mean(sqrt(sum((x-y)^2)))` per column; similarity (higher is better).
-- Cosine: zero-norm columns contribute 0.
+## Quick navigation
 
-## Extension Boundary
-
-New model families require a concrete struct and `compare`/`scorebounds` methods.
-See `docs/src/extending_models.md` (planned).
+- [Quick Start](quickstart.md): Installation and first steps
+- [Julia API](api.md): Public API reference
+- [CLI](cli.md): Command-line interface
+- [Supported Models](models.md): Model types and file formats
+- [Data Layout](data_layout.md): Matrix layout and coordinate conventions
+- [Numerical Compatibility](numerical_compatibility.md): Tolerance classes and known divergences
+- [Reproducibility](reproducibility.md): RNG, determinism, and cross-language notes
+- [Storage Format](storage.md): Portable model and null distribution format
+- [Security](security.md): Safe parsing and untrusted input handling
+- [Python Migration](migration.md): Converting legacy models
+- [Extending Mimosa](extending.md): Adding new model families
+- [MotifHORDE Contract](downstream_contract.md): Downstream API stability guarantee
+- [Architecture](architecture.md): Internal design and ADRs

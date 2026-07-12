@@ -109,19 +109,24 @@ _vec_dot(a::Vector{Float64}, b::Vector{Float64}) = sum(a[i] * b[i] for i in each
 function _numerical_gradient(f, x::Vector{Float64}; h::Float64=1e-5)
     n = length(x)
     g = zeros(n)
-    f0 = f(x)
+    # Pre-allocate work vectors to avoid per-dimension allocations
+    xp = copy(x)
+    xm = copy(x)
     for i in 1:n
-        xp = copy(x)
-        xp[i] += h
+        xp[i] = x[i] + h
         fp = f(xp)
-        xm = copy(x)
-        xm[i] -= h
+        xm[i] = x[i] - h
         fm = f(xm)
+        # Restore original value
+        xp[i] = x[i]
+        xm[i] = x[i]
         if isinf(fp) && isinf(fm)
             g[i] = 0.0
         elseif isinf(fp)
+            f0 = f(x)
             g[i] = (f0 - fm) / h
         elseif isinf(fm)
+            f0 = f(x)
             g[i] = (fp - f0) / h
         else
             g[i] = (fp - fm) / (2.0 * h)
@@ -155,6 +160,14 @@ function _bfgs_optimize(f, x0::Vector{Float64}; max_iter::Int=500, tol::Float64=
     H = _make_identity(n)
     g = _numerical_gradient(f, x)
 
+    # Pre-allocate reusable work vectors
+    p = Vector{Float64}(undef, n)
+    x_new = Vector{Float64}(undef, n)
+    g_new = Vector{Float64}(undef, n)
+    s = Vector{Float64}(undef, n)
+    y_vec = Vector{Float64}(undef, n)
+    Hy = Vector{Float64}(undef, n)
+
     for iter in 1:max_iter
         gnorm = sqrt(sum(abs2, g))
         if gnorm < tol
@@ -162,7 +175,9 @@ function _bfgs_optimize(f, x0::Vector{Float64}; max_iter::Int=500, tol::Float64=
         end
 
         # Search direction: p = -H * g
-        p = -H * g
+        for i in 1:n
+            p[i] = -sum(H[i, j] * g[j] for j in 1:n)
+        end
         pnorm = sqrt(sum(abs2, p))
         if pnorm < 1e-15
             return BFGSResult(x, true, iter, gnorm)
@@ -172,13 +187,17 @@ function _bfgs_optimize(f, x0::Vector{Float64}; max_iter::Int=500, tol::Float64=
         f0 = f(x)
         dg = _vec_dot(g, p)
         alpha = 1.0
-        x_new = x + alpha * p
+        for i in 1:n
+            x_new[i] = x[i] + alpha * p[i]
+        end
         f_new = f(x_new)
 
         backtrack = 0
         while f_new > f0 + 1e-4 * alpha * dg && backtrack < 50
             alpha *= 0.5
-            x_new = x + alpha * p
+            for i in 1:n
+                x_new[i] = x[i] + alpha * p[i]
+            end
             f_new = f(x_new)
             backtrack += 1
         end
@@ -186,7 +205,9 @@ function _bfgs_optimize(f, x0::Vector{Float64}; max_iter::Int=500, tol::Float64=
         if backtrack >= 50 || isinf(f_new)
             # Line search failed — try a small step
             alpha = 1e-8
-            x_new = x + alpha * p
+            for i in 1:n
+                x_new[i] = x[i] + alpha * p[i]
+            end
             f_new = f(x_new)
             if isinf(f_new) || f_new >= f0
                 return BFGSResult(x, false, iter, gnorm)
@@ -194,15 +215,18 @@ function _bfgs_optimize(f, x0::Vector{Float64}; max_iter::Int=500, tol::Float64=
         end
 
         g_new = _numerical_gradient(f, x_new)
-        s = x_new - x
-        y_vec = g_new - g
+        for i in 1:n
+            s[i] = x_new[i] - x[i]
+            y_vec[i] = g_new[i] - g[i]
+        end
         sy = _vec_dot(s, y_vec)
 
         if sy > 1e-12
             rho = 1.0 / sy
             # BFGS update: H = (I - ρ*s*y') * H * (I - ρ*y*s') + ρ*s*s'
-            # Expanded: H += (ρ + ρ²*y'*H*y)*s*s' - ρ*(H*y)*s' - ρ*s*(H*y)'
-            Hy = H * y_vec
+            for i in 1:n
+                Hy[i] = sum(H[i, j] * y_vec[j] for j in 1:n)
+            end
             yHy = _vec_dot(y_vec, Hy)
             coef = rho + rho * rho * yHy
             for i in 1:n, j in 1:n
@@ -210,8 +234,10 @@ function _bfgs_optimize(f, x0::Vector{Float64}; max_iter::Int=500, tol::Float64=
             end
         end
 
-        x = x_new
-        g = g_new
+        for i in 1:n
+            x[i] = x_new[i]
+            g[i] = g_new[i]
+        end
     end
 
     gnorm = sqrt(sum(abs2, g))

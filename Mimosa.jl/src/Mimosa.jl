@@ -25,6 +25,7 @@ include("statistics/statistics.jl")
 include("cache/cache.jl")
 include("serialization.jl")
 include("cli.jl")
+include("precompile.jl")
 
 export readmodel,
     read_meme,
