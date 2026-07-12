@@ -249,6 +249,8 @@ function readmodel(
         return read_bamm(path; order=order_val)
     elseif fmt === :sitega
         return read_sitega(path)
+    elseif fmt === :dimont
+        return read_dimont(path)
     else
         throw(ModelFormatError(path, "unsupported format: $(fmt)."))
     end
@@ -260,5 +262,6 @@ function _detect_format(path::AbstractString)
     endswith(lower, ".pfm") && return :pfm
     endswith(lower, ".ihbcp") && return :bamm
     endswith(lower, ".mat") && return :sitega
+    endswith(lower, ".xml") && return :dimont
     return :unknown
 end

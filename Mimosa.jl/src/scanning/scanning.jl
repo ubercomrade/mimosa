@@ -4,6 +4,7 @@ include("strands.jl")
 include("pwm_scan.jl")
 include("bamm_scan.jl")
 include("sitega_scan.jl")
+include("dimont_scan.jl")
 
 export StrandPolicy,
     ForwardOnly,
@@ -20,4 +21,5 @@ export StrandPolicy,
     npositions,
     npositions_bamm,
     npositions_sitega,
+    npositions_dimont,
     scan_result_lengths

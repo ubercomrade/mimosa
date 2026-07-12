@@ -4,8 +4,10 @@ version = "0.1.0"
 authors = ["Mimosa contributors"]
 
 [deps]
+JuliaFormatter = "98e50ef6-434e-11e9-1051-2b60c6c9e899"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 
 [compat]
+JuliaFormatter = "2.10.1"
 Printf = "1.11.0"
 julia = "1.10"

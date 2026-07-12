@@ -45,6 +45,7 @@ end
     include("unit/test_sites.jl")
     include("unit/test_bamm.jl")
     include("unit/test_sitega.jl")
+    include("unit/test_dimont.jl")
 
     # Property tests
     include("properties/test_properties.jl")
@@ -56,6 +57,7 @@ end
     include("compatibility/test_sites_fixtures.jl")
     include("compatibility/test_bamm_fixtures.jl")
     include("compatibility/test_sitega_fixtures.jl")
+    include("compatibility/test_dimont_fixtures.jl")
 
     # Integration tests (CLI path)
     include("integration/test_cli.jl")

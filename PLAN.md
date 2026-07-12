@@ -765,7 +765,8 @@ Stage 3 завершён (основной slice). Gate 3 пройден (186 08
 Stage 4 завершён. Gate 4 пройден (186 673/186 673 тестов).
 Stage 5a (BaMM) завершён. 186 985/186 985 тестов проходят.
 Stage 5b (SiteGA) завершён. 187 258/187 258 тестов проходят.
-Следующая работа — этап 5c (Dimont).
+Stage 5c (Dimont) завершён. 187 567/187 567 тестов проходят.
+Следующая работа — этап 5d (Slim).
 
 Этап 1 реализовал:
 
@@ -926,12 +927,46 @@ Stage 5b (SiteGA) завершён. 187 258/187 258 тестов проходя�
 18. ☐ SiteGA comparison — отложено (requires comparison API generalization for higher-order models).
 19. ☐ Model-specific benchmark — отложено до benchmark suite.
 
-Этап 5c (следующий — Dimont):
+Этап 5c (Dimont) реализовал:
 
-1. Описать исходный XML format и mathematical representation для Dimont.
-2. Добавить concrete immutable type для Dimont без catch-all config dictionary.
-3. Реализовать strict parser, constructor invariants и reader/writer.
-4. Реализовать `scorebounds`, forward/reverse scan, sites и reconstruction methods.
-5. Сравнить raw representation, individual site score, tracks и final comparisons с oracle.
-6. Добавить malformed/security fixtures и model-specific benchmark.
-7. Обновить extension guide и feature matrix.
+1. ✅ Описан исходный XML format и mathematical representation для Dimont.
+   Dimont — Jstacs Bayesian network (MarkovModelDiffSM) с tree-structured context
+   dependencies. XML path: `.//ThresholdedStrandChIPper/function/pos/MarkovModelDiffSM`.
+   Parameter trees materialized в dense 5-ary tensor `(5,)* (span+1) + (length,)`,
+   затем flattened в `(5^(span+1), length)` matrix.
+2. ✅ `Dimont{T,M}` — concrete immutable struct с representation matrix `(5^(span+1),
+   motif_length)`, `span` и `motif_length`, без catch-all config dictionary.
+   `span` играет роль `order` в BaMM. Тип наследует `AbstractHigherOrderMotif`.
+3. ✅ Minimal XML parser (`xml_parser.jl`) — targeted parser для Jstacs XML без
+   внешних dependencies. Поддерживает tags, attributes, nested elements, text,
+   comments. ElementTree-like navigation (`xml_find`, `xml_findall`, `xml_text`,
+   `xml_attribute`).
+4. ✅ Strict `read_dimont` parser с size limits, tree parsing, tensor materialization,
+   N-state filling (per-axis minimum, matching Python `_fill_n_axis_with_min`),
+   `log(4.0)` uniform base addition.
+5. ✅ Constructor invariants: row count validation `5^(span+1)`, column/length match,
+   non-finite check, non-negative span, positive motif_length.
+6. ✅ `scorebounds(::Dimont)` — per-column min/max summed across positions,
+   совпадает с oracle.
+7. ✅ Forward/reverse/best/both scanning kernels для Dimont с context-aware scoring
+   (kmer = span + 1, context = span, window = motif_len + span, n_terms = motif_len).
+   Идентичная geometry к BaMM scanning.
+8. ✅ `scan(::Dimont, seq; strands=...)` и `scan(::Dimont, batch; strands=...)`
+   через multiple dispatch.
+9. ✅ `scan!(dest, ::Dimont, seq; strands=...)` — in-place API.
+10. ✅ `scan_result_lengths(::Dimont, batch)` — pre-allocate output buffers.
+11. ✅ `readmodel(path; format=:auto)` auto-detects `.xml` and dispatches to `read_dimont`.
+12. ✅ Compatibility tests: parsing (5 files), score bounds (5 fixtures),
+     forward/reverse scanning (2 files × 2 strands = 4 fixtures), readmodel auto-detect.
+     All match oracle within Float32 tolerance.
+13. ✅ Oracle fixtures: 15 new fixtures added (76 total in manifest).
+14. ✅ Unit tests: constructor, show, equality, scorebounds, parsing, single-sequence scan,
+     batch scan, determinism, span=0 equivalence to order-0 BaMM scan.
+15. ✅ JuliaFormatter (BlueStyle), 187 567 тестов (0 failures, 0 errors, 0 warnings).
+16. ☐ Malformed/security fixtures — отложено до следующего подэтапа.
+17. ☐ Dimont writer — не определён в Python (joblib dump only); отложено.
+18. ☐ Dimont sites и reconstruction — отложено (requires sites API generalization
+     for higher-order models).
+19. ☐ Dimont comparison — отложено (requires comparison API generalization for
+     higher-order models).
+20. ☐ Model-specific benchmark — отложено до benchmark suite.

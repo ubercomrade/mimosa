@@ -4,6 +4,7 @@ include("types.jl")
 include("matrices.jl")
 include("bamm.jl")
 include("sitega.jl")
+include("dimont.jl")
 
 export AbstractMotifModel,
     AbstractMatrixMotif,
@@ -12,6 +13,7 @@ export AbstractMotifModel,
     PWM,
     BaMM,
     SiteGA,
+    Dimont,
     pcm_to_pfm,
     pfm_to_pwm,
     pwm_from_pfm,
