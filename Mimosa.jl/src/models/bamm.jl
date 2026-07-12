@@ -52,6 +52,17 @@ function BaMM(
 end
 
 function _validate_bamm(representation::AbstractMatrix, order::Int, motif_length::Int)
+    if order < 0
+        throw(ModelDimensionError("BaMM order must be non-negative, got $order."))
+    end
+    # Guard against exponentiation blow-up: 5^(order+1) rows.
+    if order > 10
+        throw(
+            ModelDimensionError(
+                "BaMM order must be <= 10 to avoid allocation blow-up, got $order."
+            ),
+        )
+    end
     expected_rows = 5^(order + 1)
     if size(representation, 1) != expected_rows
         throw(
@@ -69,9 +80,6 @@ function _validate_bamm(representation::AbstractMatrix, order::Int, motif_length
     end
     if motif_length <= 0
         throw(ModelDimensionError("BaMM motif_length must be positive, got $motif_length."))
-    end
-    if order < 0
-        throw(ModelDimensionError("BaMM order must be non-negative, got $order."))
     end
     if !all(isfinite, representation)
         throw(ModelFormatError("", "BaMM representation contains non-finite values."))

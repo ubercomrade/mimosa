@@ -55,6 +55,7 @@ end
     include("unit/test_parallel.jl")
     include("unit/test_cache.jl")
     include("unit/test_model_storage.jl")
+    include("unit/test_validation.jl")
 
     # Property tests
     include("properties/test_properties.jl")

@@ -36,7 +36,16 @@ function _ho_scan_forward!(
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
+    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
+    length(dest) < n_pos && throw(
+        ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
+    )
     seq_len = length(seq)
+    # Invariant: seq codes in 0..N_CODE (guaranteed by EncodedSequenceBatch).
+    # code = base*5 + ... for kmer_val bases, each in 0..4, so code in 0..5^kmer_val-1.
+    # rep has 5^kmer_val rows, so code+1 is always in bounds.
+    # @inbounds is safe: pos ranges 1..n_pos, term ranges 0..n_terms-1,
+    # offset ranges 0..kmer_val-1.  Out-of-window positions use code 4 (N).
     @inbounds for pos in 1:n_pos
         total = zero(T)
         for term in 0:(n_terms - 1)
@@ -73,7 +82,13 @@ function _ho_scan_reverse!(
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
+    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
+    length(dest) < n_pos && throw(
+        ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
+    )
     seq_len = length(seq)
+    # Invariant: same as _ho_scan_forward! but with complement for reverse strand.
+    # complement(b) = N_CODE if b==N_CODE else 3-b, still in 0..N_CODE.
     @inbounds for pos in 1:n_pos
         total = zero(T)
         for term in 0:(n_terms - 1)
@@ -111,7 +126,12 @@ function _ho_scan_best!(
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
+    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
+    length(dest) < n_pos && throw(
+        ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
+    )
     seq_len = length(seq)
+    # Invariant: same as _ho_scan_forward! and _ho_scan_reverse! above.
     @inbounds for pos in 1:n_pos
         fwd_total = zero(T)
         rev_total = zero(T)
@@ -163,7 +183,12 @@ function _ho_scan_both!(
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
+    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
+    (length(fwd) < n_pos || length(rev) < n_pos) && throw(
+        ArgumentError("fwd/rev destinations must each have at least $n_pos elements.")
+    )
     seq_len = length(seq)
+    # Invariant: same as _ho_scan_forward! and _ho_scan_reverse! above.
     @inbounds for pos in 1:n_pos
         fwd_total = zero(T)
         rev_total = zero(T)

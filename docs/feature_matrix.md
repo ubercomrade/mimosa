@@ -131,6 +131,8 @@ Tie-breaking: when scores are equal, the lower rank wins. Within the same orient
 | Numba `prange` inside kernels | Non-composable parallelism | Top-level thread scheduling |
 | `pd.DataFrame` as core return type | Heavy dependency | Typed structs; DataFrame via extension |
 | `joblib`/pickle storage | Unsafe deserialization | Versioned JSON+binary schema |
+| Encoded sequence validation | N/A (Python uses numpy directly) | `EncodedSequenceBatch` validates `0<=code<=N_CODE` at construction; scan kernels validate dest sizes before `@inbounds` | done (B2) |
+| Model constructor invariants | Implicit | PFM/PWM/BaMM/SiteGA/Dimont/Slim validate dimensions, finite values, non-negativity, background sum, order/span limits | done (B3) |
 | `scipy.stats` direct calls | Parameterization risk | Native GEV with audit |
 | Global mutable cache directory | Hidden side effects | Explicit `Cache` object |
 | `id(batch)` in runtime cache keys | Session-dependent | Preallocation and explicit reuse |

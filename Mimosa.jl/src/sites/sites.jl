@@ -363,7 +363,18 @@ function extract_site_matrix(
         seq = sequence(batch, coll.seq_indices[h])
         # The motif starts at scan_position + site_offset (1-based)
         start = coll.starts[h] + site_offset
+        # Validate that the site window fits within the sequence.
+        if start < 1 || start + motif_width - 1 > length(seq)
+            throw(
+                InvariantError(
+                    "site $h: window [start=$start, width=$motif_width] " *
+                    "exceeds sequence length $(length(seq)).",
+                ),
+            )
+        end
         # Extract window: seq[start : start + motif_width - 1] (1-based)
+        # Invariant: seq codes in 0..N_CODE (guaranteed by EncodedSequenceBatch).
+        # @inbounds is safe: start >= 1 and start+motif_width-1 <= length(seq).
         @inbounds for p in 1:motif_width
             sites[p, h] = seq[start + p - 1]
         end

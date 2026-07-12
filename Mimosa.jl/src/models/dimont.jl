@@ -65,6 +65,17 @@ function Dimont(
 end
 
 function _validate_dimont(representation::AbstractMatrix, span::Int, motif_length::Int)
+    if span < 0
+        throw(ModelDimensionError("Dimont span must be non-negative, got $span."))
+    end
+    # Guard against exponentiation blow-up: 5^(span+1) rows.
+    if span > 10
+        throw(
+            ModelDimensionError(
+                "Dimont span must be <= 10 to avoid allocation blow-up, got $span."
+            ),
+        )
+    end
     expected_rows = 5^(span + 1)
     if size(representation, 1) != expected_rows
         throw(
@@ -84,9 +95,6 @@ function _validate_dimont(representation::AbstractMatrix, span::Int, motif_lengt
         throw(
             ModelDimensionError("Dimont motif_length must be positive, got $motif_length.")
         )
-    end
-    if span < 0
-        throw(ModelDimensionError("Dimont span must be non-negative, got $span."))
     end
     if !all(isfinite, representation)
         throw(ModelFormatError("", "Dimont representation contains non-finite values."))

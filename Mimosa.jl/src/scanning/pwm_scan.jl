@@ -34,6 +34,14 @@ function scan_forward!(
     n_pos::Int,
 ) where {T<:AbstractFloat}
     W = size(weights, 2)
+    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
+    length(dest) < n_pos && throw(
+        ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
+    )
+    # Invariant: seq codes ∈ 0..N_CODE (guaranteed by EncodedSequenceBatch).
+    # weights has 5 rows, so Int(seq[i])+1 ∈ 1..5 is always in bounds.
+    # @inbounds is safe: pos ranges 1..n_pos, p ranges 1..W, and
+    # pos+p-1 ≤ n_pos+W-1 ≤ length(seq) (since n_pos = length(seq)-W+1).
     @inbounds for pos in 1:n_pos
         total = zero(T)
         for p in 1:W
@@ -61,6 +69,13 @@ function scan_reverse!(
     n_pos::Int,
 ) where {T<:AbstractFloat}
     W = size(weights, 2)
+    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
+    length(dest) < n_pos && throw(
+        ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
+    )
+    # Invariant: seq codes ∈ 0..N_CODE; complement(b) = N_CODE or 0x03-b,
+    # which is also ∈ 0..N_CODE.  @inbounds safe: pos+W-p ≥ pos+1-1 = pos ≥ 1,
+    # and pos+W-p ≤ n_pos+W-1 ≤ length(seq).
     @inbounds for pos in 1:n_pos
         total = zero(T)
         for p in 1:W
@@ -89,6 +104,11 @@ function scan_best!(
     n_pos::Int,
 ) where {T<:AbstractFloat}
     W = size(weights, 2)
+    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
+    length(dest) < n_pos && throw(
+        ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
+    )
+    # Invariant: same as scan_forward! and scan_reverse! above.
     @inbounds for pos in 1:n_pos
         fwd = zero(T)
         rev = zero(T)
@@ -121,6 +141,11 @@ function scan_both!(
     n_pos::Int,
 ) where {T<:AbstractFloat}
     W = size(weights, 2)
+    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
+    (length(fwd) < n_pos || length(rev) < n_pos) && throw(
+        ArgumentError("fwd/rev destinations must each have at least $n_pos elements.")
+    )
+    # Invariant: same as scan_forward! and scan_reverse! above.
     @inbounds for pos in 1:n_pos
         fwd_total = zero(T)
         rev_total = zero(T)

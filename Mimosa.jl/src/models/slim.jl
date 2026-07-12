@@ -67,6 +67,17 @@ function Slim(
 end
 
 function _validate_slim(representation::AbstractMatrix, span::Int, motif_length::Int)
+    if span < 0
+        throw(ModelDimensionError("Slim span must be non-negative, got $span."))
+    end
+    # Guard against exponentiation blow-up: 5^(span+1) rows.
+    if span > 10
+        throw(
+            ModelDimensionError(
+                "Slim span must be <= 10 to avoid allocation blow-up, got $span."
+            ),
+        )
+    end
     expected_rows = 5^(span + 1)
     if size(representation, 1) != expected_rows
         throw(
@@ -84,9 +95,6 @@ function _validate_slim(representation::AbstractMatrix, span::Int, motif_length:
     end
     if motif_length <= 0
         throw(ModelDimensionError("Slim motif_length must be positive, got $motif_length."))
-    end
-    if span < 0
-        throw(ModelDimensionError("Slim span must be non-negative, got $span."))
     end
     if !all(isfinite, representation)
         throw(ModelFormatError("", "Slim representation contains non-finite values."))

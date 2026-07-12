@@ -197,6 +197,20 @@ bundle root; валидные v1 bundles сохраняют round-trip compatibi
 
 ### B2. Валидировать encoded sequences до unsafe kernels
 
+**Статус: реализовано.** Все публичные конструкторы `EncodedSequenceBatch`
+проверяют `0 <= code <= N_CODE`; внутренний unsafe-конструктор
+`_unsafe_encoded_batch` использует `Val{:unsafe}` токен для hot paths
+(`make_random_sequences`). `from_padded` валидирует padding, lengths и codes.
+`reverse_complement!` проверяет aliasing dest/src. Scan kernels
+(`scan_forward!`, `scan_reverse!`, `scan_best!`, `scan_both!`, и все
+`_ho_scan_*!` kernels) валидируют `n_pos >= 0` и destination size до входа
+в `@inbounds`. `extract_site_matrix` проверяет, что site window не выходит
+за пределы sequence. Инварианты документированы рядом с каждым
+`@inbounds` kernel. Добавлен `test/unit/test_validation.jl` с 237 тестами,
+покрывающими invalid codes, aliasing, short destinations, empty/short
+sequences, fuzzed inputs, allocating/in-place equivalence и все model
+constructor invariants (B3).
+
 **Работы:**
 
 - гарантировать `0 <= code <= N_CODE` во всех публичных constructors и conversion APIs;
@@ -211,6 +225,12 @@ equivalence и fuzzed encoded inputs.
 **Критерий закрытия:** любой public input либо удовлетворяет kernel invariants, либо отклоняется до `@inbounds` участка.
 
 ### B3. Усилить model constructors
+
+**Статус: реализовано.** PFM теперь проверяет 4 строки, положительную width,
+finite и non-negative values. PWM проверяет background на finite,
+non-negative и сумму ~1.0 (rtol=1e-4). BaMM/SiteGA/Dimont/Slim проверяют
+order/span >= 0 и <= 10 (guard против exponentiation blow-up) до
+вычисления 5^(order+1). Все constructors проверяют finite values.
 
 **Работы:**
 
@@ -471,7 +491,7 @@ Manifest files. Benchmark suite запускается отдельно и не 
 - [x] bundle path traversal и symlink escape запрещены;
 - [x] checksum обязателен и строго валидируется;
 - [x] NPY schema и size limits проверяются до allocation;
-- [ ] encoded bases и destination sizes валидируются до `@inbounds`;
+- [x] encoded bases и destination sizes валидируются до `@inbounds`;
 - [x] hostile corpus возвращает controlled typed errors для bundle boundary.
 
 ### Gate R3 — CI and contracts enforced
