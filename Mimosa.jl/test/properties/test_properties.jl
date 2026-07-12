@@ -348,3 +348,70 @@ end
     @test coll.strands == coll_copy.strands
     @test coll.scores == coll_copy.scores
 end
+
+# Stage 7 properties: parallelism and cache
+
+@testset "serial/threaded scan equivalence (property)" begin
+    pwm = readmodel(joinpath(EXAMPLES, "pif4.meme"))
+    seqs = [
+        encode_sequence("ACGTACGTACGTACGTACGTACGTAC"),
+        encode_sequence("TTTTGGGGCCCCAAAACGTACGTAC"),
+        encode_sequence("ACGT"),
+        encode_sequence("NNNNNNNN"),
+        encode_sequence("ACGTNNACGTACGTACGTNNNNACGT"),
+    ]
+    data = UInt8[]
+    offsets = [1]
+    for s in seqs
+        append!(data, s)
+        push!(offsets, length(data) + 1)
+    end
+    batch = EncodedSequenceBatch(data, offsets)
+
+    for strands in (ForwardOnly(), ReverseOnly(), BestStrand(), BothStrands())
+        serial = scan(pwm, batch; strands=strands, execution=SerialExecution())
+        for nt in (1, 2, 4)
+            threaded = scan(pwm, batch; strands=strands, execution=ThreadedExecution(nt))
+            if strands isa BothStrands
+                @test threaded.forward.data == serial.forward.data
+                @test threaded.reverse.data == serial.reverse.data
+            else
+                @test threaded.data == serial.data
+                @test threaded.offsets == serial.offsets
+            end
+        end
+    end
+end
+
+@testset "cache keys are deterministic (property)" begin
+    dir = mktempdir()
+    cache = Cache(dir)
+    for _ in 1:3
+        k1 = cache_key(cache, "scan", "fp1", "fp2")
+        k2 = cache_key(cache, "scan", "fp1", "fp2")
+        @test k1 == k2
+    end
+end
+
+@testset "cache survives write/read round-trip (property)" begin
+    dir = mktempdir()
+    cache = Cache(dir)
+    for i in 1:5
+        key = "roundtrip_$i"
+        data = UInt8.(collect(1:i) .* 10)
+        cache_set(cache, key, data; metadata=Dict("index" => i))
+        @test cache_has(cache, key)
+        @test cache_get(cache, key) == data
+        meta = cache_get_meta(cache, key)
+        @test meta["index"] == i
+    end
+end
+
+@testset "model storage round-trip preserves scorebounds (property)" begin
+    pwm = readmodel(joinpath(EXAMPLES, "pif4.meme"))
+    dir = mktempdir()
+    bundle = joinpath(dir, "pwm")
+    writemodel(bundle, pwm)
+    loaded = readmodel(bundle)
+    @test scorebounds(loaded) == scorebounds(pwm)
+end

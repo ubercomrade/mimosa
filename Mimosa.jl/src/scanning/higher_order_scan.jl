@@ -199,3 +199,131 @@ function _ho_scan_both!(
     end
     return (fwd, rev)
 end
+
+# ── Generic parallel batch scan helpers ─────────────────────────────────────
+#
+# These helpers are used by all higher-order models (BaMM, SiteGA, Dimont, Slim)
+# to avoid duplicating the pre-allocate + parallel-for pattern. Each model
+# provides its own `_scan_one_seq!` dispatch for single/strand types.
+
+"""
+    _ho_scan_batch(strands, model, batch, npos_fn, scan_fn!, ::SerialExecution)
+
+Generic serial batch scan for higher-order models. `npos_fn(seq_len, model)`
+returns the number of scan positions, and `scan_fn!(dest, model, seq, n_pos)`
+fills the destination.
+"""
+function _ho_scan_batch(
+    strands::StrandPolicy,
+    model::AbstractMotifModel,
+    batch::EncodedSequenceBatch,
+    npos_fn::Function,
+    scan_fn!::Function,
+    ::SerialExecution,
+)
+    n = nsequences(batch)
+    T = Float32
+    out_rows = Vector{Vector{T}}(undef, n)
+    for i in 1:n
+        n_pos = npos_fn(seqlength(batch, i), model)
+        out_rows[i] = Vector{T}(undef, n_pos)
+    end
+    if strands isa BothStrands
+        for i in 1:n
+            scan_fn!(out_rows[i], model, sequence(batch, i), length(out_rows[i]))
+        end
+        return build_ragged(out_rows)
+    end
+    for i in 1:n
+        scan_fn!(out_rows[i], model, sequence(batch, i), length(out_rows[i]))
+    end
+    return build_ragged(out_rows)
+end
+
+"""
+    _ho_scan_batch(strands, model, batch, npos_fn, scan_fn!, pol::ThreadedExecution)
+
+Generic threaded batch scan for higher-order models. Pre-allocates output
+slots, then processes sequences in parallel. Results are written to
+pre-allocated slots indexed by original position, so output order matches
+serial execution.
+"""
+function _ho_scan_batch(
+    strands::StrandPolicy,
+    model::AbstractMotifModel,
+    batch::EncodedSequenceBatch,
+    npos_fn::Function,
+    scan_fn!::Function,
+    pol::ThreadedExecution,
+)
+    n = nsequences(batch)
+    T = Float32
+    out_rows = Vector{Vector{T}}(undef, n)
+    for i in 1:n
+        n_pos = npos_fn(seqlength(batch, i), model)
+        out_rows[i] = Vector{T}(undef, n_pos)
+    end
+
+    _parallel_for(pol, n) do i
+        return scan_fn!(out_rows[i], model, sequence(batch, i), length(out_rows[i]))
+    end
+
+    return build_ragged(out_rows)
+end
+
+"""
+    _ho_scan_batch_both(model, batch, npos_fn, both_fn!, ::SerialExecution)
+
+Generic serial batch scan for BothStrands mode. `both_fn!(fwd, rev, model, seq, n_pos)`
+fills both destinations.
+"""
+function _ho_scan_batch_both(
+    model::AbstractMotifModel,
+    batch::EncodedSequenceBatch,
+    npos_fn::Function,
+    both_fn!::Function,
+    ::SerialExecution,
+)
+    n = nsequences(batch)
+    T = Float32
+    fwd_rows = Vector{Vector{T}}(undef, n)
+    rev_rows = Vector{Vector{T}}(undef, n)
+    for i in 1:n
+        n_pos = npos_fn(seqlength(batch, i), model)
+        fwd_rows[i] = Vector{T}(undef, n_pos)
+        rev_rows[i] = Vector{T}(undef, n_pos)
+    end
+    for i in 1:n
+        both_fn!(fwd_rows[i], rev_rows[i], model, sequence(batch, i), length(fwd_rows[i]))
+    end
+    return StrandPair(build_ragged(fwd_rows), build_ragged(rev_rows))
+end
+
+"""
+    _ho_scan_batch_both(model, batch, npos_fn, both_fn!, pol::ThreadedExecution)
+
+Generic threaded batch scan for BothStrands mode.
+"""
+function _ho_scan_batch_both(
+    model::AbstractMotifModel,
+    batch::EncodedSequenceBatch,
+    npos_fn::Function,
+    both_fn!::Function,
+    pol::ThreadedExecution,
+)
+    n = nsequences(batch)
+    T = Float32
+    fwd_rows = Vector{Vector{T}}(undef, n)
+    rev_rows = Vector{Vector{T}}(undef, n)
+    for i in 1:n
+        n_pos = npos_fn(seqlength(batch, i), model)
+        fwd_rows[i] = Vector{T}(undef, n_pos)
+        rev_rows[i] = Vector{T}(undef, n_pos)
+    end
+    _parallel_for(pol, n) do i
+        return both_fn!(
+            fwd_rows[i], rev_rows[i], model, sequence(batch, i), length(fwd_rows[i])
+        )
+    end
+    return StrandPair(build_ragged(fwd_rows), build_ragged(rev_rows))
+end

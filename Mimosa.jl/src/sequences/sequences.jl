@@ -22,4 +22,5 @@ export RaggedArray,
     to_padded,
     from_padded,
     read_fasta,
+    readsequences,
     N_CODE

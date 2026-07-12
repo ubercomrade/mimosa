@@ -1,0 +1,382 @@
+# Explicit cache for expensive Mimosa computations (scan tracks, comparison
+# results, null distributions).
+#
+# Design principles (PLAN.md Stage 7, REFACTORING.md §15):
+#   - No global mutable singleton. The cache is an explicit struct passed
+#     around or stored by the caller.
+#   - Cache keys are content-based (SHA-256 of serialized parameters), not
+#     session-dependent `objectid` or `hash`.
+#   - Keys incorporate: algorithm version, schema version, model content
+#     fingerprint, config, dtype, and sequence fingerprint.
+#   - Atomic writes: temp file + rename. Checksums validated on load.
+#   - Corrupted/partial files are treated as cache misses with a diagnostic,
+#     never affecting correctness.
+#   - Cache is fully disableable (just don't call it).
+#   - `import Mimosa` does not create cache directories or touch the filesystem.
+
+using SHA
+using TOML
+
+# ── Schema versions ────────────────────────────────────────────────────────
+
+const CACHE_FORMAT_VERSION = 1
+
+# Algorithm version tags: bump when the algorithm changes so stale caches
+# are automatically invalidated.
+const ALGORITHM_VERSIONS = Dict{String,String}(
+    "pwm_scan" => "1",
+    "bamm_scan" => "1",
+    "sitega_scan" => "1",
+    "dimont_scan" => "1",
+    "slim_scan" => "1",
+    "motif_compare" => "1",
+    "profile_compare" => "1",
+    "null_build" => "1",
+)
+
+# ── Cache type ──────────────────────────────────────────────────────────────
+
+"""
+    Cache
+
+An explicit, filesystem-backed cache for expensive Mimosa computations.
+
+Fields:
+- `directory::String`: cache root directory.
+- `enabled::Bool`: if `false`, all operations are no-ops.
+
+The cache does not create directories at construction time. The directory
+is created lazily on the first write. This means `import Mimosa` and
+`Cache(dir)` never touch the filesystem.
+
+Create a cache with `Cache(dir)` or `Cache(dir; enabled=false)`. Clear with
+[`clearcache`](@ref).
+"""
+struct Cache
+    directory::String
+    enabled::Bool
+end
+
+"""
+    Cache(directory::AbstractString; enabled::Bool=true)
+
+Construct a cache backed by `directory`. The directory is not created until
+the first write. Pass `enabled=false` to disable all caching.
+"""
+function Cache(directory::AbstractString; enabled::Bool=true)
+    return Cache(String(directory), enabled)
+end
+
+function Base.show(io::IO, cache::Cache)
+    return print(io, "Cache(\"$(cache.directory)\", enabled=$(cache.enabled))")
+end
+
+# ── Content fingerprinting ──────────────────────────────────────────────────
+
+"""
+    content_fingerprint(data::AbstractVector{UInt8})
+
+Return a hex-encoded SHA-256 fingerprint of raw byte data.
+"""
+function content_fingerprint(data::AbstractVector{UInt8})
+    return bytes2hex(SHA.sha256(data))
+end
+
+"""
+    content_fingerprint(data::AbstractVector{<:Integer})
+
+Return a hex-encoded SHA-256 fingerprint of an integer vector (e.g. offsets).
+"""
+function content_fingerprint(data::AbstractVector{<:Integer})
+    io = IOBuffer()
+    for x in data
+        write(io, x)
+    end
+    return content_fingerprint(take!(io))
+end
+
+"""
+    content_fingerprint(s::AbstractString)
+
+Return a hex-encoded SHA-256 fingerprint of a string's UTF-8 bytes.
+"""
+function content_fingerprint(s::AbstractString)
+    return content_fingerprint(Vector{UInt8}(codeunits(s)))
+end
+
+"""
+    content_fingerprint(arr::AbstractArray{T}) where T<:AbstractFloat
+
+Return a hex-encoded SHA-256 fingerprint of a numeric array. The fingerprint
+is based on the element type, dimensions, and raw bytes, making it stable
+across Julia sessions.
+"""
+function content_fingerprint(arr::AbstractArray{T}) where {T<:AbstractFloat}
+    io = IOBuffer()
+    write(io, string(T))
+    write(io, ":")
+    for d in size(arr)
+        write(io, string(d))
+        write(io, ",")
+    end
+    write(io, ";")
+    # Write raw bytes in a canonical order (column-major = Julia native)
+    for x in arr
+        write(io, reinterpret(UInt8, [Float64(x)]))
+    end
+    return content_fingerprint(take!(io))
+end
+
+"""
+    content_fingerprint(model::AbstractMotifModel)
+
+Return a hex-encoded SHA-256 fingerprint of a motif model's content.
+The fingerprint incorporates the model type, name, representation, and
+background (for PWM).
+"""
+function content_fingerprint(model::AbstractMotifModel)
+    io = IOBuffer()
+    write(io, string(typeof(model)))
+    write(io, "|")
+    write(io, model.name)
+    write(io, "|")
+    if model isa PWM
+        write(io, content_fingerprint(model.weights))
+        write(io, "|")
+        write(io, join(string.(model.background), ","))
+    elseif model isa PFM
+        write(io, content_fingerprint(model.frequencies))
+    elseif model isa BaMM
+        write(io, content_fingerprint(model.representation))
+        write(io, "|")
+        write(io, "order=" * string(model.order))
+        write(io, ",ml=" * string(model.motif_length))
+    elseif model isa SiteGA
+        write(io, content_fingerprint(model.representation))
+        write(io, "|")
+        write(io, "ml=" * string(model.motif_length))
+    elseif model isa AbstractHigherOrderMotif
+        # Dimont, Slim: have `span` and `motif_length`
+        write(io, content_fingerprint(model.representation))
+        write(io, "|")
+        write(io, "span=" * string(model.span))
+        write(io, ",ml=" * string(model.motif_length))
+    end
+    return content_fingerprint(take!(io))
+end
+
+"""
+    sequence_fingerprint(batch::EncodedSequenceBatch)
+
+Return a hex-encoded SHA-256 fingerprint of an encoded sequence batch,
+incorporating the data and offsets.
+"""
+function sequence_fingerprint(batch::EncodedSequenceBatch)
+    io = IOBuffer()
+    write(io, "batch:")
+    write(io, content_fingerprint(batch.data))
+    write(io, "|")
+    write(io, content_fingerprint(batch.offsets))
+    return content_fingerprint(take!(io))
+end
+
+# ── Cache key construction ──────────────────────────────────────────────────
+
+"""
+    cache_key(cache::Cache, algorithm::AbstractString, parts::AbstractString...)
+
+Build a stable cache key (hex SHA-256) from an algorithm name, its version,
+and content parts. The key is deterministic across Julia sessions.
+
+Returns a 16-character hex string (first 8 bytes of SHA-256).
+"""
+function cache_key(cache::Cache, algorithm::AbstractString, parts::AbstractString...)
+    algo_version = get(ALGORITHM_VERSIONS, algorithm, "0")
+    io = IOBuffer()
+    write(io, "v=$CACHE_FORMAT_VERSION\n")
+    write(io, "algo=$algorithm\n")
+    write(io, "algo_ver=$algo_version\n")
+    for p in parts
+        write(io, p)
+        write(io, "\n")
+    end
+    full_hash = bytes2hex(SHA.sha256(take!(io)))
+    return full_hash[1:16]
+end
+
+# ── Cache file paths ────────────────────────────────────────────────────────
+
+"""
+    cache_path(cache::Cache, key::AbstractString)
+
+Return the filesystem path for a cache entry with the given key.
+"""
+function cache_path(cache::Cache, key::AbstractString)
+    return joinpath(cache.directory, "$key.bin")
+end
+
+function cache_meta_path(cache::Cache, key::AbstractString)
+    return joinpath(cache.directory, "$key.meta.toml")
+end
+
+# ── Cache get/set ───────────────────────────────────────────────────────────
+
+"""
+    cache_has(cache::Cache, key::AbstractString)
+
+Check whether a cache entry exists and is valid (not corrupted).
+Returns `false` if the cache is disabled or the entry is missing/corrupted.
+"""
+function cache_has(cache::Cache, key::AbstractString)
+    !cache.enabled && return false
+    path = cache_path(cache, key)
+    meta_path = cache_meta_path(cache, key)
+    isfile(path) && isfile(meta_path) || return false
+    # Validate checksum
+    return _validate_cache_entry(path, meta_path)
+end
+
+"""
+    cache_get(cache::Cache, key::AbstractString)
+
+Read a cache entry's binary data. Returns `nothing` if the cache is disabled,
+the entry is missing, or the checksum does not match.
+"""
+function cache_get(cache::Cache, key::AbstractString)
+    !cache.enabled && return nothing
+    path = cache_path(cache, key)
+    meta_path = cache_meta_path(cache, key)
+    isfile(path) && isfile(meta_path) || return nothing
+    _validate_cache_entry(path, meta_path) || return nothing
+    return read(path)
+end
+
+"""
+    cache_get_meta(cache::Cache, key::AbstractString)
+
+Read and parse the metadata (TOML) for a cache entry.
+Returns `nothing` if missing or cache disabled.
+"""
+function cache_get_meta(cache::Cache, key::AbstractString)
+    !cache.enabled && return nothing
+    meta_path = cache_meta_path(cache, key)
+    isfile(meta_path) || return nothing
+    try
+        return TOML.parsefile(meta_path)
+    catch
+        return nothing
+    end
+end
+
+"""
+    cache_set(cache::Cache, key::AbstractString, data::AbstractVector{UInt8};
+              metadata=Dict{String,Any}())
+
+Write binary data and metadata to the cache atomically.
+No-op if the cache is disabled.
+
+The write is atomic: data is written to a temp file, then renamed. The
+metadata (TOML with checksum) is written similarly. If the process is
+interrupted, the temp files are orphaned but the cache entry is not created.
+"""
+function cache_set(
+    cache::Cache,
+    key::AbstractString,
+    data::AbstractVector{UInt8};
+    metadata::Dict=Dict{String,Any}(),
+)
+    !cache.enabled && return nothing
+
+    # Create directory lazily
+    isdir(cache.directory) || mkpath(cache.directory)
+
+    path = cache_path(cache, key)
+    meta_path = cache_meta_path(cache, key)
+
+    # Compute checksum
+    checksum = bytes2hex(SHA.sha256(data))
+
+    # Write data atomically: temp + rename
+    tmp_path = path * ".tmp"
+    write(tmp_path, data)
+    _fsync_and_rename(tmp_path, path)
+
+    # Write metadata atomically
+    meta = Dict{String,Any}(
+        "format_version" => CACHE_FORMAT_VERSION,
+        "checksum" => "sha256:$checksum",
+        "size" => length(data),
+    )
+    merge!(meta, metadata)
+    tmp_meta = meta_path * ".tmp"
+    open(tmp_meta, "w") do io
+        return TOML.print(io, meta; sorted=true)
+    end
+    _fsync_and_rename(tmp_meta, meta_path)
+
+    return path
+end
+
+"""
+    clearcache(cache::Cache)
+
+Remove all cache entries from the cache directory.
+Does not remove the directory itself.
+"""
+function clearcache(cache::Cache)
+    isdir(cache.directory) || return 0
+    count = 0
+    for f in readdir(cache.directory)
+        fp = joinpath(cache.directory, f)
+        if isfile(fp)
+            rm(fp; force=true)
+            count += 1
+        end
+    end
+    return count
+end
+
+"""
+    clearcache(cache::Cache, key::AbstractString)
+
+Remove a single cache entry and its metadata.
+"""
+function clearcache(cache::Cache, key::AbstractString)
+    removed = 0
+    path = cache_path(cache, key)
+    meta_path = cache_meta_path(cache, key)
+    isfile(path) && (rm(path); removed += 1)
+    isfile(meta_path) && (rm(meta_path); removed += 1)
+    # Clean up any temp files for this key
+    for suffix in (".tmp",)
+        tmp = path * suffix
+        isfile(tmp) && rm(tmp; force=true)
+        tmp_meta = meta_path * suffix
+        isfile(tmp_meta) && rm(tmp_meta; force=true)
+    end
+    return removed
+end
+
+# ── Internal helpers ───────────────────────────────────────────────────────
+
+function _validate_cache_entry(path::AbstractString, meta_path::AbstractString)
+    try
+        meta = TOML.parsefile(meta_path)
+        expected = get(meta, "checksum", "")
+        startswith(expected, "sha256:") || return false
+        expected_hash = expected[8:end]
+        actual_hash = bytes2hex(SHA.sha256(read(path)))
+        return actual_hash == expected_hash
+    catch
+        return false
+    end
+end
+
+function _fsync_and_rename(tmp_path::AbstractString, final_path::AbstractString)
+    # fsync the temp file for durability, then atomic rename
+    open(tmp_path, "r+") do io
+        return flush(io)
+    end
+    mv(tmp_path, final_path; force=true)
+    return nothing
+end

@@ -213,65 +213,42 @@ end
 # ── Batch scanning (EncodedSequenceBatch) ─────────────────────────────────
 
 """
-    scan(model::Dimont, batch::EncodedSequenceBatch; strands::StrandPolicy=ForwardOnly())
+    scan(model::Dimont, batch::EncodedSequenceBatch; strands::StrandPolicy=ForwardOnly(),
+         execution::ExecutionPolicy=SerialExecution())
 
 Scan all sequences in a batch with a [`Dimont`](@ref) model, returning a
 [`RaggedArray{Float32}`](@ref) of scores.
 
 For `BothStrands`, returns a [`StrandPair{RaggedArray{Float32}}`](@ref).
+
+Under `ThreadedExecution`, sequences are processed in parallel at the
+top level. Inner scanning kernels remain serial.
 """
 function scan(
-    model::Dimont, batch::EncodedSequenceBatch; strands::StrandPolicy=ForwardOnly()
+    model::Dimont,
+    batch::EncodedSequenceBatch;
+    strands::StrandPolicy=ForwardOnly(),
+    execution::ExecutionPolicy=SerialExecution(),
 )
-    return _scan_batch_dimont(strands, model, batch)
-end
-
-function _scan_batch_dimont(
-    strands::StrandPolicy, model::Dimont, batch::EncodedSequenceBatch
-)
-    n = nsequences(batch)
-    T = Float32
-
-    out_rows = Vector{Vector{T}}(undef, n)
-    for i in 1:n
-        n_pos = npositions_dimont(seqlength(batch, i), model)
-        out_rows[i] = Vector{T}(undef, n_pos)
+    if strands isa BothStrands
+        return _ho_scan_batch_both(
+            model,
+            batch,
+            (sl, m) -> npositions_dimont(sl, m),
+            (fwd, rev, m, seq, npos) -> scan_both!(fwd, rev, m, seq, npos),
+            execution,
+        )
     end
-
-    if strands isa ForwardOnly
-        for i in 1:n
-            scan_forward!(out_rows[i], model, sequence(batch, i), length(out_rows[i]))
-        end
+    scan_fn! = if strands isa ForwardOnly
+        (dest, m, seq, npos) -> scan_forward!(dest, m, seq, npos)
     elseif strands isa ReverseOnly
-        for i in 1:n
-            scan_reverse!(out_rows[i], model, sequence(batch, i), length(out_rows[i]))
-        end
-    elseif strands isa BestStrand
-        for i in 1:n
-            scan_best!(out_rows[i], model, sequence(batch, i), length(out_rows[i]))
-        end
+        (dest, m, seq, npos) -> scan_reverse!(dest, m, seq, npos)
+    else # BestStrand
+        (dest, m, seq, npos) -> scan_best!(dest, m, seq, npos)
     end
-
-    return build_ragged(out_rows)
-end
-
-function _scan_batch_dimont(::BothStrands, model::Dimont, batch::EncodedSequenceBatch)
-    n = nsequences(batch)
-    T = Float32
-
-    fwd_rows = Vector{Vector{T}}(undef, n)
-    rev_rows = Vector{Vector{T}}(undef, n)
-    for i in 1:n
-        n_pos = npositions_dimont(seqlength(batch, i), model)
-        fwd_rows[i] = Vector{T}(undef, n_pos)
-        rev_rows[i] = Vector{T}(undef, n_pos)
-    end
-
-    for i in 1:n
-        scan_both!(fwd_rows[i], rev_rows[i], model, sequence(batch, i), length(fwd_rows[i]))
-    end
-
-    return StrandPair(build_ragged(fwd_rows), build_ragged(rev_rows))
+    return _ho_scan_batch(
+        strands, model, batch, (sl, m) -> npositions_dimont(sl, m), scan_fn!, execution
+    )
 end
 
 # ── Scan result lengths ─────────────────────────────────────────────────

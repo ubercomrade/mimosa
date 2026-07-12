@@ -283,11 +283,5 @@ function _read_npy_f64(path::AbstractString)
 end
 
 # ---------------------------------------------------------------------------
-# SHA-256 file checksum
+# SHA-256 file checksum — defined in io/model_storage.jl (loaded earlier)
 # ---------------------------------------------------------------------------
-
-function _file_sha256(path::AbstractString)
-    open(path, "r") do io
-        return bytes2hex(SHA.sha256(read(io)))
-    end
-end

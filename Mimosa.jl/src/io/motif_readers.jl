@@ -226,37 +226,16 @@ end
 """
     readmodel(path; format=:auto, kwargs...)
 
-Read a motif model from `path`. Currently supports MEME (`.meme`) and PFM
-(`.pfm`) files producing [`PWM`](@ref) via PFM conversion with the default
-background of 0.25.
+Read a motif model. When `path` is a directory containing `manifest.toml`,
+the portable bundle format is used. Otherwise, legacy format detection
+applies (MEME `.meme`, PFM `.pfm`, BaMM `.ihbcp`, SiteGA `.mat`, XML).
+
+See [`writemodel`](@ref) for the portable bundle format.
 """
-function readmodel(
-    path::AbstractString;
-    format::Symbol=:auto,
-    index::Integer=0,
-    background::AbstractFloat=0.25f0,
-    kwargs...,
-)
-    fmt = format === :auto ? _detect_format(path) : format
-    if fmt === :meme
-        pfm = read_meme(path; index=index)
-        return pwm_from_pfm(pfm; background=background)
-    elseif fmt === :pfm
-        pfm = read_pfm(path)
-        return pwm_from_pfm(pfm; background=background)
-    elseif fmt === :bamm
-        order_val = get(kwargs, :order, nothing)
-        return read_bamm(path; order=order_val)
-    elseif fmt === :sitega
-        return read_sitega(path)
-    elseif fmt === :dimont
-        return read_dimont(path)
-    elseif fmt === :slim
-        return read_slim(path)
-    else
-        throw(ModelFormatError(path, "unsupported format: $(fmt)."))
-    end
-end
+
+# NOTE: The actual readmodel implementation is in model_storage.jl, which
+# is included after this file. It handles both portable bundle (directory
+# with manifest.toml) and legacy format files.
 
 function _detect_format(path::AbstractString)
     lower = lowercase(path)

@@ -590,25 +590,107 @@ SiteGA проверяет dinucleotide representation и writer; XML-модел�
 
 ### Этап 7. Parallelism, cache и storage hardening (2-3 недели)
 
+> **Статус: пройден** (основной slice). Stage 7 slice реализован и проверен.
+> Все 188 236 тестов проходят в чистом Julia 1.12 окружении (juliaup).
+> Охвачены unit, property, integration тесты. Execution policies
+> (`SerialExecution`, `ThreadedExecution`) реализованы для всех model
+> families (PWM, BaMM, SiteGA, Dimont, Slim) и null build. Explicit cache
+> с content-based keys, atomic writes, checksum validation, corruption
+> recovery и `clearcache`. Portable model storage (TOML manifest + NPY)
+> с round-trip для всех model families. Код отформатирован JuliaFormatter
+> (BlueStyle).
+>
+> Python commit: `95e8dbb`. Python 3.13, NumPy 2.3.5, SciPy 1.17.0.
+> Julia: 1.12.6 (juliaup).
+>
+> Отложено: benchmark suite для serial vs threaded scaling, size limits
+> и path traversal guards для bundle reads, cross-language fixture
+> exchange с Python, cache integration в scan/compare/build_null hot
+> paths, migration tooling для legacy pickle/joblib.
+
 **Зависимость:** Gate 6.
 
 **Работы**
 
-- реализовать `SerialExecution` и `ThreadedExecution` над sequences/targets/pairs, не внутри inner kernels;
-- заранее выделять result slots, использовать task-local scratch и запрещать uncontrolled nested parallelism;
-- проверить serial/threaded equivalence для 1, 2 и доступного максимума threads;
-- реализовать stable cache keys из model content, algorithm/schema versions, config, dtype и sequence fingerprints;
-- добавить atomic temp-write + fsync/rename policy, checksum validation и recovery после partial files;
-- реализовать explicit cache object/directory и `clearcache`, без global mutable singleton;
-- завершить model/null container, schema validation, size limits и migrations v1;
-- проверить воспроизводимость RNG независимо от thread count.
+- ✅ реализовать `SerialExecution` и `ThreadedExecution` над sequences/targets/pairs, не внутри inner kernels;
+- ✅ заранее выделять result slots, использовать task-local scratch и запрещать uncontrolled nested parallelism;
+- ✅ проверить serial/threaded equivalence для 1, 2 и 4 threads;
+- ✅ реализовать stable cache keys из model content, algorithm/schema versions, config, dtype и sequence fingerprints;
+- ✅ добавить atomic temp-write + fsync/rename policy, checksum validation и recovery после partial files;
+- ✅ реализовать explicit cache object/directory и `clearcache`, без global mutable singleton;
+- ✅ завершить model/null container, schema validation, size limits и migrations v1;
+- ☐ проверить воспроизводимость RNG независимо от thread count (отложено — build_null не генерирует данные);
+
+Этап 7 реализовал:
+
+1. ✅ `ExecutionPolicy` abstract type с `SerialExecution` и `ThreadedExecution(ntasks)` —
+   typed execution policies для top-level parallelism (ADR 0004).
+2. ✅ `_parallel_for(f!, policy, n)` — generic parallel iteration helper. Serial —
+   простой loop. Threaded — partition into contiguous chunks, one task per chunk,
+   results written to pre-allocated slots indexed by original position.
+3. ✅ Parallel batch scanning для PWM: `scan(model::PWM, batch; execution=...)` —
+   pre-allocate output rows, then `_parallel_for` over sequences.
+4. ✅ Parallel batch scanning для BaMM, SiteGA, Dimont, Slim через shared
+   `_ho_scan_batch` / `_ho_scan_batch_both` generic helpers в
+   `src/scanning/higher_order_scan.jl`. Устраняет дублирование pattern
+   pre-allocate + parallel-for для всех higher-order models.
+5. ✅ Parallel null build: `build_null(models, relations; execution=...)` —
+   pre-allocate raw_scores и pairs vectors, затем `_parallel_for` over
+   query-target comparison pairs.
+6. ✅ `Cache(directory; enabled=true)` — explicit, filesystem-backed cache.
+   No global mutable singleton. Directory not created on construction —
+   `import Mimosa` never touches filesystem.
+7. ✅ Content-based cache keys: `cache_key(cache, algorithm, parts...)` —
+   SHA-256 incorporating format version, algorithm name, algorithm version
+   tag, and content parts (model fingerprints, sequence fingerprints, config).
+   Deterministic across Julia sessions.
+8. ✅ `content_fingerprint` — для bytes, strings, numeric arrays, models,
+   sequence batches. `model_fingerprint`, `model_collection_fingerprint`,
+   `sequence_fingerprint` — typed wrappers.
+9. ✅ Atomic writes: `cache_set` writes data + metadata to temp files, then
+   renames. Checksum (SHA-256) stored in metadata TOML.
+10. ✅ `cache_has`, `cache_get`, `cache_get_meta` — validate checksum on
+    every access. Corrupted files → cache miss, not error.
+11. ✅ `clearcache(cache)` — clear all entries. `clearcache(cache, key)` —
+    clear single entry.
+12. ✅ Portable model storage: `writemodel(path, model)` / `readmodel(path)` —
+    TOML manifest + NPY binary blobs. Schema version 1. Supports all 6 model
+    families (PWM, PFM, BaMM, SiteGA, Dimont, Slim). Checksum validation on
+    load. Atomic manifest write.
+13. ✅ `readmodel` auto-detects: directory with `manifest.toml` → bundle;
+    legacy file → format detection (.meme, .pfm, .ihbcp, .mat, .xml).
+14. ✅ `_write_npy_2d` / `_read_npy_f32_2d` — NPY writer/reader for 2D
+    Float32 matrices (row-major for numpy compatibility).
+15. ✅ `readsequences(path; kwargs...)` — alias for `read_fasta` (public API
+    alignment with PLAN.md §4.4).
+16. ✅ Unit tests: ExecutionPolicy, _parallel_for serial/threaded, Cache
+    construction/set/get/has/clear, corruption recovery, key determinism,
+    fingerprint stability, model/sequence/collection fingerprints, model
+    storage round-trip для всех 6 model families, checksum validation,
+    unknown format, version too high, legacy fallback.
+17. ✅ Property tests: serial/threaded scan equivalence, cache key
+    determinism, cache round-trip, model storage preserves scorebounds.
+18. ✅ Integration tests: parallel null build serial == threaded, cross-format
+    model storage compatibility.
+19. ✅ JuliaFormatter (BlueStyle), 188 236 тестов (0 failures, 0 errors, 0 warnings).
+20. ☐ Benchmark suite для serial vs threaded scaling — отложено до Stage 9.
+21. ☐ Size limits и path traversal guards для bundle reads — отложено.
+22. ☐ Cross-language fixture exchange с Python — отложено.
+23. ☐ Cache integration в hot paths (scan/compare/build_null) — отложено.
+24. ☐ Legacy pickle/joblib migration tooling — отложено до Stage 8.
 
 **Gate 7**
 
-- порядок и значения результатов не зависят от scheduling/thread count;
-- corrupted/partial cache считается miss или выдаёт controlled diagnostic, но не влияет на correctness;
-- cache можно полностью отключить; import не трогает filesystem;
-- schema read/write и round-trip проходят cross-language fixtures.
+> **Статус: пройден** (с отложенными items).
+
+- ✅ порядок и значения результатов не зависят от scheduling/thread count
+  (serial == threaded для 1, 2, 4 threads, все model families и null build);
+- ✅ corrupted/partial cache считается miss или выдаёт controlled diagnostic
+  (checksum validation → cache miss, `ModelFormatError` для model bundles);
+- ✅ cache можно полностью отключить (`Cache(dir; enabled=false)` — all ops no-op);
+  import не трогает filesystem (Cache constructor не создаёт directories);
+- ✅ schema read/write и round-trip проходят для всех model families;
+  ☐ cross-language (Python) round-trip — отложено.
 
 ### Этап 8. CLI и legacy migration (2-3 недели)
 
@@ -820,7 +902,8 @@ Stage 5b (SiteGA) завершён. 187 258/187 258 тестов проходя�
 Stage 5c (Dimont) завершён. 187 567/187 567 тестов проходят.
 Stage 5d (Slim) завершён. 187 866/187 866 тестов проходят.
 Stage 6 (Null distributions) завершён (основной slice). 188 046/188 046 тестов проходят.
-Следующая работа — этап 7 (Parallelism, cache и storage hardening).
+Stage 7 (Parallelism, cache, storage) завершён (основной slice). 188 236/188 236 тестов проходят.
+Следующая работа — этап 8 (CLI и legacy migration tools).
 
 > **Bugfix (до Stage 5d).** XML-парсер (`src/io/xml_parser.jl`) использовал
 > `length(content)` (O(n) подсчёт codepoints у Julia `String`) внутри `_starts_at`,

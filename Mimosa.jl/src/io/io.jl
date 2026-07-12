@@ -6,6 +6,7 @@ include("bamm_reader.jl")
 include("sitega_reader.jl")
 include("dimont_reader.jl")
 include("slim_reader.jl")
+include("model_storage.jl")
 
 export readmodel,
     read_meme,
@@ -15,4 +16,5 @@ export readmodel,
     read_sitega,
     read_dimont,
     read_slim,
-    write_sitega
+    write_sitega,
+    writemodel

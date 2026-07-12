@@ -12,6 +12,7 @@ See `REFACTORING.md` and `PLAN.md` for the migration roadmap.
 module Mimosa
 
 include("errors.jl")
+include("parallel/parallel.jl")
 include("models/models.jl")
 include("sequences/sequences.jl")
 include("models/score_profile.jl")
@@ -21,6 +22,7 @@ include("comparison/comparison.jl")
 include("profiles/profiles.jl")
 include("sites/sites.jl")
 include("statistics/statistics.jl")
+include("cache/cache.jl")
 include("serialization.jl")
 include("cli.jl")
 
@@ -33,7 +35,8 @@ export readmodel,
     read_dimont,
     read_slim,
     write_sitega,
-    read_fasta,
+    writemodel,
+    readsequences,
     compare,
     to_json,
     to_dict,
@@ -135,5 +138,22 @@ export GEVFit,
     savenull,
     loadnull,
     NULL_FORMAT_VERSION
+
+# Parallelism exports (Stage 7)
+export ExecutionPolicy, SerialExecution, ThreadedExecution
+
+# Cache exports (Stage 7)
+export Cache,
+    cache_key,
+    cache_has,
+    cache_get,
+    cache_get_meta,
+    cache_set,
+    clearcache,
+    content_fingerprint,
+    model_fingerprint,
+    model_collection_fingerprint,
+    sequence_fingerprint,
+    MODEL_FORMAT_VERSION
 
 end # module

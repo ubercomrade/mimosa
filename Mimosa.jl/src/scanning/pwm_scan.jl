@@ -245,18 +245,31 @@ end
 # ── Batch scanning (EncodedSequenceBatch) ─────────────────────────────────
 
 """
-    scan(model::PWM, batch::EncodedSequenceBatch; strands::StrandPolicy=ForwardOnly())
+    scan(model::PWM, batch::EncodedSequenceBatch; strands::StrandPolicy=ForwardOnly(),
+         execution::ExecutionPolicy=SerialExecution())
 
 Scan all sequences in a batch with a [`PWM`](@ref) model, returning a
 [`RaggedArray{Float32}`](@ref) of scores.
 
 For `BothStrands`, returns a [`StrandPair{RaggedArray{Float32}}`](@ref).
+
+Under `ThreadedExecution`, sequences are processed in parallel at the
+top level (one sequence per task chunk). Inner scanning kernels remain
+serial. Results are identical to `SerialExecution` — they are written to
+pre-allocated slots indexed by original position.
 """
-function scan(model::PWM, batch::EncodedSequenceBatch; strands::StrandPolicy=ForwardOnly())
-    return _scan_batch(strands, model, batch)
+function scan(
+    model::PWM,
+    batch::EncodedSequenceBatch;
+    strands::StrandPolicy=ForwardOnly(),
+    execution::ExecutionPolicy=SerialExecution(),
+)
+    return _scan_batch(strands, model, batch, execution)
 end
 
-function _scan_batch(strands::StrandPolicy, model::PWM, batch::EncodedSequenceBatch)
+function _scan_batch(
+    strands::StrandPolicy, model::PWM, batch::EncodedSequenceBatch, ::SerialExecution
+)
     n = nsequences(batch)
     W = length(model)
     weights = model.weights
@@ -269,54 +282,59 @@ function _scan_batch(strands::StrandPolicy, model::PWM, batch::EncodedSequenceBa
         out_rows[i] = Vector{T}(undef, n_pos)
     end
 
-    _scan_batch_kernel!(strands, out_rows, weights, batch, W)
+    for i in 1:n
+        seq = sequence(batch, i)
+        _scan_one_seq!(strands, out_rows[i], weights, seq, length(out_rows[i]))
+    end
 
     return build_ragged(out_rows)
 end
 
-function _scan_batch_kernel!(
-    ::ForwardOnly,
-    out_rows::Vector{Vector{T}},
-    weights::AbstractMatrix{T},
-    batch::EncodedSequenceBatch,
-    W::Int,
-) where {T<:AbstractFloat}
-    for i in 1:nsequences(batch)
-        seq = sequence(batch, i)
-        scan_forward!(out_rows[i], weights, seq, length(out_rows[i]))
+function _scan_batch(
+    strands::StrandPolicy, model::PWM, batch::EncodedSequenceBatch, pol::ThreadedExecution
+)
+    n = nsequences(batch)
+    W = length(model)
+    weights = model.weights
+    T = eltype(weights)
+
+    # Pre-allocate output rows (pre-allocation happens before spawning tasks)
+    out_rows = Vector{Vector{T}}(undef, n)
+    for i in 1:n
+        n_pos = npositions(seqlength(batch, i), W)
+        out_rows[i] = Vector{T}(undef, n_pos)
     end
-    return out_rows
+
+    # Parallel execution: each task processes its chunk of sequences
+    # Results written to pre-allocated slots → deterministic order
+    _parallel_for(pol, n) do i
+        seq = sequence(batch, i)
+        return _scan_one_seq!(strands, out_rows[i], weights, seq, length(out_rows[i]))
+    end
+
+    return build_ragged(out_rows)
 end
 
-function _scan_batch_kernel!(
-    ::ReverseOnly,
-    out_rows::Vector{Vector{T}},
-    weights::AbstractMatrix{T},
-    batch::EncodedSequenceBatch,
-    W::Int,
+# Dispatch helper: scan one sequence into pre-allocated dest
+function _scan_one_seq!(
+    ::ForwardOnly, dest::Vector{T}, weights::AbstractMatrix{T}, seq, n_pos
 ) where {T<:AbstractFloat}
-    for i in 1:nsequences(batch)
-        seq = sequence(batch, i)
-        scan_reverse!(out_rows[i], weights, seq, length(out_rows[i]))
-    end
-    return out_rows
+    return scan_forward!(dest, weights, seq, n_pos)
+end
+function _scan_one_seq!(
+    ::ReverseOnly, dest::Vector{T}, weights::AbstractMatrix{T}, seq, n_pos
+) where {T<:AbstractFloat}
+    return scan_reverse!(dest, weights, seq, n_pos)
+end
+function _scan_one_seq!(
+    ::BestStrand, dest::Vector{T}, weights::AbstractMatrix{T}, seq, n_pos
+) where {T<:AbstractFloat}
+    return scan_best!(dest, weights, seq, n_pos)
 end
 
-function _scan_batch_kernel!(
-    ::BestStrand,
-    out_rows::Vector{Vector{T}},
-    weights::AbstractMatrix{T},
-    batch::EncodedSequenceBatch,
-    W::Int,
-) where {T<:AbstractFloat}
-    for i in 1:nsequences(batch)
-        seq = sequence(batch, i)
-        scan_best!(out_rows[i], weights, seq, length(out_rows[i]))
-    end
-    return out_rows
-end
-
-function _scan_batch(::BothStrands, model::PWM, batch::EncodedSequenceBatch)
+function _scan_batch(
+    ::BothStrands, model::PWM, batch::EncodedSequenceBatch, ::SerialExecution
+)
     n = nsequences(batch)
     W = length(model)
     weights = model.weights
@@ -333,6 +351,30 @@ function _scan_batch(::BothStrands, model::PWM, batch::EncodedSequenceBatch)
     for i in 1:n
         seq = sequence(batch, i)
         scan_both!(fwd_rows[i], rev_rows[i], weights, seq, length(fwd_rows[i]))
+    end
+
+    return StrandPair(build_ragged(fwd_rows), build_ragged(rev_rows))
+end
+
+function _scan_batch(
+    ::BothStrands, model::PWM, batch::EncodedSequenceBatch, pol::ThreadedExecution
+)
+    n = nsequences(batch)
+    W = length(model)
+    weights = model.weights
+    T = eltype(weights)
+
+    fwd_rows = Vector{Vector{T}}(undef, n)
+    rev_rows = Vector{Vector{T}}(undef, n)
+    for i in 1:n
+        n_pos = npositions(seqlength(batch, i), W)
+        fwd_rows[i] = Vector{T}(undef, n_pos)
+        rev_rows[i] = Vector{T}(undef, n_pos)
+    end
+
+    _parallel_for(pol, n) do i
+        seq = sequence(batch, i)
+        return scan_both!(fwd_rows[i], rev_rows[i], weights, seq, length(fwd_rows[i]))
     end
 
     return StrandPair(build_ragged(fwd_rows), build_ragged(rev_rows))

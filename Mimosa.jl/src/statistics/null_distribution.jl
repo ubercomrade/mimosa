@@ -89,7 +89,8 @@ struct NullBuildResult
 end
 
 """
-    build_null(models, relations; strategy="motif", metric=:pcc, min_null_targets=1, strict=false, kwargs...)
+    build_null(models, relations; strategy="motif", metric=:pcc, min_null_targets=1,
+               strict=false, execution=SerialExecution(), kwargs...)
 
 Build a pooled null distribution from all eligible query-target comparisons.
 
@@ -104,9 +105,16 @@ GEV distribution.
 - `metric`: comparison metric.
 - `min_null_targets`: minimum eligible targets per query (default 1).
 - `strict`: if `true`, raise an error when a query has too few targets.
+- `execution`: [`ExecutionPolicy`](@ref) for parallel comparison of query-target
+  pairs. Default `SerialExecution()`.
 - `kwargs...`: additional keyword arguments passed to `compare`.
 
 Returns a [`NullBuildResult`](@ref).
+
+Under `ThreadedExecution`, comparisons are processed in parallel at the
+top level. Results are collected into pre-allocated slots indexed by
+the original comparison order, so the pooled score order and fit are
+identical to `SerialExecution`.
 """
 function build_null(
     models::AbstractVector,
@@ -115,6 +123,7 @@ function build_null(
     metric=:pcc,
     min_null_targets::Int=1,
     strict::Bool=false,
+    execution::ExecutionPolicy=SerialExecution(),
     kwargs...,
 )
     by_name = Dict{String,eltype(models)}()
@@ -122,11 +131,10 @@ function build_null(
         by_name[model.name] = model
     end
 
-    raw_scores = Float64[]
-    pairs = NullPair[]
+    # Build the work schedule: list of (query, target) pairs to compare
+    work_pairs = Tuple{AbstractMotifModel,AbstractMotifModel}[]
     skipped = NamedTuple{(:query, :reason),Tuple{String,String}}[]
     n_queries = 0
-    total_comparisons = 0
 
     for query in models
         target_names = eligible_targets(relations, query.name)
@@ -146,21 +154,30 @@ function build_null(
 
         n_queries += 1
         for target_name in target_names
-            target = by_name[target_name]
-            result = compare(query, target; metric=metric, kwargs...)
-            score = Float64(result.score)
-            push!(raw_scores, score)
-            push!(pairs, NullPair(query.name, target_name, score))
-            total_comparisons += 1
+            push!(work_pairs, (query, by_name[target_name]))
         end
     end
 
-    if isempty(raw_scores)
+    total_comparisons = length(work_pairs)
+    if total_comparisons == 0
         throw(
             ArgumentError(
                 "Cannot build a null distribution: no eligible query-target comparisons were found.",
             ),
         )
+    end
+
+    # Pre-allocate result slots for raw scores
+    raw_scores = Vector{Float64}(undef, total_comparisons)
+    pairs = Vector{NullPair}(undef, total_comparisons)
+
+    # Compare all pairs (serial or threaded)
+    _parallel_for(execution, total_comparisons) do i
+        q, t = work_pairs[i]
+        result = compare(q, t; metric=metric, kwargs...)
+        score = Float64(result.score)
+        raw_scores[i] = score
+        return pairs[i] = NullPair(q.name, t.name, score)
     end
 
     fit_result = fit_gev(raw_scores)

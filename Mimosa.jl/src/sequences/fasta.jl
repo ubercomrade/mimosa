@@ -24,6 +24,14 @@ function read_fasta(path::AbstractString; max_sequences::Int=MAX_FASTA_SEQUENCES
     end
 end
 
+"""
+    readsequences(path; kwargs...)
+
+Alias for [`read_fasta`](@ref). Reads a FASTA file and returns
+`(batch, names)`.
+"""
+readsequences(path::AbstractString; kwargs...) = read_fasta(path; kwargs...)
+
 function _read_fasta_io(io::IO, path::AbstractString, max_sequences::Int)
     rows = Vector{Vector{UInt8}}()
     names = Vector{String}()

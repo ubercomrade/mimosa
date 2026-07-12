@@ -33,7 +33,7 @@ catch
     @info "Aqua not available, skipping quality checks."
 end
 
-@testset "Mimosa.jl Stage 1-6" begin
+@testset "Mimosa.jl Stage 1-7" begin
     # Unit tests
     include("unit/test_models.jl")
     include("unit/test_readers.jl")
@@ -52,6 +52,9 @@ end
     include("unit/test_relations.jl")
     include("unit/test_null_distribution.jl")
     include("unit/test_null_storage.jl")
+    include("unit/test_parallel.jl")
+    include("unit/test_cache.jl")
+    include("unit/test_model_storage.jl")
 
     # Property tests
     include("properties/test_properties.jl")
