@@ -29,31 +29,15 @@ Fill `dest[1:n_pos]` with forward-strand Dimont scores for one sequence.
 function scan_forward!(
     dest::AbstractVector{T}, model::Dimont, seq::AbstractVector{UInt8}, n_pos::Int
 ) where {T<:AbstractFloat}
-    kmer_val = kmer(model)
-    ctx = context_length(model)
-    n_terms = model.motif_length
-    rep = model.representation
-    seq_len = length(seq)
-
-    @inbounds for pos in 1:n_pos
-        total = zero(T)
-        for term in 0:(n_terms - 1)
-            code = 0
-            src_start = pos - 1 - ctx + term
-            for offset in 0:(kmer_val - 1)
-                src = src_start + offset
-                if 0 <= src < seq_len
-                    encoded = Int(seq[src + 1])
-                else
-                    encoded = 4
-                end
-                code = code * 5 + encoded
-            end
-            total += rep[code + 1, term + 1]
-        end
-        dest[pos] = total
-    end
-    return dest
+    return _ho_scan_forward!(
+        dest,
+        model.representation,
+        kmer(model),
+        context_length(model),
+        scan_width(model),
+        seq,
+        n_pos,
+    )
 end
 
 # ── Reverse scan kernel ──────────────────────────────────────────────────
@@ -66,31 +50,15 @@ Fill `dest[1:n_pos]` with reverse-strand Dimont scores for one sequence.
 function scan_reverse!(
     dest::AbstractVector{T}, model::Dimont, seq::AbstractVector{UInt8}, n_pos::Int
 ) where {T<:AbstractFloat}
-    kmer_val = kmer(model)
-    win = window_size(model)
-    n_terms = model.motif_length
-    rep = model.representation
-    seq_len = length(seq)
-
-    @inbounds for pos in 1:n_pos
-        total = zero(T)
-        for term in 0:(n_terms - 1)
-            code = 0
-            for offset in 0:(kmer_val - 1)
-                src = (pos - 1) + (win - 1) - (term + offset)
-                if 0 <= src < seq_len
-                    base = Int(seq[src + 1])
-                    encoded = base == 4 ? 4 : 3 - base
-                else
-                    encoded = 4
-                end
-                code = code * 5 + encoded
-            end
-            total += rep[code + 1, term + 1]
-        end
-        dest[pos] = total
-    end
-    return dest
+    return _ho_scan_reverse!(
+        dest,
+        model.representation,
+        kmer(model),
+        window_size(model),
+        scan_width(model),
+        seq,
+        n_pos,
+    )
 end
 
 # ── Best-strand scan kernel ──────────────────────────────────────────────
@@ -103,46 +71,16 @@ Fill `dest[1:n_pos]` with the maximum of forward and reverse strand scores.
 function scan_best!(
     dest::AbstractVector{T}, model::Dimont, seq::AbstractVector{UInt8}, n_pos::Int
 ) where {T<:AbstractFloat}
-    kmer_val = kmer(model)
-    ctx = context_length(model)
-    win = window_size(model)
-    n_terms = model.motif_length
-    rep = model.representation
-    seq_len = length(seq)
-
-    @inbounds for pos in 1:n_pos
-        fwd_total = zero(T)
-        rev_total = zero(T)
-        for term in 0:(n_terms - 1)
-            fwd_code = 0
-            src_start = (pos - 1) - ctx + term
-            for offset in 0:(kmer_val - 1)
-                src = src_start + offset
-                if 0 <= src < seq_len
-                    encoded = Int(seq[src + 1])
-                else
-                    encoded = 4
-                end
-                fwd_code = fwd_code * 5 + encoded
-            end
-            fwd_total += rep[fwd_code + 1, term + 1]
-
-            rev_code = 0
-            for offset in 0:(kmer_val - 1)
-                src = (pos - 1) + (win - 1) - (term + offset)
-                if 0 <= src < seq_len
-                    base = Int(seq[src + 1])
-                    encoded = base == 4 ? 4 : 3 - base
-                else
-                    encoded = 4
-                end
-                rev_code = rev_code * 5 + encoded
-            end
-            rev_total += rep[rev_code + 1, term + 1]
-        end
-        dest[pos] = max(fwd_total, rev_total)
-    end
-    return dest
+    return _ho_scan_best!(
+        dest,
+        model.representation,
+        kmer(model),
+        context_length(model),
+        window_size(model),
+        scan_width(model),
+        seq,
+        n_pos,
+    )
 end
 
 # ── Both-strand scan kernel ──────────────────────────────────────────────
@@ -160,47 +98,17 @@ function scan_both!(
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
-    kmer_val = kmer(model)
-    ctx = context_length(model)
-    win = window_size(model)
-    n_terms = model.motif_length
-    rep = model.representation
-    seq_len = length(seq)
-
-    @inbounds for pos in 1:n_pos
-        fwd_total = zero(T)
-        rev_total = zero(T)
-        for term in 0:(n_terms - 1)
-            fwd_code = 0
-            src_start = (pos - 1) - ctx + term
-            for offset in 0:(kmer_val - 1)
-                src = src_start + offset
-                if 0 <= src < seq_len
-                    encoded = Int(seq[src + 1])
-                else
-                    encoded = 4
-                end
-                fwd_code = fwd_code * 5 + encoded
-            end
-            fwd_total += rep[fwd_code + 1, term + 1]
-
-            rev_code = 0
-            for offset in 0:(kmer_val - 1)
-                src = (pos - 1) + (win - 1) - (term + offset)
-                if 0 <= src < seq_len
-                    base = Int(seq[src + 1])
-                    encoded = base == 4 ? 4 : 3 - base
-                else
-                    encoded = 4
-                end
-                rev_code = rev_code * 5 + encoded
-            end
-            rev_total += rep[rev_code + 1, term + 1]
-        end
-        fwd[pos] = fwd_total
-        rev[pos] = rev_total
-    end
-    return (fwd, rev)
+    return _ho_scan_both!(
+        fwd,
+        rev,
+        model.representation,
+        kmer(model),
+        context_length(model),
+        window_size(model),
+        scan_width(model),
+        seq,
+        n_pos,
+    )
 end
 
 # ── Single-sequence allocating scan ──────────────────────────────────────

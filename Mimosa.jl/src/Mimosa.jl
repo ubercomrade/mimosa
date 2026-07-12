@@ -30,6 +30,7 @@ export readmodel,
     read_bamm,
     read_sitega,
     read_dimont,
+    read_slim,
     write_sitega,
     read_fasta,
     compare,
@@ -62,10 +63,11 @@ export scan,
     npositions,
     npositions_bamm,
     npositions_dimont,
+    npositions_slim,
     scan_result_lengths
 
 # Model exports
-export ScoreProfile, BaMM, SiteGA, Dimont, scorebounds, profile_bundle
+export ScoreProfile, BaMM, SiteGA, Dimont, Slim, scorebounds, profile_bundle
 
 # Sites and PFM reconstruction exports
 export SiteSelector,

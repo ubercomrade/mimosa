@@ -1,44 +1,33 @@
-# Higher-order scanning kernel for BaMM and other context-aware motif models.
+# Slim scanning kernel.
 #
-# Generalizes the PWM scan to handle k-mer context: each position score depends
-# on `kmer` consecutive bases (kmer = order + 1), not just a single base.
-#
-# Scanning geometry:
-#   kmer       = order + 1          (bases per scoring term)
-#   context    = order              (bases before motif start used for context)
-#   window     = motif_len + order  (total sequence window needed)
-#   n_terms    = motif_len          (number of scoring terms per window)
+# Slim uses the same context-aware scanning geometry as BaMM and Dimont:
+#   kmer       = span + 1          (bases per scoring term)
+#   context    = span              (bases before motif start used for context)
+#   window     = motif_len + span  (total sequence window needed)
+#   n_terms    = motif_len         (number of scoring terms per window)
 #   n_positions = seq_len - window + 1
 #
-# Forward scan at position `pos` (0-indexed relative to window start):
-#   For term t (0..n_terms-1):
-#     code = encode_5ary(seq[pos - context + t], ..., seq[pos - context + t + kmer - 1])
-#     score += representation[code, t + 1]
-#
-# Reverse scan at position `pos`:
-#   For term t:
-#     code = encode_5ary(complement(seq[pos + window - 1 - (t + 0)]),
-#                        complement(seq[pos + window - 1 - (t + 1)]), ...)
-#     score += representation[code, t + 1]
+# The kernel is identical to BaMM's and Dimont's; only the model type differs.
+# All four strand variants delegate to the shared generic higher-order kernel.
 
 """
-    npositions_bamm(seq_len::Int, model::BaMM)
+    npositions_slim(seq_len::Int, model::Slim)
 
-Return the number of scanning positions for a BaMM model.
+Return the number of scanning positions for a Slim model.
 """
-function npositions_bamm(seq_len::Int, model::BaMM)
+function npositions_slim(seq_len::Int, model::Slim)
     return max(seq_len - window_size(model) + 1, 0)
 end
 
 # ── Forward scan kernel ──────────────────────────────────────────────────
 
 """
-    scan_forward!(dest::AbstractVector{T}, model::BaMM, seq::AbstractVector{UInt8}, n_pos::Int)
+    scan_forward!(dest::AbstractVector{T}, model::Slim, seq::AbstractVector{UInt8}, n_pos::Int)
 
-Fill `dest[1:n_pos]` with forward-strand BaMM scores for one sequence.
+Fill `dest[1:n_pos]` with forward-strand Slim scores for one sequence.
 """
 function scan_forward!(
-    dest::AbstractVector{T}, model::BaMM, seq::AbstractVector{UInt8}, n_pos::Int
+    dest::AbstractVector{T}, model::Slim, seq::AbstractVector{UInt8}, n_pos::Int
 ) where {T<:AbstractFloat}
     return _ho_scan_forward!(
         dest,
@@ -51,15 +40,13 @@ function scan_forward!(
     )
 end
 
-# ── Reverse scan kernel ──────────────────────────────────────────────────
-
 """
-    scan_reverse!(dest::AbstractVector{T}, model::BaMM, seq::AbstractVector{UInt8}, n_pos::Int)
+    scan_reverse!(dest::AbstractVector{T}, model::Slim, seq::AbstractVector{UInt8}, n_pos::Int)
 
-Fill `dest[1:n_pos]` with reverse-strand BaMM scores for one sequence.
+Fill `dest[1:n_pos]` with reverse-strand Slim scores for one sequence.
 """
 function scan_reverse!(
-    dest::AbstractVector{T}, model::BaMM, seq::AbstractVector{UInt8}, n_pos::Int
+    dest::AbstractVector{T}, model::Slim, seq::AbstractVector{UInt8}, n_pos::Int
 ) where {T<:AbstractFloat}
     return _ho_scan_reverse!(
         dest,
@@ -72,15 +59,13 @@ function scan_reverse!(
     )
 end
 
-# ── Best-strand scan kernel ──────────────────────────────────────────────
-
 """
-    scan_best!(dest::AbstractVector{T}, model::BaMM, seq::AbstractVector{UInt8}, n_pos::Int)
+    scan_best!(dest::AbstractVector{T}, model::Slim, seq::AbstractVector{UInt8}, n_pos::Int)
 
 Fill `dest[1:n_pos]` with the maximum of forward and reverse strand scores.
 """
 function scan_best!(
-    dest::AbstractVector{T}, model::BaMM, seq::AbstractVector{UInt8}, n_pos::Int
+    dest::AbstractVector{T}, model::Slim, seq::AbstractVector{UInt8}, n_pos::Int
 ) where {T<:AbstractFloat}
     return _ho_scan_best!(
         dest,
@@ -94,10 +79,8 @@ function scan_best!(
     )
 end
 
-# ── Both-strand scan kernel ──────────────────────────────────────────────
-
 """
-    scan_both!(fwd::AbstractVector{T}, rev::AbstractVector{T}, model::BaMM,
+    scan_both!(fwd::AbstractVector{T}, rev::AbstractVector{T}, model::Slim,
                seq::AbstractVector{UInt8}, n_pos::Int)
 
 Fill `fwd` and `rev` with forward and reverse strand scores respectively.
@@ -105,7 +88,7 @@ Fill `fwd` and `rev` with forward and reverse strand scores respectively.
 function scan_both!(
     fwd::AbstractVector{T},
     rev::AbstractVector{T},
-    model::BaMM,
+    model::Slim,
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
@@ -125,42 +108,42 @@ end
 # ── Single-sequence allocating scan ──────────────────────────────────────
 
 """
-    scan(model::BaMM, seq::AbstractVector{UInt8}; strands::StrandPolicy=ForwardOnly())
+    scan(model::Slim, seq::AbstractVector{UInt8}; strands::StrandPolicy=ForwardOnly())
 
-Scan a single encoded sequence with a [`BaMM`](@ref) model.
+Scan a single encoded sequence with a [`Slim`](@ref) model.
 
 Returns:
 - `Vector{Float32}` for `ForwardOnly`, `ReverseOnly`, `BestStrand`.
 - [`StrandPair{Vector{Float32}}`](@ref) for `BothStrands`.
 """
-function scan(model::BaMM, seq::AbstractVector{UInt8}; strands::StrandPolicy=ForwardOnly())
-    n_pos = npositions_bamm(length(seq), model)
-    return _scan_single_bamm(strands, model, seq, n_pos)
+function scan(model::Slim, seq::AbstractVector{UInt8}; strands::StrandPolicy=ForwardOnly())
+    n_pos = npositions_slim(length(seq), model)
+    return _scan_single_slim(strands, model, seq, n_pos)
 end
 
-function _scan_single_bamm(
-    ::ForwardOnly, model::BaMM, seq::AbstractVector{UInt8}, n_pos::Int
+function _scan_single_slim(
+    ::ForwardOnly, model::Slim, seq::AbstractVector{UInt8}, n_pos::Int
 )
     dest = Vector{Float32}(undef, n_pos)
     return scan_forward!(dest, model, seq, n_pos)
 end
 
-function _scan_single_bamm(
-    ::ReverseOnly, model::BaMM, seq::AbstractVector{UInt8}, n_pos::Int
+function _scan_single_slim(
+    ::ReverseOnly, model::Slim, seq::AbstractVector{UInt8}, n_pos::Int
 )
     dest = Vector{Float32}(undef, n_pos)
     return scan_reverse!(dest, model, seq, n_pos)
 end
 
-function _scan_single_bamm(
-    ::BestStrand, model::BaMM, seq::AbstractVector{UInt8}, n_pos::Int
+function _scan_single_slim(
+    ::BestStrand, model::Slim, seq::AbstractVector{UInt8}, n_pos::Int
 )
     dest = Vector{Float32}(undef, n_pos)
     return scan_best!(dest, model, seq, n_pos)
 end
 
-function _scan_single_bamm(
-    ::BothStrands, model::BaMM, seq::AbstractVector{UInt8}, n_pos::Int
+function _scan_single_slim(
+    ::BothStrands, model::Slim, seq::AbstractVector{UInt8}, n_pos::Int
 )
     fwd = Vector{Float32}(undef, n_pos)
     rev = Vector{Float32}(undef, n_pos)
@@ -171,46 +154,46 @@ end
 # ── Single-sequence in-place scan ────────────────────────────────────────
 
 """
-    scan!(dest::AbstractVector{T}, model::BaMM, seq::AbstractVector{UInt8};
+    scan!(dest::AbstractVector{T}, model::Slim, seq::AbstractVector{UInt8};
           strands::StrandPolicy=ForwardOnly())
 
 Fill `dest` with scan scores for one sequence.
 """
 function scan!(
     dest::AbstractVector{T},
-    model::BaMM,
+    model::Slim,
     seq::AbstractVector{UInt8};
     strands::StrandPolicy=ForwardOnly(),
 ) where {T<:AbstractFloat}
-    n_pos = npositions_bamm(length(seq), model)
+    n_pos = npositions_slim(length(seq), model)
     if length(dest) < n_pos
         throw(
             ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
         )
     end
-    return _scan_inplace_bamm!(strands, dest, model, seq, n_pos)
+    return _scan_inplace_slim!(strands, dest, model, seq, n_pos)
 end
 
-function _scan_inplace_bamm!(
-    ::ForwardOnly, dest::AbstractVector{T}, model::BaMM, seq, n_pos
+function _scan_inplace_slim!(
+    ::ForwardOnly, dest::AbstractVector{T}, model::Slim, seq, n_pos
 ) where {T<:AbstractFloat}
     return scan_forward!(dest, model, seq, n_pos)
 end
 
-function _scan_inplace_bamm!(
-    ::ReverseOnly, dest::AbstractVector{T}, model::BaMM, seq, n_pos
+function _scan_inplace_slim!(
+    ::ReverseOnly, dest::AbstractVector{T}, model::Slim, seq, n_pos
 ) where {T<:AbstractFloat}
     return scan_reverse!(dest, model, seq, n_pos)
 end
 
-function _scan_inplace_bamm!(
-    ::BestStrand, dest::AbstractVector{T}, model::BaMM, seq, n_pos
+function _scan_inplace_slim!(
+    ::BestStrand, dest::AbstractVector{T}, model::Slim, seq, n_pos
 ) where {T<:AbstractFloat}
     return scan_best!(dest, model, seq, n_pos)
 end
 
-function _scan_inplace_bamm!(
-    ::BothStrands, dest::AbstractVector{T}, model::BaMM, seq, n_pos
+function _scan_inplace_slim!(
+    ::BothStrands, dest::AbstractVector{T}, model::Slim, seq, n_pos
 ) where {T<:AbstractFloat}
     return throw(
         ArgumentError(
@@ -222,24 +205,24 @@ end
 # ── Batch scanning (EncodedSequenceBatch) ─────────────────────────────────
 
 """
-    scan(model::BaMM, batch::EncodedSequenceBatch; strands::StrandPolicy=ForwardOnly())
+    scan(model::Slim, batch::EncodedSequenceBatch; strands::StrandPolicy=ForwardOnly())
 
-Scan all sequences in a batch with a [`BaMM`](@ref) model, returning a
+Scan all sequences in a batch with a [`Slim`](@ref) model, returning a
 [`RaggedArray{Float32}`](@ref) of scores.
 
 For `BothStrands`, returns a [`StrandPair{RaggedArray{Float32}}`](@ref).
 """
-function scan(model::BaMM, batch::EncodedSequenceBatch; strands::StrandPolicy=ForwardOnly())
-    return _scan_batch_bamm(strands, model, batch)
+function scan(model::Slim, batch::EncodedSequenceBatch; strands::StrandPolicy=ForwardOnly())
+    return _scan_batch_slim(strands, model, batch)
 end
 
-function _scan_batch_bamm(strands::StrandPolicy, model::BaMM, batch::EncodedSequenceBatch)
+function _scan_batch_slim(strands::StrandPolicy, model::Slim, batch::EncodedSequenceBatch)
     n = nsequences(batch)
     T = Float32
 
     out_rows = Vector{Vector{T}}(undef, n)
     for i in 1:n
-        n_pos = npositions_bamm(seqlength(batch, i), model)
+        n_pos = npositions_slim(seqlength(batch, i), model)
         out_rows[i] = Vector{T}(undef, n_pos)
     end
 
@@ -260,14 +243,14 @@ function _scan_batch_bamm(strands::StrandPolicy, model::BaMM, batch::EncodedSequ
     return build_ragged(out_rows)
 end
 
-function _scan_batch_bamm(::BothStrands, model::BaMM, batch::EncodedSequenceBatch)
+function _scan_batch_slim(::BothStrands, model::Slim, batch::EncodedSequenceBatch)
     n = nsequences(batch)
     T = Float32
 
     fwd_rows = Vector{Vector{T}}(undef, n)
     rev_rows = Vector{Vector{T}}(undef, n)
     for i in 1:n
-        n_pos = npositions_bamm(seqlength(batch, i), model)
+        n_pos = npositions_slim(seqlength(batch, i), model)
         fwd_rows[i] = Vector{T}(undef, n_pos)
         rev_rows[i] = Vector{T}(undef, n_pos)
     end
@@ -282,10 +265,10 @@ end
 # ── Scan result lengths ─────────────────────────────────────────────────
 
 """
-    scan_result_lengths(model::BaMM, batch::EncodedSequenceBatch)
+    scan_result_lengths(model::Slim, batch::EncodedSequenceBatch)
 
 Return a `Vector{Int}` with the number of scan positions for each sequence.
 """
-function scan_result_lengths(model::BaMM, batch::EncodedSequenceBatch)
-    return [npositions_bamm(seqlength(batch, i), model) for i in 1:nsequences(batch)]
+function scan_result_lengths(model::Slim, batch::EncodedSequenceBatch)
+    return [npositions_slim(seqlength(batch, i), model) for i in 1:nsequences(batch)]
 end

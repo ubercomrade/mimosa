@@ -1568,231 +1568,542 @@
       }
     },
     {
-      "id": "dimont_parse_exampleD-model-1",
-      "description": "Parse exampleD-model-1.xml to flattened (5^(span+1), length) representation",
       "arrays": {
         "representation": "dimont_parse_exampleD-model-1__representation.npy"
       },
+      "description": "Parse exampleD-model-1.xml to flattened (5^(span+1), length) representation",
+      "id": "dimont_parse_exampleD-model-1",
       "metadata": {
-        "name": "exampleD-model-1",
-        "motif_length": 13,
-        "span": 0,
         "kmer": 1,
+        "motif_length": 13,
+        "name": "exampleD-model-1",
         "shape": [
           5,
           13
-        ]
-      }
-    },
-    {
-      "id": "dimont_parse_PEAKS036274_FOXA1_P35582_MACS2-model-1",
-      "description": "Parse PEAKS036274_FOXA1_P35582_MACS2-model-1.xml to flattened (5^(span+1), length) representation",
-      "arrays": {
-        "representation": "dimont_parse_PEAKS036274_FOXA1_P35582_MACS2-model-1__representation.npy"
-      },
-      "metadata": {
-        "name": "PEAKS036274_FOXA1_P35582_MACS2-model-1",
-        "motif_length": 10,
-        "span": 3,
-        "kmer": 4,
-        "shape": [
-          625,
-          10
-        ]
-      }
-    },
-    {
-      "id": "dimont_parse_PEAKS038885_CEBPB_P28033_MACS2-model-1",
-      "description": "Parse PEAKS038885_CEBPB_P28033_MACS2-model-1.xml to flattened (5^(span+1), length) representation",
-      "arrays": {
-        "representation": "dimont_parse_PEAKS038885_CEBPB_P28033_MACS2-model-1__representation.npy"
-      },
-      "metadata": {
-        "name": "PEAKS038885_CEBPB_P28033_MACS2-model-1",
-        "motif_length": 11,
-        "span": 3,
-        "kmer": 4,
-        "shape": [
-          625,
-          11
-        ]
-      }
-    },
-    {
-      "id": "dimont_parse_PEAKS038885_CEBPB_P28033_MACS2-model-2",
-      "description": "Parse PEAKS038885_CEBPB_P28033_MACS2-model-2.xml to flattened (5^(span+1), length) representation",
-      "arrays": {
-        "representation": "dimont_parse_PEAKS038885_CEBPB_P28033_MACS2-model-2__representation.npy"
-      },
-      "metadata": {
-        "name": "PEAKS038885_CEBPB_P28033_MACS2-model-2",
-        "motif_length": 12,
-        "span": 3,
-        "kmer": 4,
-        "shape": [
-          625,
-          12
-        ]
-      }
-    },
-    {
-      "id": "dimont_parse_stat_dimont-model-1",
-      "description": "Parse stat_dimont-model-1.xml to flattened (5^(span+1), length) representation",
-      "arrays": {
-        "representation": "dimont_parse_stat_dimont-model-1__representation.npy"
-      },
-      "metadata": {
-        "name": "stat_dimont-model-1",
-        "motif_length": 5,
-        "span": 3,
-        "kmer": 4,
-        "shape": [
-          625,
-          5
-        ]
-      }
-    },
-    {
-      "id": "dimont_score_bounds_exampleD-model-1",
-      "description": "Theoretical score bounds for exampleD-model-1.xml Dimont",
-      "metadata": {
-        "min_score": -10.664559364318848,
-        "max_score": 7.8035688400268555,
+        ],
         "span": 0
       }
     },
     {
-      "id": "dimont_score_bounds_PEAKS036274_FOXA1_P35582_MACS2-model-1",
+      "arrays": {
+        "representation": "dimont_parse_PEAKS036274_FOXA1_P35582_MACS2-model-1__representation.npy"
+      },
+      "description": "Parse PEAKS036274_FOXA1_P35582_MACS2-model-1.xml to flattened (5^(span+1), length) representation",
+      "id": "dimont_parse_PEAKS036274_FOXA1_P35582_MACS2-model-1",
+      "metadata": {
+        "kmer": 4,
+        "motif_length": 10,
+        "name": "PEAKS036274_FOXA1_P35582_MACS2-model-1",
+        "shape": [
+          625,
+          10
+        ],
+        "span": 3
+      }
+    },
+    {
+      "arrays": {
+        "representation": "dimont_parse_PEAKS038885_CEBPB_P28033_MACS2-model-1__representation.npy"
+      },
+      "description": "Parse PEAKS038885_CEBPB_P28033_MACS2-model-1.xml to flattened (5^(span+1), length) representation",
+      "id": "dimont_parse_PEAKS038885_CEBPB_P28033_MACS2-model-1",
+      "metadata": {
+        "kmer": 4,
+        "motif_length": 11,
+        "name": "PEAKS038885_CEBPB_P28033_MACS2-model-1",
+        "shape": [
+          625,
+          11
+        ],
+        "span": 3
+      }
+    },
+    {
+      "arrays": {
+        "representation": "dimont_parse_PEAKS038885_CEBPB_P28033_MACS2-model-2__representation.npy"
+      },
+      "description": "Parse PEAKS038885_CEBPB_P28033_MACS2-model-2.xml to flattened (5^(span+1), length) representation",
+      "id": "dimont_parse_PEAKS038885_CEBPB_P28033_MACS2-model-2",
+      "metadata": {
+        "kmer": 4,
+        "motif_length": 12,
+        "name": "PEAKS038885_CEBPB_P28033_MACS2-model-2",
+        "shape": [
+          625,
+          12
+        ],
+        "span": 3
+      }
+    },
+    {
+      "arrays": {
+        "representation": "dimont_parse_stat_dimont-model-1__representation.npy"
+      },
+      "description": "Parse stat_dimont-model-1.xml to flattened (5^(span+1), length) representation",
+      "id": "dimont_parse_stat_dimont-model-1",
+      "metadata": {
+        "kmer": 4,
+        "motif_length": 5,
+        "name": "stat_dimont-model-1",
+        "shape": [
+          625,
+          5
+        ],
+        "span": 3
+      }
+    },
+    {
+      "description": "Theoretical score bounds for exampleD-model-1.xml Dimont",
+      "id": "dimont_score_bounds_exampleD-model-1",
+      "metadata": {
+        "max_score": 7.8035688400268555,
+        "min_score": -10.664559364318848,
+        "span": 0
+      }
+    },
+    {
       "description": "Theoretical score bounds for PEAKS036274_FOXA1_P35582_MACS2-model-1.xml Dimont",
+      "id": "dimont_score_bounds_PEAKS036274_FOXA1_P35582_MACS2-model-1",
       "metadata": {
-        "min_score": -15.544466018676758,
         "max_score": 7.579341888427734,
+        "min_score": -15.544466018676758,
         "span": 3
       }
     },
     {
-      "id": "dimont_score_bounds_PEAKS038885_CEBPB_P28033_MACS2-model-1",
       "description": "Theoretical score bounds for PEAKS038885_CEBPB_P28033_MACS2-model-1.xml Dimont",
+      "id": "dimont_score_bounds_PEAKS038885_CEBPB_P28033_MACS2-model-1",
       "metadata": {
-        "min_score": -15.646001815795898,
         "max_score": 7.403084754943848,
+        "min_score": -15.646001815795898,
         "span": 3
       }
     },
     {
-      "id": "dimont_score_bounds_PEAKS038885_CEBPB_P28033_MACS2-model-2",
       "description": "Theoretical score bounds for PEAKS038885_CEBPB_P28033_MACS2-model-2.xml Dimont",
+      "id": "dimont_score_bounds_PEAKS038885_CEBPB_P28033_MACS2-model-2",
       "metadata": {
-        "min_score": -27.476043701171875,
         "max_score": 13.132696151733398,
+        "min_score": -27.476043701171875,
         "span": 3
       }
     },
     {
-      "id": "dimont_score_bounds_stat_dimont-model-1",
       "description": "Theoretical score bounds for stat_dimont-model-1.xml Dimont",
+      "id": "dimont_score_bounds_stat_dimont-model-1",
       "metadata": {
-        "min_score": -7.637523651123047,
         "max_score": 8.147364616394043,
+        "min_score": -7.637523651123047,
         "span": 3
       }
     },
     {
-      "id": "dimont_scan_input_seed42",
+      "arrays": {
+        "lengths": "dimont_scan_input_seed42__lengths.npy",
+        "values": "dimont_scan_input_seed42__values.npy"
+      },
       "description": "Input sequences for Dimont scan fixtures (seed=42, n=50, len=200, 5-ary encoding)",
-      "arrays": {
-        "values": "dimont_scan_input_seed42__values.npy",
-        "lengths": "dimont_scan_input_seed42__lengths.npy"
-      },
+      "id": "dimont_scan_input_seed42",
       "metadata": {
         "n_sequences": 50,
-        "seq_length": 200,
+        "padding_value": 4,
         "seed": 42,
-        "padding_value": 4
+        "seq_length": 200
       }
     },
     {
-      "id": "dimont_scan_forward_exampleD-model-1_seed42",
-      "description": "Forward Dimont scan of exampleD-model-1.xml (span=0) on 50 random sequences (seed=42, len=200)",
       "arrays": {
-        "values": "dimont_scan_forward_exampleD-model-1_seed42__values.npy",
+        "lengths": "dimont_scan_forward_exampleD-model-1_seed42__lengths.npy",
         "mask": "dimont_scan_forward_exampleD-model-1_seed42__mask.npy",
-        "lengths": "dimont_scan_forward_exampleD-model-1_seed42__lengths.npy"
+        "values": "dimont_scan_forward_exampleD-model-1_seed42__values.npy"
       },
+      "description": "Forward Dimont scan of exampleD-model-1.xml (span=0) on 50 random sequences (seed=42, len=200)",
+      "id": "dimont_scan_forward_exampleD-model-1_seed42",
       "metadata": {
-        "n_sequences": 50,
-        "seq_length": 200,
-        "seed": 42,
-        "motif_length": 13,
-        "span": 0,
         "kmer": 1,
-        "padding_value": 0.0
+        "motif_length": 13,
+        "n_sequences": 50,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200,
+        "span": 0
       }
     },
     {
-      "id": "dimont_scan_reverse_exampleD-model-1_seed42",
-      "description": "Reverse Dimont scan of exampleD-model-1.xml (span=0) on 50 random sequences (seed=42, len=200)",
       "arrays": {
-        "values": "dimont_scan_reverse_exampleD-model-1_seed42__values.npy",
+        "lengths": "dimont_scan_reverse_exampleD-model-1_seed42__lengths.npy",
         "mask": "dimont_scan_reverse_exampleD-model-1_seed42__mask.npy",
-        "lengths": "dimont_scan_reverse_exampleD-model-1_seed42__lengths.npy"
+        "values": "dimont_scan_reverse_exampleD-model-1_seed42__values.npy"
       },
+      "description": "Reverse Dimont scan of exampleD-model-1.xml (span=0) on 50 random sequences (seed=42, len=200)",
+      "id": "dimont_scan_reverse_exampleD-model-1_seed42",
       "metadata": {
-        "n_sequences": 50,
-        "seq_length": 200,
-        "seed": 42,
-        "motif_length": 13,
-        "span": 0,
         "kmer": 1,
-        "padding_value": 0.0
+        "motif_length": 13,
+        "n_sequences": 50,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200,
+        "span": 0
       }
     },
     {
-      "id": "dimont_scan_forward_stat_dimont-model-1_seed42",
-      "description": "Forward Dimont scan of stat_dimont-model-1.xml (span=3) on 50 random sequences (seed=42, len=200)",
       "arrays": {
-        "values": "dimont_scan_forward_stat_dimont-model-1_seed42__values.npy",
+        "lengths": "dimont_scan_forward_stat_dimont-model-1_seed42__lengths.npy",
         "mask": "dimont_scan_forward_stat_dimont-model-1_seed42__mask.npy",
-        "lengths": "dimont_scan_forward_stat_dimont-model-1_seed42__lengths.npy"
+        "values": "dimont_scan_forward_stat_dimont-model-1_seed42__values.npy"
       },
+      "description": "Forward Dimont scan of stat_dimont-model-1.xml (span=3) on 50 random sequences (seed=42, len=200)",
+      "id": "dimont_scan_forward_stat_dimont-model-1_seed42",
       "metadata": {
-        "n_sequences": 50,
-        "seq_length": 200,
-        "seed": 42,
-        "motif_length": 5,
-        "span": 3,
         "kmer": 4,
-        "padding_value": 0.0
+        "motif_length": 5,
+        "n_sequences": 50,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200,
+        "span": 3
       }
     },
     {
-      "id": "dimont_scan_reverse_stat_dimont-model-1_seed42",
-      "description": "Reverse Dimont scan of stat_dimont-model-1.xml (span=3) on 50 random sequences (seed=42, len=200)",
       "arrays": {
-        "values": "dimont_scan_reverse_stat_dimont-model-1_seed42__values.npy",
+        "lengths": "dimont_scan_reverse_stat_dimont-model-1_seed42__lengths.npy",
         "mask": "dimont_scan_reverse_stat_dimont-model-1_seed42__mask.npy",
-        "lengths": "dimont_scan_reverse_stat_dimont-model-1_seed42__lengths.npy"
+        "values": "dimont_scan_reverse_stat_dimont-model-1_seed42__values.npy"
       },
+      "description": "Reverse Dimont scan of stat_dimont-model-1.xml (span=3) on 50 random sequences (seed=42, len=200)",
+      "id": "dimont_scan_reverse_stat_dimont-model-1_seed42",
+      "metadata": {
+        "kmer": 4,
+        "motif_length": 5,
+        "n_sequences": 50,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200,
+        "span": 3
+      }
+    },
+    {
+      "arrays": {
+        "representation": {
+          "dtype": "float32",
+          "path": "tests/fixtures/compatibility/slim_parse_example-model-1__representation.npy",
+          "shape": [
+            15625,
+            15
+          ]
+        }
+      },
+      "description": "Parse example-model-1.xml to flattened (5^(span+1), length) representation",
+      "id": "slim_parse_example-model-1",
+      "metadata": {
+        "kmer": 6,
+        "motif_length": 15,
+        "name": "example-model-1",
+        "shape": [
+          15625,
+          15
+        ],
+        "span": 5
+      }
+    },
+    {
+      "arrays": {
+        "representation": {
+          "dtype": "float32",
+          "path": "tests/fixtures/compatibility/slim_parse_PEAKS036274_FOXA1_P35582_MACS2-model-2__representation.npy",
+          "shape": [
+            15625,
+            12
+          ]
+        }
+      },
+      "description": "Parse PEAKS036274_FOXA1_P35582_MACS2-model-2.xml to flattened (5^(span+1), length) representation",
+      "id": "slim_parse_PEAKS036274_FOXA1_P35582_MACS2-model-2",
+      "metadata": {
+        "kmer": 6,
+        "motif_length": 12,
+        "name": "PEAKS036274_FOXA1_P35582_MACS2-model-2",
+        "shape": [
+          15625,
+          12
+        ],
+        "span": 5
+      }
+    },
+    {
+      "arrays": {
+        "representation": {
+          "dtype": "float32",
+          "path": "tests/fixtures/compatibility/slim_parse_PEAKS038885_CEBPB_P28033_MACS2-model-1__representation.npy",
+          "shape": [
+            15625,
+            12
+          ]
+        }
+      },
+      "description": "Parse PEAKS038885_CEBPB_P28033_MACS2-model-1.xml to flattened (5^(span+1), length) representation",
+      "id": "slim_parse_PEAKS038885_CEBPB_P28033_MACS2-model-1",
+      "metadata": {
+        "kmer": 6,
+        "motif_length": 12,
+        "name": "PEAKS038885_CEBPB_P28033_MACS2-model-1",
+        "shape": [
+          15625,
+          12
+        ],
+        "span": 5
+      }
+    },
+    {
+      "arrays": {
+        "representation": {
+          "dtype": "float32",
+          "path": "tests/fixtures/compatibility/slim_parse_PEAKS038885_CEBPB_P28033_MACS2-model-2__representation.npy",
+          "shape": [
+            15625,
+            12
+          ]
+        }
+      },
+      "description": "Parse PEAKS038885_CEBPB_P28033_MACS2-model-2.xml to flattened (5^(span+1), length) representation",
+      "id": "slim_parse_PEAKS038885_CEBPB_P28033_MACS2-model-2",
+      "metadata": {
+        "kmer": 6,
+        "motif_length": 12,
+        "name": "PEAKS038885_CEBPB_P28033_MACS2-model-2",
+        "shape": [
+          15625,
+          12
+        ],
+        "span": 5
+      }
+    },
+    {
+      "description": "Theoretical score bounds for example-model-1.xml Slim",
+      "id": "slim_score_bounds_example-model-1",
+      "metadata": {
+        "max_score": 13.12120246887207,
+        "min_score": -16.95363998413086,
+        "span": 5
+      }
+    },
+    {
+      "description": "Theoretical score bounds for PEAKS036274_FOXA1_P35582_MACS2-model-2.xml Slim",
+      "id": "slim_score_bounds_PEAKS036274_FOXA1_P35582_MACS2-model-2",
+      "metadata": {
+        "max_score": 2.91191029548645,
+        "min_score": -2.635072708129883,
+        "span": 5
+      }
+    },
+    {
+      "description": "Theoretical score bounds for PEAKS038885_CEBPB_P28033_MACS2-model-1.xml Slim",
+      "id": "slim_score_bounds_PEAKS038885_CEBPB_P28033_MACS2-model-1",
+      "metadata": {
+        "max_score": 2.1443943977355957,
+        "min_score": -2.0853753089904785,
+        "span": 5
+      }
+    },
+    {
+      "description": "Theoretical score bounds for PEAKS038885_CEBPB_P28033_MACS2-model-2.xml Slim",
+      "id": "slim_score_bounds_PEAKS038885_CEBPB_P28033_MACS2-model-2",
+      "metadata": {
+        "max_score": 2.5802767276763916,
+        "min_score": -2.3501641750335693,
+        "span": 5
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "dtype": "int64",
+          "path": "tests/fixtures/compatibility/slim_scan_input_seed42__lengths.npy",
+          "shape": [
+            50
+          ]
+        },
+        "values": {
+          "dtype": "int8",
+          "path": "tests/fixtures/compatibility/slim_scan_input_seed42__values.npy",
+          "shape": [
+            50,
+            200
+          ]
+        }
+      },
+      "description": "Input sequences for Slim scan fixtures (seed=42, n=50, len=200, 5-ary encoding)",
+      "id": "slim_scan_input_seed42",
       "metadata": {
         "n_sequences": 50,
-        "seq_length": 200,
+        "padding_value": 4,
         "seed": 42,
-        "motif_length": 5,
-        "span": 3,
-        "kmer": 4,
-        "padding_value": 0.0
+        "seq_length": 200
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "dtype": "int64",
+          "path": "tests/fixtures/compatibility/slim_scan_forward_example-model-1_seed42__lengths.npy",
+          "shape": [
+            50
+          ]
+        },
+        "mask": {
+          "dtype": "bool",
+          "path": "tests/fixtures/compatibility/slim_scan_forward_example-model-1_seed42__mask.npy",
+          "shape": [
+            50,
+            181
+          ]
+        },
+        "values": {
+          "dtype": "float32",
+          "path": "tests/fixtures/compatibility/slim_scan_forward_example-model-1_seed42__values.npy",
+          "shape": [
+            50,
+            181
+          ]
+        }
+      },
+      "description": "Forward Slim scan of example-model-1.xml on 50 random sequences (seed=42, len=200)",
+      "id": "slim_scan_forward_example-model-1_seed42",
+      "metadata": {
+        "kmer": 6,
+        "motif_length": 15,
+        "n_sequences": 50,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200,
+        "span": 5
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "dtype": "int64",
+          "path": "tests/fixtures/compatibility/slim_scan_reverse_example-model-1_seed42__lengths.npy",
+          "shape": [
+            50
+          ]
+        },
+        "mask": {
+          "dtype": "bool",
+          "path": "tests/fixtures/compatibility/slim_scan_reverse_example-model-1_seed42__mask.npy",
+          "shape": [
+            50,
+            181
+          ]
+        },
+        "values": {
+          "dtype": "float32",
+          "path": "tests/fixtures/compatibility/slim_scan_reverse_example-model-1_seed42__values.npy",
+          "shape": [
+            50,
+            181
+          ]
+        }
+      },
+      "description": "Reverse Slim scan of example-model-1.xml on 50 random sequences (seed=42, len=200)",
+      "id": "slim_scan_reverse_example-model-1_seed42",
+      "metadata": {
+        "kmer": 6,
+        "motif_length": 15,
+        "n_sequences": 50,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200,
+        "span": 5
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "dtype": "int64",
+          "path": "tests/fixtures/compatibility/slim_scan_forward_PEAKS036274_FOXA1_P35582_MACS2-model-2_seed42__lengths.npy",
+          "shape": [
+            50
+          ]
+        },
+        "mask": {
+          "dtype": "bool",
+          "path": "tests/fixtures/compatibility/slim_scan_forward_PEAKS036274_FOXA1_P35582_MACS2-model-2_seed42__mask.npy",
+          "shape": [
+            50,
+            184
+          ]
+        },
+        "values": {
+          "dtype": "float32",
+          "path": "tests/fixtures/compatibility/slim_scan_forward_PEAKS036274_FOXA1_P35582_MACS2-model-2_seed42__values.npy",
+          "shape": [
+            50,
+            184
+          ]
+        }
+      },
+      "description": "Forward Slim scan of PEAKS036274_FOXA1_P35582_MACS2-model-2.xml on 50 random sequences (seed=42, len=200)",
+      "id": "slim_scan_forward_PEAKS036274_FOXA1_P35582_MACS2-model-2_seed42",
+      "metadata": {
+        "kmer": 6,
+        "motif_length": 12,
+        "n_sequences": 50,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200,
+        "span": 5
+      }
+    },
+    {
+      "arrays": {
+        "lengths": {
+          "dtype": "int64",
+          "path": "tests/fixtures/compatibility/slim_scan_reverse_PEAKS036274_FOXA1_P35582_MACS2-model-2_seed42__lengths.npy",
+          "shape": [
+            50
+          ]
+        },
+        "mask": {
+          "dtype": "bool",
+          "path": "tests/fixtures/compatibility/slim_scan_reverse_PEAKS036274_FOXA1_P35582_MACS2-model-2_seed42__mask.npy",
+          "shape": [
+            50,
+            184
+          ]
+        },
+        "values": {
+          "dtype": "float32",
+          "path": "tests/fixtures/compatibility/slim_scan_reverse_PEAKS036274_FOXA1_P35582_MACS2-model-2_seed42__values.npy",
+          "shape": [
+            50,
+            184
+          ]
+        }
+      },
+      "description": "Reverse Slim scan of PEAKS036274_FOXA1_P35582_MACS2-model-2.xml on 50 random sequences (seed=42, len=200)",
+      "id": "slim_scan_reverse_PEAKS036274_FOXA1_P35582_MACS2-model-2_seed42",
+      "metadata": {
+        "kmer": 6,
+        "motif_length": 12,
+        "n_sequences": 50,
+        "padding_value": 0.0,
+        "seed": 42,
+        "seq_length": 200,
+        "span": 5
       }
     }
   ],
   "format": "mimosa-compatibility-fixtures",
   "format_version": 1,
   "generated_at": "2026-07-11T15:27:31.936011+00:00",
-  "n_fixtures": 61,
+  "last_updated": "2026-07-11T16:27:02.728250+00:00",
+  "n_fixtures": 89,
   "numpy_version": "2.3.5",
   "platform": "Linux-6.19.6-arch1-1-x86_64-with-glibc2.43",
   "python_commit": "62f947ee64911a9976163c5d02dfb864878392fe",
   "python_version": "3.13.12 | packaged by Anaconda, Inc. | (main, Feb 24 2026, 16:13:31) [GCC 14.3.0]",
   "scipy_version": "1.17.0",
-  "total_fixtures": 76,
-  "last_updated": "2026-07-11T16:27:02.728250+00:00"
+  "total_fixtures": 76
 }

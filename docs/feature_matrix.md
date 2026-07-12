@@ -21,7 +21,7 @@
 | BaMM | `bamm` | `.ihbcp`, pickle | joblib | forward/reverse/best/both + context | yes | PFM | planned |
 | SiteGA | `sitega` | `.mat`, pickle | `.mat` | forward/reverse/best/both | yes | PFM | planned |
 | Dimont | `dimont` | XML, pickle | joblib | forward/reverse/best/both + context | yes | PFM | planned |
-| Slim | `slim` | XML, pickle | joblib | forward/reverse/best/both + context | yes | PFM | planned |
+| Slim | `slim` | XML, pickle | joblib | forward/reverse/best/both + context | yes | PFM | XML parser + scanning done (Stage 5d) |
 | Score profiles | `scores` | FASTA-like | — (not writable) | identity (no scan) | — | — | planned |
 
 ## Comparison strategies
@@ -114,7 +114,7 @@ Tie-breaking: when scores are equal, the lower rank wins. Within the same orient
 | BaMM `.ihbcp` | yes | joblib only | planned (new writer) |
 | SiteGA `.mat` | yes | yes | planned |
 | Dimont XML | yes | joblib only | planned (new writer) |
-| Slim XML | yes | joblib only | planned (new writer) |
+| Slim XML | yes | joblib only | parser done (Stage 5d); writer planned |
 | Score FASTA | yes | — | planned |
 | DNA FASTA | yes | — | planned |
 | DIST | — | yes | deferred (not in main pipeline) |

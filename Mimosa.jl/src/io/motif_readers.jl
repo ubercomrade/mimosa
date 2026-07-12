@@ -251,6 +251,8 @@ function readmodel(
         return read_sitega(path)
     elseif fmt === :dimont
         return read_dimont(path)
+    elseif fmt === :slim
+        return read_slim(path)
     else
         throw(ModelFormatError(path, "unsupported format: $(fmt)."))
     end
@@ -262,6 +264,18 @@ function _detect_format(path::AbstractString)
     endswith(lower, ".pfm") && return :pfm
     endswith(lower, ".ihbcp") && return :bamm
     endswith(lower, ".mat") && return :sitega
-    endswith(lower, ".xml") && return :dimont
+    endswith(lower, ".xml") && return _detect_xml_format(path)
     return :unknown
+end
+
+# Both Dimont and Slim use the `.xml` extension. Distinguish by content:
+# Slim models contain a `<SLIM>` element, Dimont models contain a
+# `MarkovModelDiffSM` element. This is an I/O-boundary check (model loading,
+# not a hot path).
+function _detect_xml_format(path::AbstractString)
+    content = read(path, String)
+    if occursin("<SLIM", content)
+        return :slim
+    end
+    return :dimont
 end

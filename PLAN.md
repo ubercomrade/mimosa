@@ -766,7 +766,16 @@ Stage 4 завершён. Gate 4 пройден (186 673/186 673 тестов).
 Stage 5a (BaMM) завершён. 186 985/186 985 тестов проходят.
 Stage 5b (SiteGA) завершён. 187 258/187 258 тестов проходят.
 Stage 5c (Dimont) завершён. 187 567/187 567 тестов проходят.
-Следующая работа — этап 5d (Slim).
+Stage 5d (Slim) завершён. 187 866/187 866 тестов проходят.
+Следующая работа — этап 6 (Null distributions и статистика).
+
+> **Bugfix (до Stage 5d).** XML-парсер (`src/io/xml_parser.jl`) использовал
+> `length(content)` (O(n) подсчёт codepoints у Julia `String`) внутри `_starts_at`,
+> который вызывается в горячих внутренних циклах парсера. Это делало парсинг
+> O(n²): 96KB ≈ 1.9 s, а 2.8 MB ≈ 1600 s, из-за чего полный прогон тестов
+> зависал за таймаут. Замена на `ncodeunits` (O(1), корректно для байтового
+> индексирования, фикстуры ASCII) сделала парсинг O(n): 96KB ≈ 2 ms, 2.8 MB ≈
+> 190 ms. Полный прогон (187 866 тестов) теперь укладывается в ~27 s.
 
 Этап 1 реализовал:
 
@@ -970,3 +979,65 @@ Stage 5c (Dimont) завершён. 187 567/187 567 тестов проходя�
 19. ☐ Dimont comparison — отложено (requires comparison API generalization for
      higher-order models).
 20. ☐ Model-specific benchmark — отложено до benchmark suite.
+
+Этап 5d (Slim) реализовал:
+
+1. ✅ Описан исходный XML format и mathematical representation для Slim.
+   Slim — Jstacs GenDisMix classifier с mixture of component/ancestor
+   dependencies. XML path: `.//SLIM`. Параметры `componentMixtureParameters`,
+   `ancestorMixtureParameters`, `dependencyParameters` нормализуются (log-sum-exp)
+   в log-probability tables и материализуются в dense 5-ary tensor
+   `(5,)*(span+1) + (length,)`, затем flattening в `(5^(span+1), length)`.
+   Span вычисляется как `max(component_index + ancestor_count - 1)` по всем
+   позициям и компонентам с `component_index ≥ 1`.
+2. ✅ `Slim{T,M}` — concrete immutable struct с representation matrix
+   `(5^(span+1), motif_length)`, `span` и `motif_length`, без catch-all config
+   dictionary. Наследует `AbstractHigherOrderMotif`. Идентичная representation
+   к Dimont/BaMM.
+3. ✅ Strict `read_slim` parser: нахождение `SLIM`, size limits, parsing вложенных
+   `<pos>` массивов для трёх параметров, span computation, log-normalization,
+   log-sum-exp materialization через переиспользование общих helpers из
+   `dimont_reader.jl` (`_iter_contexts`, `_context_value`,
+   `_build_position_column`, `_decode_5ary`).
+4. ✅ **Refactor shared higher-order scan kernel.** Из BaMM/Dimont/SiteGA scan
+   файлов извлечён generic `_ho_scan_forward!/reverse!/best!/both!` в
+   `src/scanning/higher_order_scan.jl`, parameterized by geometry
+   `(rep, kmer, context, window, n_terms)`. Все три существующих модели и Slim
+   делегируют ему. Устранено ~1000 строк дублирования; поведение и тесты
+   прежние. Slim использует ту же scanning geometry, что и BaMM/Dimont
+   (kmer=span+1, context=span, window=motif_len+span, n_terms=motif_len).
+5. ✅ Constructor invariants: row count `5^(span+1)`, column/length match,
+   non-finite check, non-negative span, positive motif_length.
+6. ✅ `scorebounds(::Slim)` — per-column min/max summed, совпадает с oracle.
+7. ✅ Forward/reverse/best/both scanning для Slim через multiple dispatch и
+   shared kernel. `scan(::Slim, seq/batch; strands=...)`, `scan!(...)`,
+   `scan_result_lengths`. Inner loop — 0 аллокаций.
+8. ✅ `readmodel(path; format=:auto)` различает Slim vs Dimont для `.xml` по
+   наличию `<SLIM` (I/O-boundary content peek), диспетчует в `read_slim`/`read_dimont`.
+9. ✅ Compatibility tests: parsing (4 files), score bounds (4 fixtures),
+     forward/reverse scanning (2 files × 2 strands = 4 fixtures), readmodel
+     auto-detect + Slim/Dimont disambiguation. **Все совпадают с oracle
+     точно (maxdiff = 0.0)** — representation и scan tracks бит-в-бит.
+10. ✅ Oracle fixtures: 13 new fixtures added (89 total in manifest), сгенерированы
+     `scripts/generate_slim_fixtures.py` (reuse dimont scan input seed=42).
+11. ✅ Unit tests: constructor, show, equality, scorebounds, parsing,
+     single-sequence scan, batch scan, determinism, span=0 geometry.
+12. ✅ Type stability: `@code_warntype` на `scan_forward!(::Slim, ...)` и
+     `_ho_scan_forward!` — concrete `Body::Vector{Float32}`, no runtime `Any`.
+13. ✅ JuliaFormatter (BlueStyle), 187 866 тестов (0 failures, 0 errors, 0 warnings).
+14. ☐ Malformed/security fixtures — отложено до следующего подэтапа.
+15. ☐ Slim writer — не определён в Python (joblib dump only); отложено.
+16. ☐ Slim sites и reconstruction — отложено (requires sites API generalization
+     for higher-order models).
+17. ☐ Slim comparison — отложено (requires comparison API generalization for
+     higher-order models).
+18. ☐ Model-specific benchmark — отложено до benchmark suite.
+
+Gate 5 (после 5d):
+
+- ✅ Все четыре заявленные model families (PWM/PFM, BaMM, SiteGA, Dimont, Slim)
+  имеют полный parser-to-scan vertical path.
+- ☐ Heterogeneous collections группируются по concrete type перед batch kernels
+  (отложено до batch comparison/nulls на этапах 6-7).
+- ☐ Unsupported writer честно возвращает typed error (отложено).
+- ☐ Extension guide обновление (отложено до docs этапа 9).
