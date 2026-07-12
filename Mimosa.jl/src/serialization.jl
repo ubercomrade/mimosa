@@ -6,8 +6,7 @@ using Printf
     to_dict(result::ComparisonResult)
 
 Return the public dictionary payload for a [`ComparisonResult`](@ref), matching
-the Python CLI JSON schema. Significance fields are omitted when not present
-(at Stage 1 they are always absent).
+the Python CLI JSON schema. Significance fields are omitted when not present.
 """
 function to_dict(result::ComparisonResult)
     d = Dict{String,Any}(
@@ -20,6 +19,46 @@ function to_dict(result::ComparisonResult)
     )
     if result.n_sites > 0
         d["n_sites"] = result.n_sites
+    end
+    return d
+end
+
+"""
+    to_dict(result::AnnotatedResult)
+
+Return the public dictionary payload for an [`AnnotatedResult`](@ref),
+including significance fields (`p-value`, `adj.p-value`, `E-value`, `null_id`,
+`null_n`, `null_estimator`) when present.
+"""
+function to_dict(result::AnnotatedResult)
+    d = Dict{String,Any}(
+        "query" => result.query,
+        "target" => result.target,
+        "score" => Float64(result.score),
+        "offset" => result.offset,
+        "orientation" => result.orientation,
+        "metric" => result.metric,
+    )
+    if result.n_sites > 0
+        d["n_sites"] = result.n_sites
+    end
+    if result.p_value !== nothing
+        d["p-value"] = result.p_value
+    end
+    if result.adj_p_value !== nothing
+        d["adj.p-value"] = result.adj_p_value
+    end
+    if result.e_value !== nothing
+        d["E-value"] = result.e_value
+    end
+    if result.null_id !== nothing
+        d["null_id"] = result.null_id
+    end
+    if result.null_n !== nothing
+        d["null_n"] = result.null_n
+    end
+    if result.null_estimator !== nothing
+        d["null_estimator"] = result.null_estimator
     end
     return d
 end
@@ -59,14 +98,13 @@ function _json_float(x::Float64)
 end
 
 """
-    to_json(result::ComparisonResult)
+    to_json(result::Union{ComparisonResult,AnnotatedResult})
 
-Serialize a [`ComparisonResult`](@ref) to a JSON string matching the Python CLI
-output. Keys are written in alphabetical order with 2-space indentation, no
-trailing newline, matching `json.dumps(result.to_dict(), indent=2,
-sort_keys=True)`.
+Serialize a comparison result to a JSON string matching the Python CLI output.
+Keys are written in alphabetical order with 2-space indentation, no trailing
+newline, matching `json.dumps(result.to_dict(), indent=2, sort_keys=True)`.
 """
-function to_json(result::ComparisonResult)
+function to_json(result::Union{ComparisonResult,AnnotatedResult})
     d = to_dict(result)
     keys_sorted = sort!(collect(keys(d)))
     io = IOBuffer()

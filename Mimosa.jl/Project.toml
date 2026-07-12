@@ -6,8 +6,12 @@ authors = ["Mimosa contributors"]
 [deps]
 JuliaFormatter = "98e50ef6-434e-11e9-1051-2b60c6c9e899"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
 [compat]
 JuliaFormatter = "2.10.1"
 Printf = "1.11.0"
+SHA = "0.7"
+TOML = "1.0"
 julia = "1.10"

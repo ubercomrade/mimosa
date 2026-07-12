@@ -513,28 +513,80 @@ SiteGA проверяет dinucleotide representation и writer; XML-модел�
 
 ### Этап 6. Null distributions и статистика (3-4 недели)
 
+> **Статус: пройден** (основной slice). Stage 6 slice реализован и проверен.
+> Все 188 046 тестов проходят в чистом Julia 1.12 окружении (juliaup).
+> Охвачены unit, compatibility тесты. Native GEV fit (BFGS MLE) проходит
+> frozen oracle fixtures (4 distribution families). BH FDR, E-value, p-value,
+> null distribution build, portable storage (TOML manifest + NPY) и result
+> annotation реализованы. Код отформатирован JuliaFormatter (BlueStyle).
+>
+> Python commit: `95e8dbb`. Python 3.13, NumPy 2.3.5, SciPy 1.17.0.
+> Julia: 1.12.6 (juliaup).
+>
+> Отложено: empirical fallback policy (rank-based), explicit AbstractRNG
+> support in build_null, degenerate/NaN/Inf/extreme-tail corpus expansion,
+> null compatibility lookup/search, model collection fingerprinting.
+
 **Зависимость:** Gate 5 для полного feature parity; prototype GEV может начаться после Gate 3.
 
 **Работы**
 
-- реализовать parser group relations без обязательного DataFrames;
-- построить deterministic eligible-pair schedule и stable pair identifiers;
-- принимать `AbstractRNG`, использовать stable seed derivation и хранить generation metadata;
-- хранить raw scores и contributing pairs до fit;
-- исследовать SciPy GEV shape sign, likelihood, initialization, constraints, optimizer и SF stability;
-- реализовать native GEV fit с convergence diagnostics и explicit failure types;
-- реализовать empirical fallback только как явно выбранную policy, не скрытую замену failed fit;
-- реализовать upper-tail p-value, BH FDR и E-value;
-- реализовать null compatibility keys и portable null schema;
-- добавить degenerate, constant, tiny, NaN/Inf и extreme-tail corpus.
+- ✅ реализовать parser group relations без обязательного DataFrames (`parse_group_relations`, `GroupRelations`);
+- ✅ построить deterministic eligible-pair schedule (`eligible_targets`) и stable pair identifiers (`NullPair`);
+- ☐ принимать `AbstractRNG`, использовать stable seed derivation (отложено — build_null не генерирует данные);
+- ✅ хранить raw scores и contributing pairs до fit (`NullDistribution.raw_scores`, `NullDistribution.pairs`);
+- ✅ исследовать SciPy GEV shape sign, likelihood, initialization, constraints, optimizer и SF stability (ADR 0005);
+- ✅ реализовать native GEV fit с convergence diagnostics и explicit failure types (`fit_gev`, `GEVFit`, `GEVFitFailure`);
+- ☐ реализовать empirical fallback только как явно выбранную policy (отложено);
+- ✅ реализовать upper-tail p-value (`pvalue`, `survival`), BH FDR (`adjusted_pvalues`) и E-value (`evalue`);
+- ✅ реализовать null compatibility keys и portable null schema (`savenull`, `loadnull`, TOML manifest + NPY);
+- ☐ добавить degenerate, constant, tiny, NaN/Inf и extreme-tail corpus (отложено — basic edge cases покрыты unit tests).
+
+Этап 6 реализовал:
+
+1. ✅ `GEVFit` — concrete immutable struct с shape (textbook k = -c), location, scale, converged, iterations, loglikelihood.
+2. ✅ `GEVFitFailure` — typed failure для degenerate/constant/NaN/Inf samples.
+3. ✅ Native GEV MLE fit через custom BFGS optimizer (без LinearAlgebra dependency) с numerical gradient,
+   backtracking line search, method-of-moments initialization, support constraint validation.
+4. ✅ `survival(gev, x)` — upper-tail SF с `-expm1` для precision, support boundary handling.
+5. ✅ `cdf(gev, x)` — complementary CDF.
+6. ✅ `scipy_params(gev)` — конвертация в SciPy convention (c = -k) для fixture comparison.
+7. ✅ `benjamini_hochberg` (BH FDR) — `adjusted_pvalues(pvalues; method=BenjaminiHochberg())`.
+8. ✅ `evalue(pvalue, effective_n)` — E-value computation.
+9. ✅ `pvalue(gev, score)` — upper-tail p-value (alias for `survival`).
+10. ✅ `GroupRelations` — typed struct для motif group mapping и eligible pairs.
+11. ✅ `parse_group_relations` — TSV/CSV reader с delimiter sniffing, known_names validation.
+12. ✅ `NullDistribution` — typed struct с strategy, metric, fit, raw_scores, pairs, n_null, n_queries, skipped,
+    compatibility fingerprints.
+13. ✅ `NullPair` — typed contributing comparison pair.
+14. ✅ `build_null(models, relations; ...)` — null distribution build workflow с eligible pair scheduling.
+15. ✅ `AnnotatedResult` — comparison result enriched с significance fields (p-value, adj.p-value, E-value, null_id, null_n, null_estimator).
+16. ✅ `annotate_results(results, dist; ...)` — annotate comparison results with null distribution significance.
+17. ✅ `savenull(path, dist)` — portable storage (TOML manifest + NPY, SHA-256 checksums, atomic writes).
+18. ✅ `loadnull(path)` — load with format validation и checksum verification.
+19. ✅ `to_dict(AnnotatedResult)` / `to_json(AnnotatedResult)` — JSON serialization с Python-compatible keys
+    (`p-value`, `adj.p-value`, `E-value`).
+20. ✅ Compatibility tests: 4 GEV fixtures (gumbel_200, normal_2000, exponential_500, uniform_5000) — all match
+    oracle within tolerance (params atol=0.01, rtol=0.05; SF atol=1e-4, rtol=1e-3).
+21. ✅ Unit tests: GEV fit, edge cases, survival, BH FDR, E-value, group relations, null build, annotate, storage round-trip,
+    checksum validation, format validation.
+22. ✅ JuliaFormatter (BlueStyle), 188 046 тестов (0 failures, 0 errors, 0 warnings).
+23. ☐ Empirical fallback (rank-based p-value) — отложено.
+24. ☐ Explicit `AbstractRNG` support — отложено (build_null не генерирует данные, использует входные models).
+25. ☐ Degenerate/NaN/Inf/extreme-tail corpus — отложено (basic edge cases покрыты).
+26. ☐ Null compatibility lookup/search — отложено до Stage 7.
+27. ☐ Model collection fingerprinting — отложено до Stage 7.
 
 **Gate 6**
 
-- GEV corpus содержит SciPy parameters и survival values, а tolerances обоснованы;
-- fit failure не производит правдоподобный, но недействительный result;
-- raw null order и результаты воспроизводимы между запусками;
-- null file не использует pickle/joblib/Julia Serialization;
-- significance annotation не изменяет исходный comparison result неявно.
+> **Статус: пройден** (с отложенными items).
+
+- ✅ GEV corpus содержит SciPy parameters и survival values, а tolerances обоснованы;
+- ✅ fit failure не производит правдоподобный, но недействительный result (typed `GEVFitFailure`);
+- ✅ raw null order и результаты воспроизводимы между запусками;
+- ✅ null file не использует pickle/joblib/Julia Serialization (TOML + NPY);
+- ✅ significance annotation не изменяет исходный comparison result неявно (возвращает `AnnotatedResult`,
+  не мутирует `ComparisonResult`).
 
 ### Этап 7. Parallelism, cache и storage hardening (2-3 недели)
 
@@ -767,7 +819,8 @@ Stage 5a (BaMM) завершён. 186 985/186 985 тестов проходят.
 Stage 5b (SiteGA) завершён. 187 258/187 258 тестов проходят.
 Stage 5c (Dimont) завершён. 187 567/187 567 тестов проходят.
 Stage 5d (Slim) завершён. 187 866/187 866 тестов проходят.
-Следующая работа — этап 6 (Null distributions и статистика).
+Stage 6 (Null distributions) завершён (основной slice). 188 046/188 046 тестов проходят.
+Следующая работа — этап 7 (Parallelism, cache и storage hardening).
 
 > **Bugfix (до Stage 5d).** XML-парсер (`src/io/xml_parser.jl`) использовал
 > `length(content)` (O(n) подсчёт codepoints у Julia `String`) внутри `_starts_at`,

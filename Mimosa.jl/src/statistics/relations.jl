@@ -1,0 +1,164 @@
+# Group relation parsing for null-distribution builds.
+#
+# Reads a TSV/CSV file with motif name and group columns, builds a mapping
+# from each motif to the set of motifs from a *different* group.
+
+"""
+    GroupRelations
+
+Mapping from motif name to the set of eligible comparison targets (motifs
+from a different group).
+
+Fields:
+- `groups::Dict{String,String}`: motif name → group name.
+- `eligible::Dict{String,Set{String}}`: motif name → set of eligible targets.
+"""
+struct GroupRelations
+    groups::Dict{String,String}
+    eligible::Dict{String,Set{String}}
+end
+
+"""
+    parse_group_relations(path; name_column="motif", group_column="group", ignore_missing=false, known_names=nothing)
+
+Parse a motif-to-group table (TSV/CSV) and build eligible pairs: for each
+motif, all other motifs from a *different* group.
+
+# Arguments
+- `path`: path to the relation file.
+- `name_column`: column name for motif names (default `"motif"`).
+- `group_column`: column name for group names (default `"group"`).
+- `ignore_missing`: if `true`, silently skip motif names not in `known_names`.
+- `known_names`: optional set of known motif names for validation.
+
+Returns a [`GroupRelations`](@ref) with the group mapping and eligible pairs.
+"""
+function parse_group_relations(
+    path::AbstractString;
+    name_column::AbstractString="motif",
+    group_column::AbstractString="group",
+    ignore_missing::Bool=false,
+    known_names::Union{Nothing,Set{String}}=nothing,
+)
+    rows, headers = _read_table(path)
+
+    name_idx = findfirst(==(name_column), headers)
+    group_idx = findfirst(==(group_column), headers)
+
+    if name_idx === nothing
+        throw(
+            ArgumentError(
+                "Group table must contain column '$name_column'. Found: $(join(headers, ", "))",
+            ),
+        )
+    end
+    if group_idx === nothing
+        throw(
+            ArgumentError(
+                "Group table must contain column '$group_column'. Found: $(join(headers, ", "))",
+            ),
+        )
+    end
+
+    groups = Dict{String,String}()
+    for row in rows
+        name = String(strip(row[name_idx]))
+        group = String(strip(row[group_idx]))
+        if isempty(name)
+            continue
+        end
+        groups[name] = group
+    end
+
+    # Validate against known names
+    if known_names !== nothing
+        missing_names = setdiff(keys(groups), known_names)
+        if !isempty(missing_names) && !ignore_missing
+            throw(
+                ArgumentError(
+                    "Relation input references unknown motifs: $(join(sort!(collect(missing_names)), ", "))",
+                ),
+            )
+        end
+    end
+
+    # Build eligible pairs
+    names = sort!(collect(keys(groups)))
+    if known_names !== nothing
+        names = filter(n -> n in known_names, names)
+    end
+
+    eligible = Dict{String,Set{String}}()
+    for query in names
+        targets = Set{String}()
+        for target in names
+            if target != query && groups[target] != groups[query]
+                push!(targets, target)
+            end
+        end
+        eligible[query] = targets
+    end
+
+    return GroupRelations(groups, eligible)
+end
+
+"""
+    eligible_targets(relations::GroupRelations, query::AbstractString)
+
+Return the sorted list of eligible target names for a given query motif.
+"""
+function eligible_targets(relations::GroupRelations, query::AbstractString)
+    targets = get(relations.eligible, query, Set{String}())
+    return sort!(collect(targets))
+end
+
+# ---------------------------------------------------------------------------
+# Table reader (TSV/CSV with delimiter sniffing)
+# ---------------------------------------------------------------------------
+
+function _read_table(path::AbstractString)
+    content = read(path, String)
+    delimiter = _sniff_delimiter(content)
+    lines = split(content, '\n')
+
+    # Skip empty lines and comments
+    data_lines = filter(l -> !isempty(strip(l)) && !startswith(strip(l), '#'), lines)
+    isempty(data_lines) && throw(ArgumentError("Relation file is empty: $path"))
+
+    # Parse header
+    headers = String.(strip.(split(data_lines[1], delimiter)))
+    # Remove empty trailing header
+    headers = filter(!isempty, headers)
+
+    rows = Vector{Vector{String}}()
+    for line in data_lines[2:end]
+        fields = split(line, delimiter)
+        # Strip and convert to String
+        row = String.(strip.(fields))
+        # Pad if needed
+        while length(row) < length(headers)
+            push!(row, "")
+        end
+        push!(rows, row)
+    end
+
+    return rows, headers
+end
+
+function _sniff_delimiter(content::AbstractString)
+    # Try to detect delimiter: tab, comma, or semicolon
+    sample = first(content, min(length(content), 4096))
+    tab_count = count(==('\t'), sample)
+    comma_count = count(==(','), sample)
+    semicolon_count = count(==(';'), sample)
+
+    if tab_count >= comma_count && tab_count >= semicolon_count && tab_count > 0
+        return '\t'
+    elseif comma_count > 0 && comma_count >= semicolon_count
+        return ','
+    elseif semicolon_count > 0
+        return ';'
+    else
+        return '\t'
+    end
+end

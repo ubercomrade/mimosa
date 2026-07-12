@@ -20,6 +20,7 @@ include("io/io.jl")
 include("comparison/comparison.jl")
 include("profiles/profiles.jl")
 include("sites/sites.jl")
+include("statistics/statistics.jl")
 include("serialization.jl")
 include("cli.jl")
 
@@ -108,5 +109,31 @@ export AbstractProfileMetric,
     collect_threshold_anchors,
     collect_anchors,
     score_shift
+
+# Statistics exports
+export GEVFit,
+    GEVFitFailure,
+    GEVFitResult,
+    fit_gev,
+    survival,
+    cdf,
+    scipy_params,
+    BenjaminiHochberg,
+    adjusted_pvalues,
+    evalue,
+    pvalue,
+    GroupRelations,
+    parse_group_relations,
+    eligible_targets,
+    NullDistribution,
+    NullPair,
+    NullBuildConfig,
+    NullBuildResult,
+    AnnotatedResult,
+    build_null,
+    annotate_results,
+    savenull,
+    loadnull,
+    NULL_FORMAT_VERSION
 
 end # module
