@@ -146,3 +146,11 @@ Return the number of scanning positions per sequence: `window_size` terms
 minus `kmer` plus 1 = `motif_length`.
 """
 scan_width(model::BaMM) = model.motif_length
+
+"""
+    site_start_offset(model::BaMM)
+
+Return the offset from scan position to motif start (= `order`): the first
+`context_length` bases of the scan window are context, not motif.
+"""
+site_start_offset(model::BaMM) = context_length(model)

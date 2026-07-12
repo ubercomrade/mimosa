@@ -623,16 +623,71 @@ function _run_build_null(parsed::CLIParsed)
     # Read models
     models = _read_model_collection(motifs_path, model_type)
     known_names = Set(m.name for m in models)
-    relations = parse_group_relations(groups_path; known_names=known_names)
+    relations = parse_group_relations(
+        groups_path;
+        name_column=name_col,
+        group_column=group_col,
+        ignore_missing=ignore_missing,
+        known_names=known_names,
+    )
+
+    min_null === nothing &&
+        throw(CLIError("--min-null-targets must be a positive integer."))
+    min_null > 0 || throw(CLIError("--min-null-targets must be a positive integer."))
+    seed === nothing && throw(CLIError("--seed must be an integer."))
+    num_seq === nothing && throw(CLIError("--num-sequences must be a positive integer."))
+    num_seq > 0 || throw(CLIError("--num-sequences must be a positive integer."))
+    seq_len === nothing && throw(CLIError("--seq-length must be a positive integer."))
+    seq_len > 0 || throw(CLIError("--seq-length must be a positive integer."))
+
+    search_range = tryparse(Int, get(parsed.options, "search-range", "10"))
+    window_radius = tryparse(Int, get(parsed.options, "window-radius", "10"))
+    realign_window = tryparse(Int, get(parsed.options, "realign-window", "3"))
+    min_logfpr = tryparse(Float32, get(parsed.options, "min-logfpr", "0.0"))
+    search_range === nothing &&
+        throw(CLIError("--search-range must be a non-negative integer."))
+    window_radius === nothing &&
+        throw(CLIError("--window-radius must be a non-negative integer."))
+    realign_window === nothing &&
+        throw(CLIError("--realign-window must be a non-negative integer."))
+    min_logfpr === nothing && throw(CLIError("--min-logfpr must be a finite number."))
+    search_range >= 0 || throw(CLIError("--search-range must be a non-negative integer."))
+    window_radius >= 0 || throw(CLIError("--window-radius must be a non-negative integer."))
+    realign_window >= 0 ||
+        throw(CLIError("--realign-window must be a non-negative integer."))
+    isfinite(min_logfpr) || throw(CLIError("--min-logfpr must be a finite number."))
 
     # Resolve execution policy from --threads (or --jobs alias)
     threads_str = get(parsed.options, "threads", get(parsed.options, "jobs", "1"))
     nthreads_val = tryparse(Int, threads_str)
     nthreads_val === nothing && throw(CLIError("--threads must be a positive integer."))
+    nthreads_val > 0 || throw(CLIError("--threads must be a positive integer."))
     exec_policy = nthreads_val <= 1 ? SerialExecution() : ThreadedExecution(nthreads_val)
 
-    # Build null distribution
-    result = build_null(models, relations; execution=exec_policy)
+    config = NullBuildConfig(;
+        strategy=strategy, metric=metric, min_null_targets=min_null, strict=strict
+    )
+    result = if config.strategy isa MotifNullStrategy
+        isnothing(fasta) || throw(CLIError("--fasta is only valid for profile strategy."))
+        build_null(models, relations, config; execution=exec_policy)
+    else
+        sequences = if isnothing(fasta)
+            make_random_sequences(num_seq, seq_len; seed=seed)
+        else
+            first(readsequences(fasta))
+        end
+        build_null(
+            models,
+            relations,
+            config;
+            execution=exec_policy,
+            sequences=sequences,
+            search_range=search_range,
+            window_radius=window_radius,
+            realign_window=realign_window,
+            min_logfpr=min_logfpr,
+        )
+    end
 
     # Save null distribution
     savenull(output_path, result.distribution)
@@ -644,8 +699,8 @@ function _run_build_null(parsed::CLIParsed)
         "n_comparisons" => result.total_comparisons,
         "n_null" => result.distribution.n_null,
         "n_queries" => result.distribution.n_queries,
-        "metric" => metric,
-        "strategy" => strategy,
+        "metric" => result.distribution.metric,
+        "strategy" => result.distribution.strategy,
     )
     if result.distribution.fit isa GEVFit
         summary["gev_shape"] = result.distribution.fit.shape
@@ -653,7 +708,13 @@ function _run_build_null(parsed::CLIParsed)
         summary["gev_scale"] = result.distribution.fit.scale
         summary["gev_converged"] = result.distribution.fit.converged
     end
-    _println_json(summary)
+    if "verbose" in parsed.flags
+        println(
+            stderr,
+            "build-null: strategy=$(result.distribution.strategy), metric=$(result.distribution.metric), comparisons=$(result.total_comparisons)",
+        )
+    end
+    "quiet" in parsed.flags || _println_json(summary)
     return 0
 end
 

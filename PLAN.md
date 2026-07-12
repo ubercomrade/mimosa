@@ -409,10 +409,9 @@ Legacy pickle/joblib converter работает отдельным Python proces
 > Python commit: `95e8dbb`. Python 3.13, NumPy 2.3.5, SciPy 1.17.0.
 > Julia: 1.12.6 (juliaup).
 >
-> Отложено: one-to-many path с reuse подготовленных query profiles,
-> motif-derived profiles (PWM scan → profile comparison),
-> compatibility fixtures для intermediate values (anchor indices,
-> windows, candidate shifts).
+> Отложено: compatibility fixtures для intermediate values (anchor indices,
+> windows, candidate shifts). One-to-many path и motif-derived profiles
+> реализованы в последующей итерации (см. ниже).
 
 **Зависимость:** Gate 2.
 
@@ -426,8 +425,9 @@ Legacy pickle/joblib converter работает отдельным Python proces
 - ✅ реализовать `co`, `co_rowwise`, `dice`, `dice_rowwise`, `cosine` как typed metric types (`OverlapCoefficient`, etc.);
 - ✅ реализовать four-orientation candidates (`PROFILE_ORIENTATION_PAIRS`) и единую deterministic selection policy;
 - ✅ сохранить determinism через property тесты (повторные вызовы, non-mutation);
-- ☐ добавить one-to-many sequential path с reuse подготовленных query profiles;
-- ☐ добавить motif-derived profiles (PWM scan → normalization → profile comparison).
+- ✅ добавить one-to-many sequential path с reuse подготовленных query profiles (`PreparedProfile`, `prepare_profile`, `compare(::PreparedProfile, ::Vector{ScoreProfile})`);
+- ✅ добавить motif-derived profiles (PWM scan → normalization → profile comparison) (`compare(::AbstractMotifModel, ::AbstractMotifModel, ::EncodedSequenceBatch)`).
+- ✅ добавить `PreparedProfile` для one-to-many: подготовка query normalization и anchors один раз, повторное использование для multiple targets (`prepare_profile`, `compare(::PreparedProfile, ...)`).
 
 **Compatibility corpus**
 
@@ -442,8 +442,8 @@ Legacy pickle/joblib converter работает отдельным Python proces
 > **Статус: пройден** (с отложенными items).
 
 - ✅ все profile metrics проходят formula fixtures и edge cases;
-- ☐ direct scores-vs-scores и motif-derived profiles используют один typed profile algorithm (motif-derived отложено);
-- ☐ query preparation не повторяется для каждого target (one-to-many отложено);
+- ✅ direct scores-vs-scores и motif-derived profiles используют один typed profile algorithm (`_resolve_profile_bundle`, `profile_compare`);
+- ✅ query preparation не повторяется для каждого target (`PreparedProfile` + `compare(::PreparedProfile, ::Vector{ScoreProfile})`);
 - ✅ нет dense padding как обязательного canonical representation (RaggedArray everywhere).
 
 ### Этап 4. Sites и PFM reconstruction (2-3 недели)
@@ -1052,6 +1052,16 @@ Stage 6 (Null distributions) завершён (основной slice). 188 046/
 Stage 7 (Parallelism, cache, storage) завершён (основной slice). 188 236/188 236 тестов проходят.
 Stage 8 (CLI и legacy migration) завершён (основной slice). 188 291/188 291 тестов проходят.
 Stage 9 (Performance, latency, docs и downstream contract) завершён (основной slice). 188 336/188 336 тестов проходят.
+
+> **Итерация: deferred items (Stage 3 + Stage 5).** Реализованы one-to-many
+> profile comparison с reuse (`PreparedProfile`, `prepare_profile`,
+> `compare(::PreparedProfile, ::Vector{ScoreProfile})`), motif-derived profile
+> comparison (`compare(::AbstractMotifModel, ::AbstractMotifModel,
+> ::EncodedSequenceBatch)`), и generic sites/PFM reconstruction для
+> higher-order models (`selectsites(::AbstractHigherOrderMotif, ...)`,
+> `reconstruct_pfm(::AbstractHigherOrderMotif, ...)`, `site_start_offset`).
+> 188 411/188 411 тестов проходят.
+
 Следующая работа — этап 10 (Release и cutover).
 
 > **Bugfix (до Stage 5d).** XML-парсер (`src/io/xml_parser.jl`) использовал
@@ -1177,7 +1187,7 @@ Stage 9 (Performance, latency, docs и downstream contract) завершён (о
 14. ✅ JuliaFormatter (BlueStyle), 186 985 тестов (0 failures, 0 errors, 0 warnings).
 15. ☐ Malformed/security fixtures — отложено до следующего подэтапа.
 16. ☐ BaMM writer — не определён в Python (joblib dump only); отложено.
-17. ☐ BaMM sites и reconstruction — отложено (requires sites API generalization for higher-order models).
+17. ✅ BaMM sites и reconstruction — реализованы (generic selectsites/reconstruct_pfm для AbstractHigherOrderMotif, site_start_offset = order).
 18. ☐ BaMM comparison — отложено (requires comparison API generalization for higher-order models).
 19. ☐ Model-specific benchmark — отложено до benchmark suite.
 
@@ -1217,7 +1227,7 @@ Stage 9 (Performance, latency, docs и downstream contract) завершён (о
     batch scan, determinism, write round-trip.
 15. ✅ JuliaFormatter (BlueStyle), 187 258 тестов (0 failures, 0 errors, 0 warnings).
 16. ☐ Malformed/security fixtures — отложено до следующего подэтапа.
-17. ☐ SiteGA sites и reconstruction — отложено (requires sites API generalization for higher-order models).
+17. ✅ SiteGA sites и reconstruction — реализованы (site_start_offset = 0, dinucleotide scoring geometry).
 18. ☐ SiteGA comparison — отложено (requires comparison API generalization for higher-order models).
 19. ☐ Model-specific benchmark — отложено до benchmark suite.
 
@@ -1259,8 +1269,8 @@ Stage 9 (Performance, latency, docs и downstream contract) завершён (о
 15. ✅ JuliaFormatter (BlueStyle), 187 567 тестов (0 failures, 0 errors, 0 warnings).
 16. ☐ Malformed/security fixtures — отложено до следующего подэтапа.
 17. ☐ Dimont writer — не определён в Python (joblib dump only); отложено.
-18. ☐ Dimont sites и reconstruction — отложено (requires sites API generalization
-     for higher-order models).
+18. ✅ Dimont sites и reconstruction — реализованы (site_start_offset = span,
+     generic selectsites/reconstruct_pfm для AbstractHigherOrderMotif).
 19. ☐ Dimont comparison — отложено (requires comparison API generalization for
      higher-order models).
 20. ☐ Model-specific benchmark — отложено до benchmark suite.
@@ -1312,8 +1322,8 @@ Stage 9 (Performance, latency, docs и downstream contract) завершён (о
 13. ✅ JuliaFormatter (BlueStyle), 187 866 тестов (0 failures, 0 errors, 0 warnings).
 14. ☐ Malformed/security fixtures — отложено до следующего подэтапа.
 15. ☐ Slim writer — не определён в Python (joblib dump only); отложено.
-16. ☐ Slim sites и reconstruction — отложено (requires sites API generalization
-     for higher-order models).
+16. ✅ Slim sites и reconstruction — реализованы (site_start_offset = span,
+     generic selectsites/reconstruct_pfm для AbstractHigherOrderMotif).
 17. ☐ Slim comparison — отложено (requires comparison API generalization for
      higher-order models).
 18. ☐ Model-specific benchmark — отложено до benchmark suite.

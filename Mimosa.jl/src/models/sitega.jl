@@ -137,3 +137,11 @@ window_size(model::SiteGA) = model.motif_length
 Return the number of scoring terms per window (= motif_length - 1).
 """
 scan_width(model::SiteGA) = model.motif_length - 1
+
+"""
+    site_start_offset(model::SiteGA)
+
+Return the offset from scan position to motif start (= 0): SiteGA has no
+context before the motif window.
+"""
+site_start_offset(::SiteGA) = 0

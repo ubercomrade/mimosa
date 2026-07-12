@@ -18,4 +18,6 @@ export LogTailTable,
     collect_anchors,
     score_shift,
     ProfileConfig,
-    profile_compare
+    profile_compare,
+    PreparedProfile,
+    prepare_profile

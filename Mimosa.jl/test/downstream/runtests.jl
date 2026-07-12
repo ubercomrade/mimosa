@@ -136,3 +136,46 @@ end
     # (not `using Mimosa.Scanning` etc.) is the contract.
     @test true
 end
+
+@testset "Downstream contract: prepared profile" begin
+    # Verify one-to-many profile comparison API
+    @test isdefined(Mimosa, :PreparedProfile)
+    @test isdefined(Mimosa, :prepare_profile)
+
+    # Create score profiles
+    sp1 = ScoreProfile("q", build_ragged([Float32[0.1, 0.5, 0.3, 0.8]]))
+    sp2 = ScoreProfile("t1", build_ragged([Float32[0.2, 0.4, 0.3, 0.7]]))
+    sp3 = ScoreProfile("t2", build_ragged([Float32[0.3, 0.1, 0.9, 0.2]]))
+
+    # Prepare and one-to-many
+    prepared = prepare_profile(sp1)
+    @test prepared isa PreparedProfile
+
+    results = compare(prepared, [sp2, sp3]; metric=:co, search_range=3, window_radius=2)
+    @test length(results) == 2
+    @test all(r isa ComparisonResult for r in results)
+end
+
+@testset "Downstream contract: higher-order sites" begin
+    # Verify site extraction works for higher-order models
+    @test isdefined(Mimosa, :site_start_offset)
+
+    # Create a simple BaMM with order=1
+    rep = Matrix{Float32}(undef, 25, 5)
+    for i in 1:25, j in 1:5
+        rep[i, j] = Float32(randn())
+    end
+    bamm = BaMM("ho_test", rep, 1, 5)
+
+    @test site_start_offset(bamm) == 1
+
+    batch = make_random_sequences(5, 20; seed=42)
+    sites = selectsites(bamm, batch, BestPerSequence(); strands=BothStrands())
+    @test sites isa SiteCollection
+
+    if length(sites) > 0
+        pfm = reconstruct_pfm(bamm, batch, BestPerSequence(); pseudocount=0.1f0)
+        @test pfm isa AbstractMatrix{Float32}
+        @test size(pfm) == (4, 5)
+    end
+end

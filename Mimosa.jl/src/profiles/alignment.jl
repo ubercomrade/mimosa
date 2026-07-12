@@ -339,10 +339,13 @@ Base.@kwdef struct ProfileConfig{M<:AbstractProfileMetric}
 end
 
 """
-    profile_compare(query_bundle, target_bundle, config::ProfileConfig)
+    profile_compare(query_bundle, query_anchors, target_bundle, target_anchors, config::ProfileConfig)
 
-Compare two normalized profile bundles and return
+Compare two normalized profile bundles using pre-collected anchor CSRs and
+return
 `(score::Float32, offset::Int, orientation::String, n_sites::Int, metric_name::String)`.
+
+`query_anchors` and `target_anchors` are `(forward_csr, reverse_csr)` tuples.
 
 Scores all four orientation pairs (`++`, `--`, `+-`, `-+`) and selects the best
 with deterministic tie-breaking per ADR 0006: higher score wins, then
@@ -350,30 +353,12 @@ orientation priority `++ > +- > -+ > --`.
 """
 function profile_compare(
     query_bundle::StrandPair{<:RaggedArray{Float32}},
+    query_anchors::Tuple{AnchorCSR,AnchorCSR},
     target_bundle::StrandPair{<:RaggedArray{Float32}},
+    target_anchors::Tuple{AnchorCSR,AnchorCSR},
     config::ProfileConfig,
 )
     metric = config.metric
-    n_rows = nrows(query_bundle.forward)
-
-    # Collect anchors for each strand (only for strands used in orientations)
-    threshold = config.min_logfpr
-
-    query_anchor_cache = Dict{Int,AnchorCSR}()
-    target_anchor_cache = Dict{Int,AnchorCSR}()
-
-    for strand in (1, 2)
-        if !haskey(query_anchor_cache, strand)
-            qs = strand == 1 ? query_bundle.forward : query_bundle.reverse
-            rows, pos = collect_anchors(qs, threshold)
-            query_anchor_cache[strand] = build_anchor_csr(rows, pos, n_rows)
-        end
-        if !haskey(target_anchor_cache, strand)
-            ts = strand == 1 ? target_bundle.forward : target_bundle.reverse
-            rows, pos = collect_anchors(ts, threshold)
-            target_anchor_cache[strand] = build_anchor_csr(rows, pos, n_rows)
-        end
-    end
 
     # Score all four orientation pairs
     best_score = 0.0f0
@@ -383,11 +368,13 @@ function profile_compare(
     best_rank = 0
 
     for (i, (label, q_strand, t_strand)) in enumerate(PROFILE_ORIENTATION_PAIRS)
+        qa = q_strand == 1 ? query_anchors[1] : query_anchors[2]
+        ta = t_strand == 1 ? target_anchors[1] : target_anchors[2]
         result = _score_orientation_pair(
             query_bundle,
             target_bundle,
-            query_anchor_cache[q_strand],
-            target_anchor_cache[t_strand],
+            qa,
+            ta,
             q_strand,
             t_strand,
             label,
@@ -399,7 +386,6 @@ function profile_compare(
         score, shift, n_sites = result
 
         # Tie-breaking: higher score, then orientation priority (++,+-,-+,--)
-        # ORIENTATION_TIEBREAK: ++=0, +-=1, -+=2, --=3
         rank = i - 1  # 0-indexed rank
         if Float64(score) > Float64(best_score) ||
             (Float64(score) == Float64(best_score) && rank < best_rank)
@@ -412,4 +398,243 @@ function profile_compare(
     end
 
     return (best_score, best_shift, best_orientation, best_n_sites, metric_name(metric))
+end
+
+"""
+    profile_compare(query_bundle, target_bundle, config::ProfileConfig)
+
+Compare two normalized profile bundles and return
+`(score::Float32, offset::Int, orientation::String, n_sites::Int, metric_name::String)`.
+
+Collects anchors for both bundles internally. For one-to-many comparison where
+the query anchors should be reused, use the variant with pre-computed anchors.
+
+Scores all four orientation pairs (`++`, `--`, `+-`, `-+`) and selects the best
+with deterministic tie-breaking per ADR 0006: higher score wins, then
+orientation priority `++ > +- > -+ > --`.
+"""
+function profile_compare(
+    query_bundle::StrandPair{<:RaggedArray{Float32}},
+    target_bundle::StrandPair{<:RaggedArray{Float32}},
+    config::ProfileConfig,
+)
+    threshold = config.min_logfpr
+    query_anchors = _collect_both_anchors(query_bundle, threshold)
+    target_anchors = _collect_both_anchors(target_bundle, threshold)
+    return profile_compare(
+        query_bundle, query_anchors, target_bundle, target_anchors, config
+    )
+end
+
+# ── Prepared profile (one-to-many reuse) ───────────────────────────────────────
+
+"""
+    PreparedProfile
+
+A pre-normalized profile bundle with pre-collected anchors, ready for
+repeated comparison against multiple targets without re-computing the
+query side.
+
+Fields:
+- `name::String`: profile name.
+- `bundle::StrandPair{T}`: normalized scores.
+- `anchors::Tuple{AnchorCSR,AnchorCSR}`: `(forward, reverse)` anchor CSRs.
+"""
+struct PreparedProfile{T}
+    name::String
+    bundle::T
+    anchors::Tuple{AnchorCSR,AnchorCSR}
+end
+
+"""
+    _collect_both_anchors(bundle::StrandPair{<:RaggedArray{Float32}}, threshold::Float32)
+
+Collect anchors for both strands and return `(forward_csr, reverse_csr)`.
+"""
+function _collect_both_anchors(
+    bundle::StrandPair{<:RaggedArray{Float32}}, threshold::Float32
+)
+    n_rows = nrows(bundle.forward)
+    fwd_rows, fwd_pos = collect_anchors(bundle.forward, threshold)
+    fwd_csr = build_anchor_csr(fwd_rows, fwd_pos, n_rows)
+    rev_rows, rev_pos = collect_anchors(bundle.reverse, threshold)
+    rev_csr = build_anchor_csr(rev_rows, rev_pos, n_rows)
+    return (fwd_csr, rev_csr)
+end
+
+"""
+    prepare_profile(model::ScoreProfile; min_logfpr::Float32=0.0f0)
+
+Prepare a [`ScoreProfile`](@ref) for repeated comparison: fit normalization
+from the profile's own scores, apply it, and collect anchors for both
+strands. Returns a [`PreparedProfile`](@ref).
+
+Keyword arguments:
+- `min_logfpr::Float32=0.0`: minimum log FPR for threshold anchors (0 = best anchors).
+"""
+function prepare_profile(model::ScoreProfile; min_logfpr::Float32=Float32(0.0))
+    raw = profile_bundle(model)
+    flat = flatten_bundle(raw)
+    table = fit(EmpiricalLogTail(), flat)
+    norm_bundle = normalize_bundle(table, raw)
+    anchors = _collect_both_anchors(norm_bundle, min_logfpr)
+    return PreparedProfile(model.name, norm_bundle, anchors)
+end
+
+"""
+    prepare_profile(model::AbstractMotifModel, sequences::EncodedSequenceBatch;
+                    background=nothing, min_logfpr=0.0f0)
+
+Scan a motif model against `sequences` to produce a normalized profile bundle
+with pre-collected anchors, ready for repeated comparison. The normalization
+is fitted from `background` (falls back to `sequences` when `background=nothing`).
+
+Returns a [`PreparedProfile`](@ref).
+"""
+function prepare_profile(
+    model::AbstractMotifModel,
+    sequences::EncodedSequenceBatch;
+    background::Union{EncodedSequenceBatch,Nothing}=nothing,
+    min_logfpr::Float32=Float32(0.0),
+)
+    raw = scan(model, sequences; strands=BothStrands())
+    bg = background === nothing ? sequences : background
+    bg_raw = scan(model, bg; strands=BothStrands())
+    flat = flatten_bundle(bg_raw)
+    table = fit(EmpiricalLogTail(), flat)
+    norm_bundle = normalize_bundle(table, raw)
+    anchors = _collect_both_anchors(norm_bundle, min_logfpr)
+    return PreparedProfile(model.name, norm_bundle, anchors)
+end
+
+# ── PreparedProfile compare methods ────────────────────────────────────────────
+
+"""
+    compare(query::PreparedProfile, target::ScoreProfile; metric=:co, kwargs...)
+
+Compare a [`PreparedProfile`](@ref) (pre-normalized, pre-anchored) against a
+[`ScoreProfile`](@ref) target. The query normalization and anchor collection
+are reused; only the target is prepared.
+
+Keyword arguments:
+- `metric`: profile metric (`:co`, `:co_rowwise`, `:dice`, `:dice_rowwise`,
+  `:cosine`, or a typed `AbstractProfileMetric`). Default `:co`.
+- `search_range::Int=10`, `window_radius::Int=10`, `realign_window::Int=3`,
+  `min_logfpr::Float32=0.0`.
+"""
+function compare(
+    query::PreparedProfile,
+    target::ScoreProfile;
+    metric::Union{AbstractString,Symbol,AbstractProfileMetric}=:co,
+    search_range::Int=10,
+    window_radius::Int=10,
+    realign_window::Int=3,
+    min_logfpr::Float32=Float32(0.0),
+)
+    m = _resolve_profile_metric(metric)
+    target_raw = profile_bundle(target)
+    target_flat = flatten_bundle(target_raw)
+    target_table = fit(EmpiricalLogTail(), target_flat)
+    target_norm = normalize_bundle(target_table, target_raw)
+    target_anchors = _collect_both_anchors(target_norm, min_logfpr)
+    config = ProfileConfig(;
+        metric=m,
+        search_range=search_range,
+        window_radius=window_radius,
+        realign_window=realign_window,
+        min_logfpr=min_logfpr,
+    )
+    score, shift, orientation, n_sites, metric_str = profile_compare(
+        query.bundle, query.anchors, target_norm, target_anchors, config
+    )
+    return ComparisonResult(
+        query.name, target.name, score, shift, orientation, metric_str, n_sites
+    )
+end
+
+"""
+    compare(query::PreparedProfile, targets::Vector{ScoreProfile}; kwargs...)
+
+One-to-many comparison: compare a single prepared query against multiple
+targets, reusing the query's normalized bundle and pre-collected anchors.
+Returns a `Vector{ComparisonResult}`.
+
+Each target is prepared (normalized, anchors collected) independently.
+"""
+function compare(query::PreparedProfile, targets::Vector{ScoreProfile}; kwargs...)
+    return [compare(query, t; kwargs...) for t in targets]
+end
+
+"""
+    compare(query::PreparedProfile, target::AbstractMotifModel,
+            sequences::EncodedSequenceBatch; metric=:co, kwargs...)
+
+Compare a [`PreparedProfile`](@ref) against a motif model target by scanning
+the target against `sequences` and comparing profiles. The query's normalized
+bundle and anchors are reused.
+"""
+function compare(
+    query::PreparedProfile,
+    target::AbstractMotifModel,
+    sequences::EncodedSequenceBatch;
+    metric::Union{AbstractString,Symbol,AbstractProfileMetric}=:co,
+    search_range::Int=10,
+    window_radius::Int=10,
+    realign_window::Int=3,
+    min_logfpr::Float32=Float32(0.0),
+    background::Union{EncodedSequenceBatch,Nothing}=nothing,
+)
+    m = _resolve_profile_metric(metric)
+    target_norm = _resolve_profile_bundle(target, sequences, background)
+    target_anchors = _collect_both_anchors(target_norm, min_logfpr)
+    config = ProfileConfig(;
+        metric=m,
+        search_range=search_range,
+        window_radius=window_radius,
+        realign_window=realign_window,
+        min_logfpr=min_logfpr,
+    )
+    score, shift, orientation, n_sites, metric_str = profile_compare(
+        query.bundle, query.anchors, target_norm, target_anchors, config
+    )
+    return ComparisonResult(
+        query.name, target.name, score, shift, orientation, metric_str, n_sites
+    )
+end
+
+"""
+    compare(query::AbstractMotifModel, target::PreparedProfile,
+            sequences::EncodedSequenceBatch; metric=:co, kwargs...)
+
+Compare a motif model query (scanned against `sequences`) against a
+[`PreparedProfile`](@ref) target. The target's normalized bundle and anchors
+are reused.
+"""
+function compare(
+    query::AbstractMotifModel,
+    target::PreparedProfile,
+    sequences::EncodedSequenceBatch;
+    metric::Union{AbstractString,Symbol,AbstractProfileMetric}=:co,
+    search_range::Int=10,
+    window_radius::Int=10,
+    realign_window::Int=3,
+    min_logfpr::Float32=Float32(0.0),
+    background::Union{EncodedSequenceBatch,Nothing}=nothing,
+)
+    m = _resolve_profile_metric(metric)
+    query_norm = _resolve_profile_bundle(query, sequences, background)
+    query_anchors = _collect_both_anchors(query_norm, min_logfpr)
+    config = ProfileConfig(;
+        metric=m,
+        search_range=search_range,
+        window_radius=window_radius,
+        realign_window=realign_window,
+        min_logfpr=min_logfpr,
+    )
+    score, shift, orientation, n_sites, metric_str = profile_compare(
+        query_norm, query_anchors, target.bundle, target.anchors, config
+    )
+    return ComparisonResult(
+        query.name, target.name, score, shift, orientation, metric_str, n_sites
+    )
 end

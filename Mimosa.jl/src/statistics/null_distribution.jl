@@ -61,20 +61,69 @@ Fields:
 - `min_null_targets::Int`: minimum eligible targets required per query.
 - `strict::Bool`: if `true`, raise an error when a query has too few targets.
 """
-struct NullBuildConfig
-    strategy::String
-    metric::Any
+abstract type NullStrategy end
+
+"""Direct motif-matrix comparisons for null-distribution construction."""
+struct MotifNullStrategy <: NullStrategy end
+
+"""Profile comparisons over an explicit encoded sequence batch."""
+struct ProfileNullStrategy <: NullStrategy end
+
+_strategy_name(::MotifNullStrategy) = "motif"
+_strategy_name(::ProfileNullStrategy) = "profile"
+
+"""
+    NullBuildConfig
+
+Typed configuration for [`build_null`](@ref). A motif strategy accepts only an
+[`AbstractColumnMetric`](@ref); a profile strategy accepts only an
+[`AbstractProfileMetric`](@ref). This prevents metadata from describing a
+different algorithm or metric than the one actually executed.
+"""
+struct NullBuildConfig{S<:NullStrategy,M}
+    strategy::S
+    metric::M
     min_null_targets::Int
     strict::Bool
+
+    function NullBuildConfig(
+        strategy::S, metric::M, min_null_targets::Int, strict::Bool
+    ) where {S<:NullStrategy,M}
+        min_null_targets > 0 || throw(ArgumentError("min_null_targets must be positive."))
+        valid_metric =
+            (strategy isa MotifNullStrategy && metric isa AbstractColumnMetric) ||
+            (strategy isa ProfileNullStrategy && metric isa AbstractProfileMetric)
+        valid_metric || throw(
+            ArgumentError(
+                "metric type $(typeof(metric)) is incompatible with $(_strategy_name(strategy)) strategy.",
+            ),
+        )
+        return new{S,M}(strategy, metric, min_null_targets, strict)
+    end
 end
 
 function NullBuildConfig(;
-    strategy::AbstractString="motif",
-    metric=:pcc,
+    strategy::Union{AbstractString,NullStrategy}="motif",
+    metric=nothing,
     min_null_targets::Int=1,
     strict::Bool=false,
 )
-    return NullBuildConfig(String(strategy), metric, min_null_targets, strict)
+    min_null_targets > 0 || throw(ArgumentError("min_null_targets must be positive."))
+    resolved_strategy = if strategy isa NullStrategy
+        strategy
+    elseif strategy == "motif"
+        MotifNullStrategy()
+    elseif strategy == "profile"
+        ProfileNullStrategy()
+    else
+        throw(ArgumentError("strategy must be 'motif' or 'profile', got '$strategy'."))
+    end
+    resolved_metric = if resolved_strategy isa MotifNullStrategy
+        _resolve_metric(isnothing(metric) ? :pcc : metric)
+    else
+        _resolve_profile_metric(isnothing(metric) ? :co : metric)
+    end
+    return NullBuildConfig(resolved_strategy, resolved_metric, min_null_targets, strict)
 end
 
 """
@@ -119,14 +168,128 @@ identical to `SerialExecution`.
 function build_null(
     models::AbstractVector,
     relations::GroupRelations;
-    strategy::AbstractString="motif",
-    metric=:pcc,
+    strategy::Union{AbstractString,NullStrategy}="motif",
+    metric=nothing,
     min_null_targets::Int=1,
     strict::Bool=false,
     execution::ExecutionPolicy=SerialExecution(),
+    sequences::Union{Nothing,EncodedSequenceBatch}=nothing,
+    background::Union{Nothing,EncodedSequenceBatch}=nothing,
+    search_range::Int=10,
+    window_radius::Int=10,
+    realign_window::Int=3,
+    min_logfpr::Real=0.0,
     kwargs...,
 )
-    by_name = Dict{String,eltype(models)}()
+    config = NullBuildConfig(;
+        strategy=strategy, metric=metric, min_null_targets=min_null_targets, strict=strict
+    )
+    if config.strategy isa MotifNullStrategy
+        return build_null(
+            models,
+            relations,
+            config;
+            execution=execution,
+            sequences=sequences,
+            background=background,
+            kwargs...,
+        )
+    end
+    return build_null(
+        models,
+        relations,
+        config;
+        execution=execution,
+        sequences=sequences,
+        background=background,
+        search_range=search_range,
+        window_radius=window_radius,
+        realign_window=realign_window,
+        min_logfpr=min_logfpr,
+        kwargs...,
+    )
+end
+
+function build_null(
+    models::AbstractVector,
+    relations::GroupRelations,
+    config::NullBuildConfig{MotifNullStrategy,<:AbstractColumnMetric};
+    execution::ExecutionPolicy=SerialExecution(),
+    sequences::Union{Nothing,EncodedSequenceBatch}=nothing,
+    background::Union{Nothing,EncodedSequenceBatch}=nothing,
+    kwargs...,
+)
+    isnothing(sequences) ||
+        throw(ArgumentError("sequences are only valid for profile strategy."))
+    isnothing(background) ||
+        throw(ArgumentError("background is only valid for profile strategy."))
+    isempty(kwargs) ||
+        throw(ArgumentError("profile options are only valid for profile strategy."))
+    return _build_null(models, relations, config, execution) do q, t
+        return compare(q, t; metric=config.metric)
+    end
+end
+
+function build_null(
+    models::AbstractVector,
+    relations::GroupRelations,
+    config::NullBuildConfig{ProfileNullStrategy,<:AbstractProfileMetric};
+    execution::ExecutionPolicy=SerialExecution(),
+    sequences::Union{Nothing,EncodedSequenceBatch}=nothing,
+    background::Union{Nothing,EncodedSequenceBatch}=nothing,
+    search_range::Int=10,
+    window_radius::Int=10,
+    realign_window::Int=3,
+    min_logfpr::Real=0.0,
+    kwargs...,
+)
+    isnothing(sequences) && throw(ArgumentError("profile strategy requires sequences."))
+    isempty(kwargs) || throw(ArgumentError("unsupported profile null-build option."))
+    search_range >= 0 || throw(ArgumentError("search_range must be non-negative."))
+    window_radius >= 0 || throw(ArgumentError("window_radius must be non-negative."))
+    realign_window >= 0 || throw(ArgumentError("realign_window must be non-negative."))
+    isfinite(min_logfpr) || throw(ArgumentError("min_logfpr must be finite."))
+    result = _build_null(models, relations, config, execution) do q, t
+        return compare(
+            q,
+            t,
+            sequences;
+            metric=config.metric,
+            background=background,
+            search_range=search_range,
+            window_radius=window_radius,
+            realign_window=realign_window,
+            min_logfpr=Float32(min_logfpr),
+        )
+    end
+    dist = result.distribution
+    profiled_dist = NullDistribution(
+        dist.strategy,
+        dist.metric,
+        dist.fit,
+        dist.raw_scores,
+        dist.pairs,
+        dist.n_null,
+        dist.n_queries,
+        dist.skipped,
+        dist.model_collection_fingerprint,
+        dist.relation_fingerprint,
+        sequence_fingerprint(sequences),
+        isnothing(background) ? "none" : sequence_fingerprint(background),
+    )
+    return NullBuildResult(profiled_dist, result.total_comparisons)
+end
+
+function _build_null(
+    compare_pair,
+    models::AbstractVector,
+    relations::GroupRelations,
+    config::NullBuildConfig,
+    execution::ExecutionPolicy,
+)
+    all(model -> model isa AbstractMotifModel, models) ||
+        throw(ArgumentError("models must contain only AbstractMotifModel values."))
+    by_name = Dict{String,AbstractMotifModel}()
     for model in models
         by_name[model.name] = model
     end
@@ -141,10 +304,10 @@ function build_null(
         # Filter to known models and exclude self
         target_names = filter(n -> n != query.name && haskey(by_name, n), target_names)
 
-        if length(target_names) < min_null_targets
-            reason = "only $(length(target_names)) null target(s); required $min_null_targets"
+        if length(target_names) < config.min_null_targets
+            reason = "only $(length(target_names)) null target(s); required $(config.min_null_targets)"
             push!(skipped, (query=query.name, reason=reason))
-            if strict
+            if config.strict
                 throw(
                     ArgumentError("Skipping null contribution for $(query.name): $reason")
                 )
@@ -174,7 +337,7 @@ function build_null(
     # Compare all pairs (serial or threaded)
     _parallel_for(execution, total_comparisons) do i
         q, t = work_pairs[i]
-        result = compare(q, t; metric=metric, kwargs...)
+        result = compare_pair(q, t)
         score = Float64(result.score)
         raw_scores[i] = score
         return pairs[i] = NullPair(q.name, t.name, score)
@@ -183,21 +346,29 @@ function build_null(
     fit_result = fit_gev(raw_scores)
 
     dist = NullDistribution(
-        String(strategy),
-        _metric_string(metric),
+        _strategy_name(config.strategy),
+        metric_name(config.metric),
         fit_result,
         raw_scores,
         pairs,
         length(raw_scores),
         n_queries,
         skipped,
-        nothing,  # model_collection_fingerprint
-        nothing,  # relation_fingerprint
-        "none",   # sequence_fingerprint
-        "none",   # background_fingerprint
+        model_collection_fingerprint(AbstractMotifModel[models...]),
+        _relation_fingerprint(relations),
+        "none",
+        "none",
     )
 
     return NullBuildResult(dist, total_comparisons)
+end
+
+function _relation_fingerprint(relations::GroupRelations)
+    entries = String[]
+    for name in sort!(collect(keys(relations.groups)))
+        push!(entries, "$(name)=$(relations.groups[name])")
+    end
+    return content_fingerprint(join(entries, "\n"))
 end
 
 # ---------------------------------------------------------------------------

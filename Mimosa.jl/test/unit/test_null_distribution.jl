@@ -51,6 +51,50 @@ using Mimosa
     @test dist.fit isa GEVFit
     @test dist.strategy == "motif"
     @test dist.metric == "pcc"
+    @test dist.model_collection_fingerprint == model_collection_fingerprint([m1, m2, m3])
+    @test dist.relation_fingerprint !== nothing
+    @test dist.sequence_fingerprint == "none"
+    @test dist.background_fingerprint == "none"
+end
+
+@testset "Null build uses typed strategy and profile inputs" begin
+    weights1 = Float32[0.8 0.1; 0.1 0.8; 0.05 0.05; 0.05 0.05; 0.0 0.0]
+    weights2 = Float32[0.1 0.8; 0.8 0.1; 0.05 0.05; 0.05 0.05; 0.0 0.0]
+    bg = (0.25f0, 0.25f0, 0.25f0, 0.25f0)
+    m1, m2 = PWM("m1", weights1, bg), PWM("m2", weights2, bg)
+    relations = GroupRelations(
+        Dict("m1" => "A", "m2" => "B"), Dict("m1" => Set(["m2"]), "m2" => Set(["m1"]))
+    )
+    sequences = EncodedSequenceBatch([
+        encode_sequence("ACGTACGT"), encode_sequence("TGCATGCA")
+    ])
+    background = EncodedSequenceBatch([
+        encode_sequence("AAAACCCC"), encode_sequence("GGGGTTTT")
+    ])
+
+    config = NullBuildConfig(strategy="profile", metric="co")
+    @test config.strategy isa ProfileNullStrategy
+    @test config.metric isa OverlapCoefficient
+    profile_result = build_null(
+        [m1, m2], relations, config; sequences=sequences, background=background
+    )
+    @test profile_result.distribution.strategy == "profile"
+    @test profile_result.distribution.metric == "co"
+    @test profile_result.distribution.sequence_fingerprint ==
+        sequence_fingerprint(sequences)
+    @test profile_result.distribution.background_fingerprint ==
+        sequence_fingerprint(background)
+
+    @test_throws ArgumentError build_null([m1, m2], relations; strategy="profile")
+    @test_throws ArgumentError build_null(
+        [m1, m2], relations; strategy="motif", sequences=sequences
+    )
+    @test_throws ArgumentError NullBuildConfig(strategy="invalid")
+    @test_throws ArgumentError NullBuildConfig(strategy="motif", metric="co")
+    @test_throws ArgumentError NullBuildConfig(strategy="profile", metric="pcc")
+    @test_throws ArgumentError NullBuildConfig(
+        MotifNullStrategy(), OverlapCoefficient(), 1, false
+    )
 end
 
 @testset "Null build with skipped queries" begin

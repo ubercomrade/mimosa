@@ -73,7 +73,8 @@ export scan,
     scan_result_lengths
 
 # Model exports
-export ScoreProfile, BaMM, SiteGA, Dimont, Slim, scorebounds, profile_bundle
+export ScoreProfile,
+    BaMM, SiteGA, Dimont, Slim, scorebounds, profile_bundle, site_start_offset
 
 # Sites and PFM reconstruction exports
 export SiteSelector,
@@ -101,6 +102,8 @@ export AbstractProfileMetric,
     parse_profile_metric,
     ProfileConfig,
     profile_compare,
+    PreparedProfile,
+    prepare_profile,
     LogTailTable,
     EmpiricalLogTail,
     fit,
@@ -130,6 +133,9 @@ export GEVFit,
     GroupRelations,
     parse_group_relations,
     eligible_targets,
+    NullStrategy,
+    MotifNullStrategy,
+    ProfileNullStrategy,
     NullDistribution,
     NullPair,
     NullBuildConfig,

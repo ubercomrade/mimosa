@@ -21,4 +21,5 @@ export AbstractMotifModel,
     pwm_from_pfm,
     extend_pwm_with_n,
     reverse_complement,
-    scorebounds
+    scorebounds,
+    site_start_offset

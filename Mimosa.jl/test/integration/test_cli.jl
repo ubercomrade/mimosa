@@ -364,6 +364,48 @@ end
     @test isfile(joinpath(output_path, "manifest.toml"))
 end
 
+@testset "CLI build-null: profile strategy passes FASTA and metric" begin
+    dir = mktempdir()
+    coll_dir = joinpath(dir, "motifs")
+    mkpath(coll_dir)
+    cp(joinpath(EXAMPLES, "foxa2.meme"), joinpath(coll_dir, "foxa2.meme"))
+    cp(joinpath(EXAMPLES, "gata2.meme"), joinpath(coll_dir, "gata2.meme"))
+    cp(joinpath(EXAMPLES, "gata4.meme"), joinpath(coll_dir, "gata4.meme"))
+    groups_path = joinpath(dir, "groups.tsv")
+    write(groups_path, "motif\tgroup\nMA0047.3\tA\nMA0036.2\tB\nMA0482.2\tC\n")
+    output_path = joinpath(dir, "profile_null")
+
+    code = Mimosa.main([
+        "build-null",
+        coll_dir,
+        "--model-type",
+        "pwm",
+        "--groups",
+        groups_path,
+        "--strategy",
+        "profile",
+        "--metric",
+        "dice",
+        "--fasta",
+        joinpath(EXAMPLES, "foreground.fa"),
+        "--search-range",
+        "2",
+        "--window-radius",
+        "2",
+        "--realign-window",
+        "1",
+        "--min-logfpr",
+        "-2.0",
+        "--output",
+        output_path,
+    ])
+    @test code == 0
+    dist = loadnull(output_path)
+    @test dist.strategy == "profile"
+    @test dist.metric == "dice"
+    @test dist.sequence_fingerprint != "none"
+end
+
 @testset "CLI build-null: invalid strategy" begin
     code = Mimosa.main([
         "build-null",

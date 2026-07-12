@@ -242,3 +242,129 @@ end
     @test length(coll_rev) == 1
     @test coll_rev.strands[1] == 1  # reverse
 end
+
+@testset "Higher-order model sites (BaMM)" begin
+    # Create a simple BaMM with order=1
+    rep = Matrix{Float32}(undef, 25, 5)
+    for i in 1:25
+        for j in 1:5
+            rep[i, j] = Float32(randn())
+        end
+    end
+    model = BaMM("test_bamm", rep, 1, 5)
+    @test site_start_offset(model) == 1
+    @test length(model) == 5
+
+    # Create a batch with sequences long enough for scanning
+    # window_size = motif_length + order = 6, need seq_len >= 6
+    batch = make_random_sequences(5, 20; seed=42)
+
+    # Select sites (best per sequence)
+    coll = selectsites(model, batch, BestPerSequence(); strands=BothStrands())
+    @test length(coll) <= 5  # at most one per sequence
+    @test length(coll) >= 0
+
+    if length(coll) > 0
+        # Verify site extraction with offset
+        offset = site_start_offset(model)
+        for i in 1:length(coll)
+            seq = sequence(batch, coll.seq_indices[i])
+            # The motif starts at scan_pos + offset
+            motif_start = coll.starts[i] + offset
+            # Motif window should fit within the sequence
+            @test motif_start >= 1
+            @test motif_start + length(model) - 1 <= length(seq)
+        end
+
+        # Reconstruct PFM
+        pfm = reconstruct_pfm(model, batch, BestPerSequence(); pseudocount=0.1f0)
+        @test size(pfm) == (4, 5)
+        # Each column should sum to ~1 (with pseudocount)
+        for col in 1:5
+            @test sum(pfm[:, col]) ≈ 1.0f0 atol = 0.01
+        end
+    end
+end
+
+@testset "Higher-order model sites (SiteGA)" begin
+    rep = Matrix{Float32}(undef, 25, 6)
+    for i in 1:25
+        for j in 1:6
+            rep[i, j] = Float32(randn())
+        end
+    end
+    model = SiteGA("test_sitega", rep, 6)
+    @test site_start_offset(model) == 0
+    @test length(model) == 6
+
+    batch = make_random_sequences(5, 20; seed=42)
+
+    coll = selectsites(model, batch, BestPerSequence(); strands=BothStrands())
+    @test length(coll) <= 5
+
+    if length(coll) > 0
+        # SiteGA offset = 0, so motif starts at scan_pos directly
+        for i in 1:length(coll)
+            seq = sequence(batch, coll.seq_indices[i])
+            @test coll.starts[i] >= 1
+            @test coll.starts[i] + length(model) - 1 <= length(seq)
+        end
+
+        pfm = reconstruct_pfm(model, batch, BestPerSequence(); pseudocount=0.1f0)
+        @test size(pfm) == (4, 6)
+    end
+end
+
+@testset "Higher-order model sites (Dimont)" begin
+    span = 1
+    rep = Matrix{Float32}(undef, 5^(span + 1), 5)
+    for i in 1:size(rep, 1)
+        for j in 1:size(rep, 2)
+            rep[i, j] = Float32(randn())
+        end
+    end
+    model = Dimont("test_dimont", rep, span, 5)
+    @test site_start_offset(model) == 1
+    @test length(model) == 5
+
+    batch = make_random_sequences(5, 20; seed=42)
+
+    coll = selectsites(model, batch, BestPerSequence(); strands=BothStrands())
+    @test length(coll) <= 5
+
+    if length(coll) > 0
+        offset = site_start_offset(model)
+        for i in 1:length(coll)
+            seq = sequence(batch, coll.seq_indices[i])
+            motif_start = coll.starts[i] + offset
+            @test motif_start >= 1
+            @test motif_start + length(model) - 1 <= length(seq)
+        end
+
+        pfm = reconstruct_pfm(model, batch, BestPerSequence(); pseudocount=0.1f0)
+        @test size(pfm) == (4, 5)
+    end
+end
+
+@testset "Higher-order model sites (Slim)" begin
+    span = 1
+    rep = Matrix{Float32}(undef, 5^(span + 1), 5)
+    for i in 1:size(rep, 1)
+        for j in 1:size(rep, 2)
+            rep[i, j] = Float32(randn())
+        end
+    end
+    model = Slim("test_slim", rep, span, 5)
+    @test site_start_offset(model) == 1
+    @test length(model) == 5
+
+    batch = make_random_sequences(5, 20; seed=42)
+
+    coll = selectsites(model, batch, BestPerSequence(); strands=BothStrands())
+    @test length(coll) <= 5
+
+    if length(coll) > 0
+        pfm = reconstruct_pfm(model, batch, BestPerSequence(); pseudocount=0.1f0)
+        @test size(pfm) == (4, 5)
+    end
+end

@@ -124,3 +124,42 @@ end
     @test config2.search_range == 5
     @test config2.window_radius == 3
 end
+
+@testset "PreparedProfile and one-to-many" begin
+    # Create two ScoreProfiles
+    sp1 = ScoreProfile(
+        "query", build_ragged([Float32[0.1, 0.5, 0.3, 0.8, 0.2, 0.6, 0.1, 0.9, 0.3, 0.4]])
+    )
+    sp2 = ScoreProfile(
+        "target", build_ragged([Float32[0.2, 0.4, 0.3, 0.7, 0.3, 0.5, 0.2, 0.8, 0.4, 0.3]])
+    )
+    sp3 = ScoreProfile(
+        "target2", build_ragged([Float32[0.3, 0.1, 0.9, 0.2, 0.8, 0.1, 0.5, 0.3, 0.7, 0.2]])
+    )
+
+    # Prepare the query
+    prepared = prepare_profile(sp1)
+    @test prepared.name == "query"
+    @test prepared.bundle isa StrandPair
+    @test prepared.anchors isa Tuple{AnchorCSR,AnchorCSR}
+
+    # Compare prepared vs ScoreProfile should match direct compare
+    direct = compare(sp1, sp2; metric=:co, search_range=3, window_radius=2)
+    prepared_result = compare(prepared, sp2; metric=:co, search_range=3, window_radius=2)
+    @test prepared_result.score ≈ direct.score atol = 1e-5
+    @test prepared_result.offset == direct.offset
+    @test prepared_result.orientation == direct.orientation
+
+    # One-to-many comparison
+    results = compare(prepared, [sp2, sp3]; metric=:co, search_range=3, window_radius=2)
+    @test length(results) == 2
+    @test results[1].score ≈ prepared_result.score atol = 1e-5
+    @test results[1].offset == prepared_result.offset
+    @test results[2].query == "query"
+    @test results[2].target == "target2"
+
+    # Determinism: repeated calls give same results
+    results2 = compare(prepared, [sp2, sp3]; metric=:co, search_range=3, window_radius=2)
+    @test results[1].score ≈ results2[1].score atol = 1e-6
+    @test results[2].score ≈ results2[2].score atol = 1e-6
+end

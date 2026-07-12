@@ -58,8 +58,10 @@ function compare(
         min_logfpr=min_logfpr,
     )
 
+    query_anchors = _collect_both_anchors(query_norm, config.min_logfpr)
+    target_anchors = _collect_both_anchors(target_norm, config.min_logfpr)
     score, shift, orientation, n_sites, metric_str = profile_compare(
-        query_norm, target_norm, config
+        query_norm, query_anchors, target_norm, target_anchors, config
     )
 
     return ComparisonResult(
@@ -132,8 +134,10 @@ function compare(
         realign_window=realign_window,
         min_logfpr=min_logfpr,
     )
+    query_anchors = _collect_both_anchors(query_norm, min_logfpr)
+    target_anchors = _collect_both_anchors(target_norm, min_logfpr)
     score, shift, orientation, n_sites, metric_str = profile_compare(
-        query_norm, target_norm, config
+        query_norm, query_anchors, target_norm, target_anchors, config
     )
     return ComparisonResult(
         query.name, target.name, score, shift, orientation, metric_str, n_sites

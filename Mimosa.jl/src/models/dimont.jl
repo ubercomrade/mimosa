@@ -160,3 +160,11 @@ Return the number of scanning positions per sequence: `window_size` terms
 minus `kmer` plus 1 = `motif_length`.
 """
 scan_width(model::Dimont) = model.motif_length
+
+"""
+    site_start_offset(model::Dimont)
+
+Return the offset from scan position to motif start (= `span`): the first
+`span` bases of the scan window are context, not motif.
+"""
+site_start_offset(model::Dimont) = context_length(model)

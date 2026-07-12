@@ -30,4 +30,6 @@ export AbstractColumnMetric,
     CosineSimilarityProfile,
     parse_profile_metric,
     ProfileConfig,
-    profile_compare
+    profile_compare,
+    PreparedProfile,
+    prepare_profile

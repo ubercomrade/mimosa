@@ -91,6 +91,14 @@ end
 Base.length(model::PFM) = size(model.frequencies, 2)
 Base.length(model::PWM) = size(model.weights, 2)
 
+"""
+    site_start_offset(model::AbstractMatrixMotif)
+
+Return the offset from scan position to motif start (= 0 for PWM/PFM:
+no context before the motif window).
+"""
+site_start_offset(::AbstractMatrixMotif) = 0
+
 Base.eltype(::Type{<:PFM{T}}) where {T} = T
 Base.eltype(::Type{<:PWM{T}}) where {T} = T
 
