@@ -768,7 +768,8 @@ end
 
 """
     compare(query::PreparedProfile, target::AbstractMotifModel,
-            sequences::EncodedSequenceBatch; metric=:co, kwargs...)
+            sequences::EncodedSequenceBatch; metric=:co,
+            execution=SerialExecution(), kwargs...)
 
 Compare a [`PreparedProfile`](@ref) against a motif model target by scanning
 the target against `sequences` and comparing profiles. The query's normalized
@@ -784,9 +785,12 @@ function compare(
     realign_window::Int=3,
     min_logfpr::Float32=Float32(0.0),
     background::Union{EncodedSequenceBatch,Nothing}=nothing,
+    execution::ExecutionPolicy=SerialExecution(),
 )
     m = _resolve_profile_metric(metric)
-    target_norm = _resolve_profile_bundle(target, sequences, background)
+    target_norm = _resolve_profile_bundle(
+        target, sequences, background; execution=execution
+    )
     target_anchors = _collect_both_anchors(target_norm, min_logfpr)
     config = ProfileConfig(;
         metric=m,
@@ -805,7 +809,8 @@ end
 
 """
     compare(query::AbstractMotifModel, target::PreparedProfile,
-            sequences::EncodedSequenceBatch; metric=:co, kwargs...)
+            sequences::EncodedSequenceBatch; metric=:co,
+            execution=SerialExecution(), kwargs...)
 
 Compare a motif model query (scanned against `sequences`) against a
 [`PreparedProfile`](@ref) target. The target's normalized bundle and anchors
@@ -821,9 +826,10 @@ function compare(
     realign_window::Int=3,
     min_logfpr::Float32=Float32(0.0),
     background::Union{EncodedSequenceBatch,Nothing}=nothing,
+    execution::ExecutionPolicy=SerialExecution(),
 )
     m = _resolve_profile_metric(metric)
-    query_norm = _resolve_profile_bundle(query, sequences, background)
+    query_norm = _resolve_profile_bundle(query, sequences, background; execution=execution)
     query_anchors = _collect_both_anchors(query_norm, min_logfpr)
     config = ProfileConfig(;
         metric=m,

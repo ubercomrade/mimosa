@@ -7,12 +7,9 @@
 #
 # Design per ADR 0004 (parallelism-and-rng):
 #   - `SerialExecution` processes items in order.
-#   - `ThreadedExecution(ntasks)` partitions items into `ntasks` chunks,
-#     each processed by a separate Julia task. Results are written into
-#     pre-allocated slots indexed by original position, so the output order
-#     is independent of scheduling.
-#   - Nested parallelism is controlled via `._parallel_depth` to prevent
-#     uncontrolled thread spawning.
+#   - `ThreadedExecution(ntasks)` uses at most `ntasks` worker tasks and never
+#     exceeds the number of Julia threads available to the process.
+#   - Nested calls execute serially inside an existing parallel worker.
 
 """
     ExecutionPolicy
@@ -68,8 +65,7 @@ end
 #
 # `_parallel_for(policy, n, f!)` — iterate `f!(i)` for `i in 1:n`.
 # Under `SerialExecution` this is a simple loop. Under `ThreadedExecution`
-# it partitions the range `1:n` into `ntasks` contiguous chunks and spawns
-# a task per chunk. Each task processes its chunk sequentially.
+# it uses a bounded dynamic queue with at most `ntasks` workers.
 #
 # The caller is responsible for pre-allocating result slots and ensuring
 # `f!` is thread-safe (no shared mutable state, no `push!` to shared vectors).
@@ -80,12 +76,37 @@ end
 Execute `f!(i)` for each `i in 1:n` according to `policy`.
 
 Under `SerialExecution`, this is a simple `for` loop. Under
-`ThreadedExecution`, the range is split into contiguous chunks processed by
-separate tasks. The function `f!` must be thread-safe: no shared mutable
+`ThreadedExecution`, indices are claimed from a bounded dynamic queue. The
+function `f!` must be thread-safe: no shared mutable
 state, no `push!` to shared vectors, results written only to pre-allocated
 slots indexed by `i`.
 """
 function _parallel_for end
+
+const _PARALLEL_DEPTH_KEY = gensym(:mimosa_parallel_depth)
+
+function _effective_ntasks(pol::ThreadedExecution, n::Int)
+    return min(pol.ntasks, n, max(1, Threads.nthreads()))
+end
+
+function _in_parallel_region()
+    return get(task_local_storage(), _PARALLEL_DEPTH_KEY, 0) > 0
+end
+
+function _with_parallel_region(f)
+    tls = task_local_storage()
+    previous = get(tls, _PARALLEL_DEPTH_KEY, 0)
+    tls[_PARALLEL_DEPTH_KEY] = previous + 1
+    try
+        return f()
+    finally
+        if previous == 0
+            delete!(tls, _PARALLEL_DEPTH_KEY)
+        else
+            tls[_PARALLEL_DEPTH_KEY] = previous
+        end
+    end
+end
 
 function _parallel_for(f!, ::SerialExecution, n::Int)
     @inbounds for i in 1:n
@@ -95,20 +116,72 @@ function _parallel_for(f!, ::SerialExecution, n::Int)
 end
 
 function _parallel_for(f!, pol::ThreadedExecution, n::Int)
-    ntasks = min(pol.ntasks, n)
+    n <= 0 && return nothing
+    _in_parallel_region() && return _parallel_for(f!, SerialExecution(), n)
+
+    ntasks = _effective_ntasks(pol, n)
     ntasks <= 1 && return _parallel_for(f!, SerialExecution(), n)
 
     # A bounded queue avoids stranding a worker behind a long ragged item.
     next_index = Threads.Atomic{Int}(1)
     @sync for t in 1:ntasks
         Threads.@spawn begin
-            while true
-                i = Threads.atomic_add!(next_index, 1)
-                i > n && break
-                f!(i)
+            _with_parallel_region() do
+                while true
+                    i = Threads.atomic_add!(next_index, 1)
+                    i > n && break
+                    f!(i)
+                end
             end
         end
     end
 
     return nothing
+end
+
+"""
+    _parallel_for_weighted(f!, policy, costs)
+
+Execute indices using contiguous, approximately equal-cost blocks. Blocks are
+smaller than a worker's full share so ragged heavy items can still be balanced
+dynamically, while each atomic queue operation claims several adjacent items.
+"""
+function _parallel_for_weighted(f!, ::SerialExecution, costs::AbstractVector{<:Integer})
+    return _parallel_for(f!, SerialExecution(), length(costs))
+end
+
+function _parallel_for_weighted(
+    f!, pol::ThreadedExecution, costs::AbstractVector{<:Integer}
+)
+    n = length(costs)
+    n == 0 && return nothing
+    _in_parallel_region() && return _parallel_for(f!, SerialExecution(), n)
+
+    ntasks = _effective_ntasks(pol, n)
+    ntasks <= 1 && return _parallel_for(f!, SerialExecution(), n)
+
+    total_cost = 0
+    @inbounds for cost in costs
+        total_cost += max(Int(cost), 1)
+    end
+    target_cost = max(1, cld(total_cost, ntasks * 8))
+
+    ranges = UnitRange{Int}[]
+    start = 1
+    accumulated = 0
+    @inbounds for i in 1:n
+        accumulated += max(Int(costs[i]), 1)
+        if accumulated >= target_cost
+            push!(ranges, start:i)
+            start = i + 1
+            accumulated = 0
+        end
+    end
+    start <= n && push!(ranges, start:n)
+
+    return _parallel_for(pol, length(ranges)) do block_index
+        @inbounds for i in ranges[block_index]
+            f!(i)
+        end
+    end
 end

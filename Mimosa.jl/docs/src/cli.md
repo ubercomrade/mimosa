@@ -27,7 +27,8 @@ Global options:
 - `--background <f>` — Background frequency for PWM (default: 0.25)
 - `--query-index <n>` — MEME motif index for model1 (default: 0)
 - `--target-index <n>` — MEME motif index for model2 (default: 0)
-- `--threads <n>` — Number of threads (default: 1)
+- `--threads <n>` — Worker threads to use (default: 1). Start Julia with at
+  least that many threads, for example `julia --threads=4 ... --threads 4`.
 - `--pvalue` — Annotate result using an explicit `--null-distribution` bundle
 - `--null-distribution <path>` — Portable null-distribution bundle for `--pvalue`
 - `--effective-number-of-targets <n>` — E-value target-count override
@@ -68,7 +69,8 @@ Annotation options:
 - `--effective-number-of-targets <n>` — E-value target-count override
 
 Technical options:
-- `--threads <n>` — Number of threads (default: 1)
+- `--threads <n>` — Worker threads to use (default: 1). The Julia runtime must
+  already provide at least this many threads.
 - `--quiet` — Suppress informational output
 - `--verbose` — Verbose diagnostics to stderr
 
@@ -106,7 +108,8 @@ Output options:
 - `--min-null-targets <n>` — Minimum null targets (default: 1)
 
 Technical options:
-- `--threads <n>` — Number of threads (default: 1)
+- `--threads <n>` — Worker threads to use (default: 1). The Julia runtime must
+  already provide at least this many threads.
 - `--jobs <n>` — Alias for `--threads` (deprecated)
 - `--quiet` — Suppress informational output
 - `--verbose` — Verbose diagnostics to stderr

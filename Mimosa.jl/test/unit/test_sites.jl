@@ -199,6 +199,32 @@ end
     @test all(isapprox.(col_sums, ones(Float32, 3); atol=Float32(1e-5)))
 end
 
+@testset "Serial/threaded site workflow equivalence" begin
+    frequencies = Float32[0.1 0.2 0.3; 0.4 0.1 0.2; 0.3 0.5 0.1; 0.2 0.2 0.4]
+    pwm = pwm_from_pfm(frequencies; name="threaded_sites")
+    batch = EncodedSequenceBatch([
+        encode_sequence("ACGTACGTACGT"),
+        encode_sequence("TTTTGGGGCCCC"),
+        encode_sequence("NNNNACGTNNNN"),
+    ])
+
+    for selector in (BestPerSequence(), ThresholdHits(Float32(-Inf)))
+        serial = selectsites(
+            pwm, batch, selector; strands=BothStrands(), execution=SerialExecution()
+        )
+        threaded = selectsites(
+            pwm, batch, selector; strands=BothStrands(), execution=ThreadedExecution(4)
+        )
+        @test threaded == serial
+    end
+
+    serial_pfm = reconstruct_pfm(pwm, batch, BestPerSequence(); execution=SerialExecution())
+    threaded_pfm = reconstruct_pfm(
+        pwm, batch, BestPerSequence(); execution=ThreadedExecution(4)
+    )
+    @test threaded_pfm == serial_pfm
+end
+
 @testset "selectsites empty batch" begin
     pwm4 = Float32[0.25 0.25; 0.25 0.25; 0.25 0.25; 0.25 0.25]
     pwm = pwm_from_pfm(pwm4; name="test")

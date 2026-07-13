@@ -697,30 +697,51 @@ function bench_one_to_many!(results::Vector{BenchResult}, config::BenchConfig)
         # Build target profiles
         targets = [ScoreProfile("target_$i", scan_result) for i in 1:n_targets]
 
-        compare(prepared, targets; metric=:co, search_range=10, window_radius=5)  # warmup
-        b = BenchmarkTools.@benchmark compare(
-            $prepared, $targets; metric=:co, search_range=10, window_radius=5
-        )
-        println(
-            @sprintf(
-                "  one-to-many  n=%-4d  median=%.3f ms  allocs=%d",
-                n_targets,
-                median(b).time / 1e6,
-                b.allocs
-            )
-        )
-        push!(
-            results,
-            bench_result(
-                "one_to_many_compare",
-                "one_to_many",
-                b;
-                n_targets=n_targets,
-                metric="co",
+        policies = Tuple{String,ExecutionPolicy,Int}[("serial", SerialExecution(), 1)]
+        if Threads.nthreads() > 1
+            push!(policies, ("threaded", ThreadedExecution(), Threads.nthreads()))
+        end
+        for (execution_name, execution, n_threads) in policies
+            compare(
+                prepared,
+                targets;
+                execution=execution,
+                metric=:co,
                 search_range=10,
                 window_radius=5,
-            ),
-        )
+            ) # warmup
+            b = BenchmarkTools.@benchmark compare(
+                $prepared,
+                $targets;
+                execution=($execution),
+                metric=:co,
+                search_range=10,
+                window_radius=5,
+            )
+            println(
+                @sprintf(
+                    "  one-to-many  n=%-4d  execution=%-8s  median=%.3f ms  allocs=%d",
+                    n_targets,
+                    execution_name,
+                    median(b).time / 1e6,
+                    b.allocs
+                )
+            )
+            push!(
+                results,
+                bench_result(
+                    "one_to_many_compare",
+                    "one_to_many",
+                    b;
+                    n_targets=n_targets,
+                    metric="co",
+                    search_range=10,
+                    window_radius=5,
+                    execution=execution_name,
+                    n_threads=n_threads,
+                ),
+            )
+        end
     end
     return println()
 end
@@ -1024,9 +1045,7 @@ function bench_null_distribution!(results::Vector{BenchResult}, config::BenchCon
     # Profile strategy
     batch = make_random_sequences(50, 200; seed=42)
     build_null(models, rel; metric=:co, sequences=batch)
-    b = BenchmarkTools.@benchmark build_null(
-        $models, $rel; metric=:co, sequences=($batch)
-    )
+    b = BenchmarkTools.@benchmark build_null($models, $rel; metric=:co, sequences=($batch))
     println(
         @sprintf(
             "  build_null profile co   n_models=%d  n_seqs=50  median=%.3f ms  allocs=%d",

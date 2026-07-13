@@ -18,9 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Execution-aware `selectsites` and `reconstruct_pfm` workflows.
+- Bounded nested-parallelism protection and cost-weighted scan scheduling.
 - **CITATION.cff** for citation support via GitHub and Zenodo.
 - **CHANGELOG.md** tracking all notable changes through the migration and
   remediation process.
+
+### Changed
+
+- Higher-order batch scans now write directly into flat ragged storage instead
+  of allocating and copying one vector per sequence.
+- CLI and benchmarks now select `ThreadedExecution` explicitly and reject a
+  requested CLI thread count that exceeds the Julia runtime thread count.
 
 ### Stage 10 — Release candidate preparation (PLAN_2.md remediation)
 

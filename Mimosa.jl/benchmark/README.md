@@ -166,7 +166,11 @@ JULIA_NUM_THREADS=4 julia --project=Mimosa.jl/benchmark Mimosa.jl/benchmark/benc
 | Single target scan | 13.6 ms |
 | Target precompute (50 models, scan + profile) | 919.5 ms (18.4 ms/model) |
 
-#### Comparison timings (median)
+#### Historical comparison timings (median)
+
+These results predate explicit `ExecutionPolicy` selection. The old benchmark
+started Julia with four threads but still called APIs with their default
+`SerialExecution()`, so the 4-thread column is not a threaded-library result.
 
 | Mode | 1 thread | 4 threads |
 |------|-----------|-----------|
@@ -200,12 +204,9 @@ JULIA_NUM_THREADS=4 julia --project=Mimosa.jl/benchmark Mimosa.jl/benchmark/benc
    completes in ~14 ms. Precomputing all 50 target profiles (scan + profile
    build) takes ~920 ms total (~18 ms/model).
 
-4. **Threading provides minimal benefit (~1.1×).** The current
-   `compare(PreparedProfile, Vector{ScoreProfile})` implementation is a
-   **sequential comprehension** (`[compare(query, t) for t in targets]`).
-   Multi-threading does not accelerate the one-to-many comparison loop.
-   There is significant headroom for a `ThreadedExecution` variant that
-   parallelises target preparation and comparison.
+4. The historical ~1.1× result did not exercise `ThreadedExecution`. Current
+   measurements must pass `execution=ThreadedExecution(n)` explicitly and
+   record both `Threads.nthreads()` and the selected policy.
 
 5. **No scaling advantage from batching.** The 1-vs-50 time is exactly 50× the
    1-vs-1 time (speedup = 1.0×), confirming that each target is processed

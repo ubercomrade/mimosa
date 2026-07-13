@@ -460,7 +460,8 @@ end
 
 """
     reconstruct_pfm(model::PWM, batch::EncodedSequenceBatch, selector::SiteSelector;
-                   pseudocount::Float32=0.25f0, strands::StrandPolicy=BothStrands())
+                    pseudocount=0.25f0, strands=BothStrands(),
+                    execution=SerialExecution())
 
 Reconstruct a PFM from binding sites extracted by `selector`.
 
@@ -472,8 +473,9 @@ function reconstruct_pfm(
     selector::SiteSelector;
     pseudocount::Float32=0.25f0,
     strands::StrandPolicy=BothStrands(),
+    execution::ExecutionPolicy=SerialExecution(),
 )
-    coll = _collect_hits(model, batch, selector; strands=strands)
+    coll = _collect_hits(model, batch, selector; strands=strands, execution=execution)
 
     if isempty(coll)
         throw(ArgumentError("No sites found for PFM reconstruction."))
@@ -502,6 +504,7 @@ function reconstruct_pfm(
     strands::StrandPolicy=BothStrands(),
     score_threshold::Union{Nothing,Float32}=nothing,
     top_fraction::Union{Nothing,Float64}=nothing,
+    execution::ExecutionPolicy=SerialExecution(),
 )
     selector = if mode == :best
         BestPerSequence()
@@ -517,14 +520,21 @@ function reconstruct_pfm(
         selector = TopFractionHits(top_fraction)
     end
 
-    return reconstruct_pfm(model, batch, selector; pseudocount=pseudocount, strands=strands)
+    return reconstruct_pfm(
+        model,
+        batch,
+        selector;
+        pseudocount=pseudocount,
+        strands=strands,
+        execution=execution,
+    )
 end
 
 # ── Public selectsites API ────────────────────────────────────────────────
 
 """
     selectsites(model::PWM, batch::EncodedSequenceBatch, selector::SiteSelector;
-                strands::StrandPolicy=BothStrands())
+                strands=BothStrands(), execution=SerialExecution())
 
 Extract motif binding sites from sequences using the given selector.
 
@@ -535,8 +545,9 @@ function selectsites(
     batch::EncodedSequenceBatch,
     selector::SiteSelector;
     strands::StrandPolicy=BothStrands(),
+    execution::ExecutionPolicy=SerialExecution(),
 )
-    coll = _collect_hits(model, batch, selector; strands=strands)
+    coll = _collect_hits(model, batch, selector; strands=strands, execution=execution)
     sort_hits!(coll)
     return coll
 end
@@ -548,8 +559,9 @@ function _collect_hits(
     batch::EncodedSequenceBatch,
     selector::SiteSelector;
     strands::StrandPolicy=BothStrands(),
+    execution::ExecutionPolicy=SerialExecution(),
 )
-    bundle = _scan_bundle_for_sites(model, batch, strands)
+    bundle = _scan_bundle_for_sites(model, batch, strands, execution)
     return _collect_hits_from_bundle(selector, bundle, strands)
 end
 
@@ -569,19 +581,22 @@ end
 Scan the minimum required strand set and return a `StrandPair{RaggedArray{Float32}}`.
 """
 function _scan_bundle_for_sites(
-    model::PWM, batch::EncodedSequenceBatch, strands::StrandPolicy
+    model::PWM,
+    batch::EncodedSequenceBatch,
+    strands::StrandPolicy,
+    execution::ExecutionPolicy=SerialExecution(),
 )
     if strands isa ForwardOnly
-        fwd = scan(model, batch; strands=ForwardOnly())
+        fwd = scan(model, batch; strands=ForwardOnly(), execution=execution)
         rev = _empty_ragged_like(fwd)
         return StrandPair(fwd, rev)
     elseif strands isa ReverseOnly
-        rev = scan(model, batch; strands=ReverseOnly())
+        rev = scan(model, batch; strands=ReverseOnly(), execution=execution)
         fwd = _empty_ragged_like(rev)
         return StrandPair(fwd, rev)
     else
         # BothStrands and BestStrand both need both tracks
-        result = scan(model, batch; strands=BothStrands())
+        result = scan(model, batch; strands=BothStrands(), execution=execution)
         return result
     end
 end
@@ -602,18 +617,21 @@ Scan a higher-order model (BaMM, SiteGA, Dimont, Slim) to produce the
 required strand bundle.
 """
 function _scan_bundle_for_sites(
-    model::AbstractHigherOrderMotif, batch::EncodedSequenceBatch, strands::StrandPolicy
+    model::AbstractHigherOrderMotif,
+    batch::EncodedSequenceBatch,
+    strands::StrandPolicy,
+    execution::ExecutionPolicy=SerialExecution(),
 )
     if strands isa ForwardOnly
-        fwd = scan(model, batch; strands=ForwardOnly())
+        fwd = scan(model, batch; strands=ForwardOnly(), execution=execution)
         rev = _empty_ragged_like(fwd)
         return StrandPair(fwd, rev)
     elseif strands isa ReverseOnly
-        rev = scan(model, batch; strands=ReverseOnly())
+        rev = scan(model, batch; strands=ReverseOnly(), execution=execution)
         fwd = _empty_ragged_like(rev)
         return StrandPair(fwd, rev)
     else
-        result = scan(model, batch; strands=BothStrands())
+        result = scan(model, batch; strands=BothStrands(), execution=execution)
         return result
     end
 end
@@ -629,8 +647,9 @@ function _collect_hits(
     batch::EncodedSequenceBatch,
     selector::SiteSelector;
     strands::StrandPolicy=BothStrands(),
+    execution::ExecutionPolicy=SerialExecution(),
 )
-    bundle = _scan_bundle_for_sites(model, batch, strands)
+    bundle = _scan_bundle_for_sites(model, batch, strands, execution)
     return _collect_hits_from_bundle(selector, bundle, strands)
 end
 
@@ -657,7 +676,8 @@ function _collect_hits_from_bundle(
 end
 
 """
-    selectsites(model::AbstractHigherOrderMotif, batch, selector; strands=BothStrands())
+    selectsites(model::AbstractHigherOrderMotif, batch, selector;
+                strands=BothStrands(), execution=SerialExecution())
 
 Extract motif binding sites from a higher-order model (BaMM, SiteGA, Dimont,
 Slim). The `start` field in the returned [`SiteCollection`](@ref) is the scan
@@ -670,15 +690,17 @@ function selectsites(
     batch::EncodedSequenceBatch,
     selector::SiteSelector;
     strands::StrandPolicy=BothStrands(),
+    execution::ExecutionPolicy=SerialExecution(),
 )
-    coll = _collect_hits(model, batch, selector; strands=strands)
+    coll = _collect_hits(model, batch, selector; strands=strands, execution=execution)
     sort_hits!(coll)
     return coll
 end
 
 """
     reconstruct_pfm(model::AbstractHigherOrderMotif, batch, selector;
-                    pseudocount=0.25f0, strands=BothStrands())
+                    pseudocount=0.25f0, strands=BothStrands(),
+                    execution=SerialExecution())
 
 Reconstruct a PFM from binding sites extracted from a higher-order model.
 The site window accounts for `site_start_offset(model)` to extract only the
@@ -692,8 +714,9 @@ function reconstruct_pfm(
     selector::SiteSelector;
     pseudocount::Float32=0.25f0,
     strands::StrandPolicy=BothStrands(),
+    execution::ExecutionPolicy=SerialExecution(),
 )
-    coll = _collect_hits(model, batch, selector; strands=strands)
+    coll = _collect_hits(model, batch, selector; strands=strands, execution=execution)
 
     if isempty(coll)
         throw(ArgumentError("No sites found for PFM reconstruction."))
@@ -722,6 +745,7 @@ function reconstruct_pfm(
     strands::StrandPolicy=BothStrands(),
     score_threshold::Union{Nothing,Float32}=nothing,
     top_fraction::Union{Nothing,Float64}=nothing,
+    execution::ExecutionPolicy=SerialExecution(),
 )
     selector = if mode == :best
         BestPerSequence()
@@ -737,5 +761,12 @@ function reconstruct_pfm(
         selector = TopFractionHits(top_fraction)
     end
 
-    return reconstruct_pfm(model, batch, selector; pseudocount=pseudocount, strands=strands)
+    return reconstruct_pfm(
+        model,
+        batch,
+        selector;
+        pseudocount=pseudocount,
+        strands=strands,
+        execution=execution,
+    )
 end

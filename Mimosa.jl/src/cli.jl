@@ -61,6 +61,7 @@ const BUILD_NULL_OPTIONS = Dict{String,Bool}(
     "min-logfpr" => true,
     "min-null-targets" => true,
     "threads" => true,
+    "jobs" => true,
     "cache-dir" => true,
 )
 const BUILD_NULL_FLAGS = Set(["ignore-missing", "strict", "quiet", "verbose"])
@@ -265,6 +266,22 @@ function _resolve_sequences(
     return make_random_sequences(num_sequences, seq_length; seed=seed)
 end
 
+function _execution_policy(parsed::CLIParsed)
+    threads_str = get(parsed.options, "threads", get(parsed.options, "jobs", "1"))
+    requested = tryparse(Int, threads_str)
+    requested === nothing && throw(CLIError("--threads must be a positive integer."))
+    requested > 0 || throw(CLIError("--threads must be a positive integer."))
+
+    available = Threads.nthreads()
+    requested <= available || throw(
+        CLIError(
+            "--threads=$requested exceeds the $available Julia thread(s) available; " *
+            "start Julia with --threads=$requested or set JULIA_NUM_THREADS=$requested.",
+        ),
+    )
+    return requested == 1 ? SerialExecution() : ThreadedExecution(requested)
+end
+
 # ── JSON output ─────────────────────────────────────────────────────────────
 
 function _json_value(v::Nothing)
@@ -430,7 +447,10 @@ function _print_profile_help(io::IO)
     println(io, "  --effective-number-of-targets <n>  E-value target-count override")
     println(io, "")
     println(io, "Technical options:")
-    println(io, "  --threads <n>             Number of threads (default: 1)")
+    println(
+        io,
+        "  --threads <n>             Worker threads to use (default: 1; runtime must provide them)",
+    )
     println(io, "  --quiet                   Suppress informational output")
     println(io, "  --verbose                 Verbose diagnostics to stderr")
     return nothing
@@ -469,6 +489,7 @@ function _run_profile(parsed::CLIParsed)
     bg_freq = tryparse(Float32, get(parsed.options, "background-freq", "0.25"))
     fasta = get(parsed.options, "fasta", nothing)
     bg_fasta = get(parsed.options, "background", nothing)
+    execution = _execution_policy(parsed)
 
     model1 = _read_typed_model(path1, type1; background=bg_freq)
     model2 = _read_typed_model(path2, type2; background=bg_freq)
@@ -500,6 +521,7 @@ function _run_profile(parsed::CLIParsed)
             realign_window=realign_window,
             min_logfpr=min_logfpr,
             background=bg_sequences,
+            execution=execution,
         )
     end
 
@@ -530,9 +552,7 @@ function _print_build_null_help(io::IO)
         io,
         "  motifs                    Motif collection: directory or multi-motif MEME file",
     )
-    println(
-        io, "  --model-type <type>       Motif format: $(join(MODEL_TYPES, ", "))"
-    )
+    println(io, "  --model-type <type>       Motif format: $(join(MODEL_TYPES, ", "))")
     println(io, "  --groups <path>           TSV/CSV with motif and group columns")
     println(io, "  --output <path>           Output path for null distribution")
     println(io, "")
@@ -542,9 +562,7 @@ function _print_build_null_help(io::IO)
     println(io, "  --ignore-missing          Ignore relation names not loaded")
     println(io, "")
     println(io, "Comparison options:")
-    println(
-        io, "  --metric <name>           Profile metric (default: co)"
-    )
+    println(io, "  --metric <name>           Profile metric (default: co)")
     println(io, "  --fasta <path>            FASTA for profile scanning")
     println(io, "  --num-sequences <n>       Random sequences (default: 1000)")
     println(io, "  --seq-length <n>          Random sequence length (default: 200)")
@@ -559,7 +577,11 @@ function _print_build_null_help(io::IO)
     println(io, "  --min-null-targets <n>    Minimum null targets (default: 1)")
     println(io, "")
     println(io, "Technical options:")
-    println(io, "  --threads <n>             Number of threads (default: 1)")
+    println(
+        io,
+        "  --threads <n>             Worker threads to use (default: 1; runtime must provide them)",
+    )
+    println(io, "  --jobs <n>                Deprecated alias for --threads")
     println(io, "  --quiet                   Suppress informational output")
     println(io, "  --verbose                 Verbose diagnostics to stderr")
     return nothing
@@ -682,12 +704,7 @@ function _run_build_null(parsed::CLIParsed)
         throw(CLIError("--realign-window must be a non-negative integer."))
     isfinite(min_logfpr) || throw(CLIError("--min-logfpr must be a finite number."))
 
-    # Resolve execution policy from --threads.
-    threads_str = get(parsed.options, "threads", "1")
-    nthreads_val = tryparse(Int, threads_str)
-    nthreads_val === nothing && throw(CLIError("--threads must be a positive integer."))
-    nthreads_val > 0 || throw(CLIError("--threads must be a positive integer."))
-    exec_policy = nthreads_val <= 1 ? SerialExecution() : ThreadedExecution(nthreads_val)
+    exec_policy = _execution_policy(parsed)
 
     sequences = if isnothing(fasta)
         make_random_sequences(num_seq, seq_len; seed=seed)

@@ -242,27 +242,18 @@ function _ho_scan_batch(
     strands::StrandPolicy,
     model::AbstractMotifModel,
     batch::EncodedSequenceBatch,
-    npos_fn::Function,
-    scan_fn!::Function,
+    npos_fn::F,
+    scan_fn!::G,
     ::SerialExecution,
-)
+) where {F,G}
     n = nsequences(batch)
-    T = Float32
-    out_rows = Vector{Vector{T}}(undef, n)
+    offsets = _ho_scan_offsets(batch, model, npos_fn)
+    data = Vector{Float32}(undef, offsets[end] - 1)
     for i in 1:n
-        n_pos = npos_fn(seqlength(batch, i), model)
-        out_rows[i] = Vector{T}(undef, n_pos)
+        dest = _scan_dest(data, offsets, i)
+        scan_fn!(dest, model, sequence(batch, i), length(dest))
     end
-    if strands isa BothStrands
-        for i in 1:n
-            scan_fn!(out_rows[i], model, sequence(batch, i), length(out_rows[i]))
-        end
-        return build_ragged(out_rows)
-    end
-    for i in 1:n
-        scan_fn!(out_rows[i], model, sequence(batch, i), length(out_rows[i]))
-    end
-    return build_ragged(out_rows)
+    return RaggedArray(data, offsets)
 end
 
 """
@@ -277,23 +268,20 @@ function _ho_scan_batch(
     strands::StrandPolicy,
     model::AbstractMotifModel,
     batch::EncodedSequenceBatch,
-    npos_fn::Function,
-    scan_fn!::Function,
+    npos_fn::F,
+    scan_fn!::G,
     pol::ThreadedExecution,
-)
+) where {F,G}
     n = nsequences(batch)
-    T = Float32
-    out_rows = Vector{Vector{T}}(undef, n)
-    for i in 1:n
-        n_pos = npos_fn(seqlength(batch, i), model)
-        out_rows[i] = Vector{T}(undef, n_pos)
+    offsets = _ho_scan_offsets(batch, model, npos_fn)
+    data = Vector{Float32}(undef, offsets[end] - 1)
+
+    _parallel_for_weighted(pol, _scan_costs(offsets)) do i
+        dest = _scan_dest(data, offsets, i)
+        return scan_fn!(dest, model, sequence(batch, i), length(dest))
     end
 
-    _parallel_for(pol, n) do i
-        return scan_fn!(out_rows[i], model, sequence(batch, i), length(out_rows[i]))
-    end
-
-    return build_ragged(out_rows)
+    return RaggedArray(data, offsets)
 end
 
 """
@@ -305,23 +293,20 @@ fills both destinations.
 function _ho_scan_batch_both(
     model::AbstractMotifModel,
     batch::EncodedSequenceBatch,
-    npos_fn::Function,
-    both_fn!::Function,
+    npos_fn::F,
+    both_fn!::G,
     ::SerialExecution,
-)
+) where {F,G}
     n = nsequences(batch)
-    T = Float32
-    fwd_rows = Vector{Vector{T}}(undef, n)
-    rev_rows = Vector{Vector{T}}(undef, n)
+    offsets = _ho_scan_offsets(batch, model, npos_fn)
+    fwd = Vector{Float32}(undef, offsets[end] - 1)
+    rev = similar(fwd)
     for i in 1:n
-        n_pos = npos_fn(seqlength(batch, i), model)
-        fwd_rows[i] = Vector{T}(undef, n_pos)
-        rev_rows[i] = Vector{T}(undef, n_pos)
+        fwd_dest = _scan_dest(fwd, offsets, i)
+        rev_dest = _scan_dest(rev, offsets, i)
+        both_fn!(fwd_dest, rev_dest, model, sequence(batch, i), length(fwd_dest))
     end
-    for i in 1:n
-        both_fn!(fwd_rows[i], rev_rows[i], model, sequence(batch, i), length(fwd_rows[i]))
-    end
-    return StrandPair(build_ragged(fwd_rows), build_ragged(rev_rows))
+    return StrandPair(RaggedArray(fwd, offsets), RaggedArray(rev, copy(offsets)))
 end
 
 """
@@ -332,25 +317,29 @@ Generic threaded batch scan for BothStrands mode.
 function _ho_scan_batch_both(
     model::AbstractMotifModel,
     batch::EncodedSequenceBatch,
-    npos_fn::Function,
-    both_fn!::Function,
+    npos_fn::F,
+    both_fn!::G,
     pol::ThreadedExecution,
-)
+) where {F,G}
     n = nsequences(batch)
-    T = Float32
-    fwd_rows = Vector{Vector{T}}(undef, n)
-    rev_rows = Vector{Vector{T}}(undef, n)
-    for i in 1:n
-        n_pos = npos_fn(seqlength(batch, i), model)
-        fwd_rows[i] = Vector{T}(undef, n_pos)
-        rev_rows[i] = Vector{T}(undef, n_pos)
+    offsets = _ho_scan_offsets(batch, model, npos_fn)
+    fwd = Vector{Float32}(undef, offsets[end] - 1)
+    rev = similar(fwd)
+    _parallel_for_weighted(pol, _scan_costs(offsets)) do i
+        fwd_dest = _scan_dest(fwd, offsets, i)
+        rev_dest = _scan_dest(rev, offsets, i)
+        return both_fn!(fwd_dest, rev_dest, model, sequence(batch, i), length(fwd_dest))
     end
-    _parallel_for(pol, n) do i
-        return both_fn!(
-            fwd_rows[i], rev_rows[i], model, sequence(batch, i), length(fwd_rows[i])
-        )
+    return StrandPair(RaggedArray(fwd, offsets), RaggedArray(rev, copy(offsets)))
+end
+
+function _ho_scan_offsets(batch::EncodedSequenceBatch, model, npos_fn::F) where {F}
+    offsets = Vector{Int}(undef, nsequences(batch) + 1)
+    offsets[1] = 1
+    @inbounds for i in 1:nsequences(batch)
+        offsets[i + 1] = offsets[i] + npos_fn(seqlength(batch, i), model)
     end
-    return StrandPair(build_ragged(fwd_rows), build_ragged(rev_rows))
+    return offsets
 end
 
 # ── Generic AbstractHigherOrderMotif adapter ─────────────────────────────────

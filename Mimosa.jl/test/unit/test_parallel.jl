@@ -14,6 +14,24 @@ using SHA
     @test occursin("ThreadedExecution", sprint(show, ThreadedExecution(2)))
 end
 
+@testset "CLI execution policy" begin
+    parsed = Mimosa.CLIParsed("profile")
+    parsed.options["threads"] = string(Threads.nthreads())
+    policy = Mimosa._execution_policy(parsed)
+    if Threads.nthreads() == 1
+        @test policy isa SerialExecution
+    else
+        @test policy == ThreadedExecution(Threads.nthreads())
+    end
+
+    jobs_parsed = Mimosa.CLIParsed("build-null")
+    jobs_parsed.options["jobs"] = string(Threads.nthreads())
+    @test Mimosa._execution_policy(jobs_parsed) == policy
+
+    parsed.options["threads"] = string(Threads.nthreads() + 1)
+    @test_throws Mimosa.CLIError Mimosa._execution_policy(parsed)
+end
+
 @testset "_parallel_for serial" begin
     # Basic serial execution
     results = Vector{Int}(undef, 10)
@@ -47,6 +65,29 @@ end
     # Edge case: n=0
     Mimosa._parallel_for(ThreadedExecution(4), 0) do i
         @test false  # should not execute
+    end
+end
+
+@testset "bounded, weighted, and nested execution" begin
+    @test Mimosa._effective_ntasks(ThreadedExecution(100), 100) == Threads.nthreads()
+
+    visits = zeros(Int, 37)
+    costs = [i % 7 == 0 ? 1000 : 1 for i in eachindex(visits)]
+    Mimosa._parallel_for_weighted(ThreadedExecution(4), costs) do i
+        visits[i] += 1
+    end
+    @test visits == ones(Int, length(visits))
+
+    outer_threads = zeros(Int, 4)
+    inner_threads = zeros(Int, 4, 5)
+    Mimosa._parallel_for(ThreadedExecution(4), 4) do i
+        outer_threads[i] = Threads.threadid()
+        Mimosa._parallel_for(ThreadedExecution(4), 5) do j
+            inner_threads[i, j] = Threads.threadid()
+        end
+    end
+    for i in eachindex(outer_threads)
+        @test all(==(outer_threads[i]), @view(inner_threads[i, :]))
     end
 end
 

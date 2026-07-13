@@ -323,7 +323,7 @@ function _scan_batch(
 
     # Parallel execution: each task processes its chunk of sequences
     # Results written to pre-allocated slots → deterministic order
-    _parallel_for(pol, n) do i
+    _parallel_for_weighted(pol, _scan_costs(offsets)) do i
         seq = sequence(batch, i)
         return _scan_one_seq!(
             strands, _scan_dest(data, offsets, i), weights, seq, offsets[i + 1] - offsets[i]
@@ -386,7 +386,7 @@ function _scan_batch(
     fwd = Vector{T}(undef, offsets[end] - 1)
     rev = Vector{T}(undef, offsets[end] - 1)
 
-    _parallel_for(pol, n) do i
+    _parallel_for_weighted(pol, _scan_costs(offsets)) do i
         seq = sequence(batch, i)
         return scan_both!(
             _scan_dest(fwd, offsets, i),
@@ -406,6 +406,14 @@ function _scan_offsets(batch::EncodedSequenceBatch, width::Int)
         offsets[i + 1] = offsets[i] + npositions(seqlength(batch, i), width)
     end
     return offsets
+end
+
+function _scan_costs(offsets::Vector{Int})
+    costs = Vector{Int}(undef, length(offsets) - 1)
+    @inbounds for i in eachindex(costs)
+        costs[i] = offsets[i + 1] - offsets[i]
+    end
+    return costs
 end
 
 function _scan_dest(data::AbstractVector, offsets::Vector{Int}, row_index::Int)
