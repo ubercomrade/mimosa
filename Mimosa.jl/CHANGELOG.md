@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking: Profile-Only Comparison
+
+- Removed direct motif matrix comparison, its column metrics, alignment types,
+  and the `motif` CLI command without compatibility aliases.
+- Null construction now requires encoded sequences and profile metrics; motif
+  null strategies and pre-v2 null bundles are rejected.
+- Profile comparison uses `co`, `co_rowwise`, `dice`, `dice_rowwise`, and
+  `cosine` through the strand-aware normalization pipeline.
+
 ### Added
 
 - **CITATION.cff** for citation support via GitHub and Zenodo.

@@ -3,8 +3,8 @@
 
 A Julia package for motif scanning, comparison, and statistical evaluation.
 
-Supports six model families (PWM, PFM, BaMM, SiteGA, Dimont, Slim) with direct
-motif comparison, profile-based comparison, site extraction, PFM reconstruction,
+Supports six model families (PWM, PFM, BaMM, SiteGA, Dimont, Slim) with
+profile-based comparison, site extraction, PFM reconstruction,
 native GEV null distributions, BH FDR, E-values, portable storage bundles,
 content-based cache, serial and threaded parallelism, and a thin CLI adapter.
 
@@ -134,9 +134,6 @@ export GEVFit,
     GroupRelations,
     parse_group_relations,
     eligible_targets,
-    NullStrategy,
-    MotifNullStrategy,
-    ProfileNullStrategy,
     NullDistribution,
     NullPair,
     NullBuildConfig,

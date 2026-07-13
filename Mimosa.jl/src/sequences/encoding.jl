@@ -185,20 +185,19 @@ empty_sequence_batch() = EncodedSequenceBatch(UInt8[], [1])
 const _BASE_LOOKUP = (0x00, 0x01, 0x02, 0x03)
 
 """
-    make_random_sequences(n::Int, len::Int; seed::Integer=127)
+    make_random_sequences(rng::AbstractRNG, n::Int, len::Int)
 
-Generate `n` random DNA sequences of length `len` each, using a seeded
-`MersenneTwister` RNG. Bases are drawn uniformly from A, C, G, T.
+Generate `n` random DNA sequences of length `len` each using `rng`. Bases are
+drawn uniformly from A, C, G, T.
 
 Returns an [`EncodedSequenceBatch`](@ref). Reproducible within Julia but
 not bit-compatible with Python's `np.random.default_rng` (different RNG
 algorithm). This is acceptable for CLI fallback sequences; users should
 provide explicit FASTA for scientific reproducibility across languages.
 """
-function make_random_sequences(n::Int, len::Int; seed::Integer=127)
+function make_random_sequences(rng::AbstractRNG, n::Int, len::Int)
     n < 0 && throw(ArgumentError("n must be non-negative, got $n."))
     len < 0 && throw(ArgumentError("len must be non-negative, got $len."))
-    rng = Random.MersenneTwister(seed)
     rows = Vector{Vector{UInt8}}(undef, n)
     for i in 1:n
         row = Vector{UInt8}(undef, len)
@@ -224,6 +223,10 @@ function make_random_sequences(n::Int, len::Int; seed::Integer=127)
         end
     end
     return _unsafe_encoded_batch(flat_data, offsets)
+end
+
+function make_random_sequences(n::Int, len::Int; seed::Integer=127)
+    return make_random_sequences(Random.MersenneTwister(seed), n, len)
 end
 
 """
@@ -286,15 +289,15 @@ the copy.
 function reverse_complement!(dest::AbstractVector{UInt8}, src::AbstractVector{UInt8})
     n = length(src)
     length(dest) >= n || throw(ArgumentError("dest must be at least as long as src."))
-    if pointer(dest) == pointer(src) && length(dest) == length(src)
-        throw(ArgumentError("dest and src must not alias the same buffer."))
-    end
+    # Copy before writing whenever views overlap; this also makes identical
+    # arrays and partially overlapping views safe and deterministic.
+    source = Base.mightalias(dest, src) ? copy(src) : src
     # Invariant: src codes are valid 0..N_CODE (guaranteed by EncodedSequenceBatch
     # construction).  complement(b) = N_CODE if b==N_CODE else 0x03-b, which is
     # also in 0..N_CODE.  @inbounds is safe because dest has >= n elements and
     # src indices 1..n are valid.
     @inbounds for i in 1:n
-        b = src[n - i + 1]
+        b = source[n - i + 1]
         dest[i] = b == N_CODE ? N_CODE : 0x03 - b
     end
     return dest

@@ -49,17 +49,6 @@ specifies the Julia implementation status:
 | BestStrand | `done` | `BestStrand()`, `scan_best!` | `test/unit/test_sequences.jl`, `test/compatibility/test_scan_fixtures.jl` | None | — |
 | BothStrands | `done` | `BothStrands()`, `scan_both!` | `test/unit/test_sequences.jl`, `test/compatibility/test_scan_fixtures.jl` | None | — |
 
-## Direct motif comparison
-
-| Feature | Status | Entry point | Test ID | Limitations | Owner/Stage |
-|---------|--------|-------------|---------|-------------|-------------|
-| One-to-one PCC | `done` | `compare(q, t; metric=:pcc)` | `test/unit/test_metrics.jl`, `test/compatibility/test_oracle_fixtures.jl` | None | — |
-| One-to-one Euclidean distance | `done` | `compare(q, t; metric=:ed)` | `test/unit/test_metrics.jl`, `test/compatibility/test_oracle_fixtures.jl` | None | — |
-| One-to-one cosine similarity | `done` | `compare(q, t; metric=:cosine)` | `test/unit/test_metrics.jl`, `test/compatibility/test_oracle_fixtures.jl` | None | — |
-| Cross-type comparison (via PFM reconstruction) | `done` | `compare(pfm1, pfm2; metric=...)` | `test/integration/test_cli.jl` | PFM reconstruction via scan + site extraction | — |
-| All four orientations (++, +-, -+, --) | `done` | `compare` (automatic) | `test/unit/test_alignment.jl` | None | — |
-| Deterministic tie-breaking | `done` | `compare` (built-in) | `test/unit/test_alignment.jl` | Per ADR 0006 | — |
-
 ## Profile comparison
 
 | Feature | Status | Entry point | Test ID | Limitations | Owner/Stage |
@@ -112,9 +101,8 @@ specifies the Julia implementation status:
 
 | Feature | Status | Entry point | Test ID | Limitations | Owner/Stage |
 |---------|--------|-------------|---------|-------------|-------------|
-| Motif strategy null | `done` | `build_null(...; strategy="motif")`, `MotifNullStrategy` | `test/unit/test_null_distribution.jl` | None | — |
-| Profile strategy null | `done` | `build_null(...; strategy="profile")`, `ProfileNullStrategy` | `test/unit/test_null_distribution.jl` | Requires `EncodedSequenceBatch` | — |
-| Typed NullBuildConfig | `done` | `NullBuildConfig{S,M}` | `test/unit/test_null_distribution.jl` | Metric type validated at construction | — |
+| Profile null | `done` | `build_null(...; sequences=batch, metric=:co)` | `test/unit/test_null_distribution.jl` | Requires `EncodedSequenceBatch` | — |
+| Typed NullBuildConfig | `done` | `NullBuildConfig{M}` | `test/unit/test_null_distribution.jl` | Profile metric validated at construction | — |
 | GEV fitting | `done` | `fit_gev` | `test/unit/test_gev.jl`, `test/compatibility/test_gev_fixtures.jl` | None | — |
 | GEV fit failure handling | `done` | `GEVFitFailure` | `test/unit/test_gev.jl` | None | — |
 | BH FDR adjustment | `done` | `adjusted_pvalues` | `test/unit/test_pvalues.jl` | None | — |
@@ -179,7 +167,7 @@ specifies the Julia implementation status:
 |---------|--------|-------------|---------|-------------|-------------|
 | EncodedSequenceBatch | `done` | `EncodedSequenceBatch` | `test/unit/test_sequences.jl`, `test/unit/test_validation.jl` | Code validation `0:4` before `@inbounds` | — |
 | FASTA reader | `done` | `read_fasta`, `readsequences` | `test/unit/test_sequences.jl` | None | — |
-| Random sequence generation | `done` | `make_random_sequences` | `test/unit/test_sequences.jl` | Seeded; uses `MersenneTwister` | — |
+| Random sequence generation | `done` | `make_random_sequences(rng, n, len)` | `test/unit/test_sequences.jl` | Explicit RNG or seeded convenience wrapper | — |
 | encode_base / encode_sequence | `done` | `encode_base`, `encode_sequence` | `test/unit/test_sequences.jl` | None | — |
 | Reverse complement | `done` | `reverse_complement`, `reverse_complement!` | `test/unit/test_sequences.jl` | Aliasing checked in `!` version | — |
 | to_padded / from_padded | `done` | `to_padded`, `from_padded` | `test/unit/test_sequences.jl` | Padding validation | — |
@@ -190,7 +178,6 @@ specifies the Julia implementation status:
 
 | Feature | Status | Entry point | Test ID | Limitations | Owner/Stage |
 |---------|--------|-------------|---------|-------------|-------------|
-| `motif` | `done` | `main(["motif", ...])` | `test/integration/test_cli.jl` | None | — |
 | `profile` | `done` | `main(["profile", ...])` | `test/integration/test_cli.jl` | None | — |
 | `build-null` | `done` | `main(["build-null", ...])` | `test/integration/test_cli.jl` | None | — |
 | `cache clear` | `done` | `main(["cache", "clear", ...])` | `test/integration/test_cli.jl` | None | — |
@@ -206,13 +193,12 @@ specifies the Julia implementation status:
 
 | Option | Commands | Status | Test ID | Notes |
 |--------|----------|--------|---------|-------|
-| `--model1-type` / `--model2-type` | motif, profile | `done` | `test/integration/test_cli.jl` | Required; validated against allowed types |
-| `--metric` | motif, profile, build-null | `done` | `test/integration/test_cli.jl` | Validated per strategy |
-| `--strategy` | build-null | `done` | `test/integration/test_cli.jl` | `motif` or `profile` |
-| `--fasta` | motif, profile, build-null | `done` | `test/integration/test_cli.jl` | Profile strategy only for build-null |
-| `--seed` | motif, profile, build-null | `done` | `test/integration/test_cli.jl` | Integer; tryparse validated |
-| `--num-sequences` | motif, profile, build-null | `done` | `test/integration/test_cli.jl` | Positive integer |
-| `--seq-length` | motif, profile, build-null | `done` | `test/integration/test_cli.jl` | Positive integer |
+| `--model1-type` / `--model2-type` | profile | `done` | `test/integration/test_cli.jl` | Required; validated against allowed types |
+| `--metric` | profile, build-null | `done` | `test/integration/test_cli.jl` | Profile metrics only |
+| `--fasta` | profile, build-null | `done` | `test/integration/test_cli.jl` | Explicit sequences for profile workflows |
+| `--seed` | profile, build-null | `done` | `test/integration/test_cli.jl` | Integer; tryparse validated |
+| `--num-sequences` | profile, build-null | `done` | `test/integration/test_cli.jl` | Positive integer |
+| `--seq-length` | profile, build-null | `done` | `test/integration/test_cli.jl` | Positive integer |
 | `--search-range` | profile, build-null | `done` | `test/integration/test_cli.jl` | Non-negative integer |
 | `--window-radius` | profile, build-null | `done` | `test/integration/test_cli.jl` | Non-negative integer |
 | `--realign-window` | profile, build-null | `done` | `test/integration/test_cli.jl` | Non-negative integer |
@@ -297,8 +283,6 @@ specifies the Julia implementation status:
 |----------|----------|----------------|
 | `test/unit/test_models.jl` | Model construction, PFM/PWM | ~200 |
 | `test/unit/test_readers.jl` | File format parsing | ~150 |
-| `test/unit/test_metrics.jl` | Column metrics (PCC, ED, cosine) | ~100 |
-| `test/unit/test_alignment.jl` | Matrix alignment, tie-breaking | ~120 |
 | `test/unit/test_serialization.jl` | JSON serialization | ~80 |
 | `test/unit/test_sequences.jl` | Encoded sequences, FASTA, reverse complement | ~200 |
 | `test/unit/test_profiles.jl` | Profile comparison, normalization | ~250 |

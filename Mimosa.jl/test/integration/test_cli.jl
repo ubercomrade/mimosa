@@ -568,11 +568,12 @@ end
     write(rel_path, tsv_content)
     relations = parse_group_relations(rel_path; known_names=Set(["m1", "m2", "m3"]))
 
-    serial_result = build_null(models, relations; execution=SerialExecution())
+    sequences = make_random_sequences(2, 30; seed=7)
+    serial_result = build_null(models, relations; sequences=sequences, execution=SerialExecution())
     serial_scores = serial_result.distribution.raw_scores
 
     for nt in (1, 2, 4)
-        threaded_result = build_null(models, relations; execution=ThreadedExecution(nt))
+        threaded_result = build_null(models, relations; sequences=sequences, execution=ThreadedExecution(nt))
         threaded_scores = threaded_result.distribution.raw_scores
         @test threaded_scores == serial_scores
         @test threaded_result.total_comparisons == serial_result.total_comparisons

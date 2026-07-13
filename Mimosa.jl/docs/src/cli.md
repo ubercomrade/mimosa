@@ -18,21 +18,6 @@ Global options:
 
 ## Commands
 
-### `motif` — Direct motif comparison
-
-```bash
-julia --project=Mimosa.jl app/mimosa.jl motif examples/pif4.meme examples/gata2.meme \
-  --model1-type pwm --model2-type pwm --metric pcc
-```
-
-Required arguments:
-- `model1` — Path to the first motif model file (positional)
-- `model2` — Path to the second motif model file (positional)
-- `--model1-type <type>` — Type of model1: `pwm`, `bamm`, `sitega`, `dimont`, `slim`
-- `--model2-type <type>` — Type of model2: `pwm`, `bamm`, `sitega`, `dimont`, `slim`
-
-Options:
-- `--metric <name>` — Comparison metric: `pcc`, `ed`, `cosine` (default: `pcc`)
 - `--pfm-mode` — Force PFM reconstruction before comparison
 - `--pfm-top-fraction <f>` — Fraction of top sites for PFM (default: 0.05)
 - `--fasta <path>` — FASTA sequences for PFM reconstruction
@@ -91,14 +76,13 @@ Technical options:
 
 ```bash
 julia --project=Mimosa.jl app/mimosa.jl build-null examples/ \
-  --model-type pwm --groups groups.tsv --strategy motif --output null_dist
+  --model-type pwm --groups groups.tsv --output null_dist
 ```
 
 Required arguments:
 - `motifs` — Motif collection: directory or multi-motif MEME file (positional)
 - `--model-type <type>` — Motif format: `pwm`, `bamm`, `sitega`, `dimont`, `slim`
 - `--groups <path>` — TSV/CSV with motif and group columns
-- `--strategy <s>` — Comparison strategy: `motif` or `profile`
 - `--output <path>` — Output path for null distribution
 
 Relation options:
@@ -107,8 +91,8 @@ Relation options:
 - `--ignore-missing` — Ignore relation names not loaded
 
 Comparison options:
-- `--metric <name>` — Metric (default: `pcc` for motif, `co` for profile)
-- `--fasta <path>` — FASTA for profile mode
+- `--metric <name>` — Profile metric (default: `co`)
+- `--fasta <path>` — FASTA for profile scanning
 - `--num-sequences <n>` — Random sequences (default: 1000)
 - `--seq-length <n>` — Random sequence length (default: 200)
 - `--seed <n>` — Random seed (default: 127)

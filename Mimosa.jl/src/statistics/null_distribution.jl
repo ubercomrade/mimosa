@@ -22,7 +22,7 @@ end
 A fitted null distribution for significance testing.
 
 Fields:
-- `strategy::String`: comparison strategy (`"motif"` or `"profile"`).
+- `strategy::String`: fixed profile marker (`"profile"`).
 - `metric::String`: comparison metric name.
 - `fit::GEVFitResult`: fitted GEV distribution or failure.
 - `raw_scores::Vector{Float64}`: pooled raw comparison scores.
@@ -56,74 +56,31 @@ end
 Configuration for building a null distribution.
 
 Fields:
-- `strategy::String`: `"motif"` or `"profile"`.
 - `metric`: comparison metric (Symbol, String, or typed metric).
 - `min_null_targets::Int`: minimum eligible targets required per query.
 - `strict::Bool`: if `true`, raise an error when a query has too few targets.
 """
-abstract type NullStrategy end
-
-"""Direct motif-matrix comparisons for null-distribution construction."""
-struct MotifNullStrategy <: NullStrategy end
-
-"""Profile comparisons over an explicit encoded sequence batch."""
-struct ProfileNullStrategy <: NullStrategy end
-
-_strategy_name(::MotifNullStrategy) = "motif"
-_strategy_name(::ProfileNullStrategy) = "profile"
-
-"""
-    NullBuildConfig
-
-Typed configuration for [`build_null`](@ref). A motif strategy accepts only an
-[`AbstractColumnMetric`](@ref); a profile strategy accepts only an
-[`AbstractProfileMetric`](@ref). This prevents metadata from describing a
-different algorithm or metric than the one actually executed.
-"""
-struct NullBuildConfig{S<:NullStrategy,M}
-    strategy::S
+"""Typed profile-only configuration for null-distribution construction."""
+struct NullBuildConfig{M<:AbstractProfileMetric}
     metric::M
     min_null_targets::Int
     strict::Bool
 
     function NullBuildConfig(
-        strategy::S, metric::M, min_null_targets::Int, strict::Bool
-    ) where {S<:NullStrategy,M}
+        metric::M, min_null_targets::Int, strict::Bool
+    ) where {M<:AbstractProfileMetric}
         min_null_targets > 0 || throw(ArgumentError("min_null_targets must be positive."))
-        valid_metric =
-            (strategy isa MotifNullStrategy && metric isa AbstractColumnMetric) ||
-            (strategy isa ProfileNullStrategy && metric isa AbstractProfileMetric)
-        valid_metric || throw(
-            ArgumentError(
-                "metric type $(typeof(metric)) is incompatible with $(_strategy_name(strategy)) strategy.",
-            ),
-        )
-        return new{S,M}(strategy, metric, min_null_targets, strict)
+        return new{M}(metric, min_null_targets, strict)
     end
 end
 
 function NullBuildConfig(;
-    strategy::Union{AbstractString,NullStrategy}="motif",
     metric=nothing,
     min_null_targets::Int=1,
     strict::Bool=false,
 )
-    min_null_targets > 0 || throw(ArgumentError("min_null_targets must be positive."))
-    resolved_strategy = if strategy isa NullStrategy
-        strategy
-    elseif strategy == "motif"
-        MotifNullStrategy()
-    elseif strategy == "profile"
-        ProfileNullStrategy()
-    else
-        throw(ArgumentError("strategy must be 'motif' or 'profile', got '$strategy'."))
-    end
-    resolved_metric = if resolved_strategy isa MotifNullStrategy
-        _resolve_metric(isnothing(metric) ? :pcc : metric)
-    else
-        _resolve_profile_metric(isnothing(metric) ? :co : metric)
-    end
-    return NullBuildConfig(resolved_strategy, resolved_metric, min_null_targets, strict)
+    resolved_metric = _resolve_profile_metric(isnothing(metric) ? :co : metric)
+    return NullBuildConfig(resolved_metric, min_null_targets, strict)
 end
 
 """
@@ -138,7 +95,7 @@ struct NullBuildResult
 end
 
 """
-    build_null(models, relations; strategy="motif", metric=:pcc, min_null_targets=1,
+    build_null(models, relations; sequences=batch, metric=:co, min_null_targets=1,
                strict=false, execution=SerialExecution(), kwargs...)
 
 Build a pooled null distribution from all eligible query-target comparisons.
@@ -150,7 +107,6 @@ GEV distribution.
 # Arguments
 - `models::AbstractVector`: vector of motif models (e.g. `PWM`).
 - `relations::GroupRelations`: group relations from [`parse_group_relations`](@ref).
-- `strategy`: `"motif"` or `"profile"`.
 - `metric`: comparison metric.
 - `min_null_targets`: minimum eligible targets per query (default 1).
 - `strict`: if `true`, raise an error when a query has too few targets.
@@ -168,12 +124,11 @@ identical to `SerialExecution`.
 function build_null(
     models::AbstractVector,
     relations::GroupRelations;
-    strategy::Union{AbstractString,NullStrategy}="motif",
     metric=nothing,
     min_null_targets::Int=1,
     strict::Bool=false,
     execution::ExecutionPolicy=SerialExecution(),
-    sequences::Union{Nothing,EncodedSequenceBatch}=nothing,
+    sequences::EncodedSequenceBatch,
     background::Union{Nothing,EncodedSequenceBatch}=nothing,
     search_range::Int=10,
     window_radius::Int=10,
@@ -181,20 +136,7 @@ function build_null(
     min_logfpr::Real=0.0,
     kwargs...,
 )
-    config = NullBuildConfig(;
-        strategy=strategy, metric=metric, min_null_targets=min_null_targets, strict=strict
-    )
-    if config.strategy isa MotifNullStrategy
-        return build_null(
-            models,
-            relations,
-            config;
-            execution=execution,
-            sequences=sequences,
-            background=background,
-            kwargs...,
-        )
-    end
+    config = NullBuildConfig(; metric=metric, min_null_targets=min_null_targets, strict=strict)
     return build_null(
         models,
         relations,
@@ -213,29 +155,9 @@ end
 function build_null(
     models::AbstractVector,
     relations::GroupRelations,
-    config::NullBuildConfig{MotifNullStrategy,<:AbstractColumnMetric};
+    config::NullBuildConfig{<:AbstractProfileMetric};
     execution::ExecutionPolicy=SerialExecution(),
-    sequences::Union{Nothing,EncodedSequenceBatch}=nothing,
-    background::Union{Nothing,EncodedSequenceBatch}=nothing,
-    kwargs...,
-)
-    isnothing(sequences) ||
-        throw(ArgumentError("sequences are only valid for profile strategy."))
-    isnothing(background) ||
-        throw(ArgumentError("background is only valid for profile strategy."))
-    isempty(kwargs) ||
-        throw(ArgumentError("profile options are only valid for profile strategy."))
-    return _build_null(models, relations, config, execution) do q, t
-        return compare(q, t; metric=config.metric)
-    end
-end
-
-function build_null(
-    models::AbstractVector,
-    relations::GroupRelations,
-    config::NullBuildConfig{ProfileNullStrategy,<:AbstractProfileMetric};
-    execution::ExecutionPolicy=SerialExecution(),
-    sequences::Union{Nothing,EncodedSequenceBatch}=nothing,
+    sequences::EncodedSequenceBatch,
     background::Union{Nothing,EncodedSequenceBatch}=nothing,
     search_range::Int=10,
     window_radius::Int=10,
@@ -243,7 +165,6 @@ function build_null(
     min_logfpr::Real=0.0,
     kwargs...,
 )
-    isnothing(sequences) && throw(ArgumentError("profile strategy requires sequences."))
     isempty(kwargs) || throw(ArgumentError("unsupported profile null-build option."))
     search_range >= 0 || throw(ArgumentError("search_range must be non-negative."))
     window_radius >= 0 || throw(ArgumentError("window_radius must be non-negative."))
@@ -355,7 +276,7 @@ function _build_null(
     fit_result = fit_gev(raw_scores)
 
     dist = NullDistribution(
-        _strategy_name(config.strategy),
+        "profile",
         metric_name(config.metric),
         fit_result,
         raw_scores,

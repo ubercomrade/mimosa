@@ -125,6 +125,14 @@ end
     @test config2.window_radius == 3
 end
 
+@testset "Profile orientation priority is explicit" begin
+    @test [p[1] for p in Mimosa.PROFILE_ORIENTATION_PAIRS] == ["++", "+-", "-+", "--"]
+    @test Mimosa.PROFILE_ORIENTATION_RANK["+-"] < Mimosa.PROFILE_ORIENTATION_RANK["--"]
+    @test Mimosa.PROFILE_ORIENTATION_RANK["-+"] < Mimosa.PROFILE_ORIENTATION_RANK["--"]
+    @test_throws ArgumentError ProfileConfig(search_range=-1)
+    @test_throws ArgumentError ProfileConfig(min_logfpr=NaN)
+end
+
 @testset "PreparedProfile and one-to-many" begin
     # Create two ScoreProfiles
     sp1 = ScoreProfile(

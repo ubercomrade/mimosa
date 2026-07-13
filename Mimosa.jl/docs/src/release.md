@@ -253,10 +253,10 @@ batch = readsequences("sequences.fa")
 scores = scan(model, batch; strands=BothStrands())
 
 # Compare motifs
-result = compare(query_model, target_model; metric=:pcc)
+result = compare(query_model, target_model, sequences; metric=:co)
 
 # Build null distribution
-result = build_null(models, relations; strategy="motif", metric=:pcc)
+result = build_null(models, relations; sequences=sequences, metric=:co)
 null = result.distribution
 
 # Annotate results with p-values

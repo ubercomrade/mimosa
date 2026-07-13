@@ -258,7 +258,8 @@ end
 
 # Profile orientation pairs: (label, query_strand, target_strand).
 # Strand indices: 1=forward, 2=reverse (1-based Julia convention).
-const PROFILE_ORIENTATION_PAIRS = (("++", 1, 1), ("--", 2, 2), ("+-", 1, 2), ("-+", 2, 1))
+const PROFILE_ORIENTATION_PAIRS = (("++", 1, 1), ("+-", 1, 2), ("-+", 2, 1), ("--", 2, 2))
+const PROFILE_ORIENTATION_RANK = Dict("++" => 0, "+-" => 1, "-+" => 2, "--" => 3)
 
 """
     _score_orientation_pair(query_bundle, target_bundle, query_anchors, target_anchors, search_range, window_radius, realign_window, metric)
@@ -330,12 +331,43 @@ Fields:
 - `realign_window::Int`: realignment search radius (default 3).
 - `min_logfpr::Float32`: minimum log FPR for threshold anchors (0 = best anchors).
 """
-Base.@kwdef struct ProfileConfig{M<:AbstractProfileMetric}
-    metric::M = OverlapCoefficient()
-    search_range::Int = 10
-    window_radius::Int = 10
-    realign_window::Int = 3
-    min_logfpr::Float32 = Float32(0.0)
+struct ProfileConfig{M<:AbstractProfileMetric}
+    metric::M
+    search_range::Int
+    window_radius::Int
+    realign_window::Int
+    min_logfpr::Float32
+
+    function ProfileConfig(
+        metric::M,
+        search_range::Int,
+        window_radius::Int,
+        realign_window::Int,
+        min_logfpr::Float32,
+    ) where {M<:AbstractProfileMetric}
+        search_range >= 0 || throw(ArgumentError("search_range must be non-negative."))
+        window_radius >= 0 || throw(ArgumentError("window_radius must be non-negative."))
+        realign_window >= 0 || throw(ArgumentError("realign_window must be non-negative."))
+        isfinite(min_logfpr) || throw(ArgumentError("min_logfpr must be finite."))
+        return new{M}(metric, search_range, window_radius, realign_window, min_logfpr)
+    end
+end
+
+function ProfileConfig(
+    ;
+    metric::AbstractProfileMetric=OverlapCoefficient(),
+    search_range::Int=10,
+    window_radius::Int=10,
+    realign_window::Int=3,
+    min_logfpr::Real=0.0,
+)
+    return ProfileConfig(
+        metric,
+        search_range,
+        window_radius,
+        realign_window,
+        Float32(min_logfpr),
+    )
 end
 
 """
@@ -347,7 +379,7 @@ return
 
 `query_anchors` and `target_anchors` are `(forward_csr, reverse_csr)` tuples.
 
-Scores all four orientation pairs (`++`, `--`, `+-`, `-+`) and selects the best
+Scores all four orientation pairs (`++`, `+-`, `-+`, `--`) and selects the best
 with deterministic tie-breaking per ADR 0006: higher score wins, then
 orientation priority `++ > +- > -+ > --`.
 """
@@ -365,9 +397,9 @@ function profile_compare(
     best_shift = 0
     best_n_sites = 0
     best_orientation = "++"
-    best_rank = 0
+    best_rank = typemax(Int)
 
-    for (i, (label, q_strand, t_strand)) in enumerate(PROFILE_ORIENTATION_PAIRS)
+    for (label, q_strand, t_strand) in PROFILE_ORIENTATION_PAIRS
         qa = q_strand == 1 ? query_anchors[1] : query_anchors[2]
         ta = t_strand == 1 ? target_anchors[1] : target_anchors[2]
         result = _score_orientation_pair(
@@ -383,12 +415,16 @@ function profile_compare(
             config.realign_window,
             metric,
         )
-        score, shift, n_sites = result
+        score, shift, n_sites, _ = result
 
-        # Tie-breaking: higher score, then orientation priority (++,+-,-+,--)
-        rank = i - 1  # 0-indexed rank
+        # Tie-breaking: score, site count, shift magnitude, then orientation rank.
+        rank = PROFILE_ORIENTATION_RANK[label]
         if Float64(score) > Float64(best_score) ||
-            (Float64(score) == Float64(best_score) && rank < best_rank)
+            (Float64(score) == Float64(best_score) &&
+             (n_sites > best_n_sites ||
+              (n_sites == best_n_sites &&
+               (abs(shift) < abs(best_shift) ||
+                (abs(shift) == abs(best_shift) && rank < best_rank)))))
             best_score = score
             best_shift = shift
             best_n_sites = n_sites
@@ -409,7 +445,7 @@ Compare two normalized profile bundles and return
 Collects anchors for both bundles internally. For one-to-many comparison where
 the query anchors should be reused, use the variant with pre-computed anchors.
 
-Scores all four orientation pairs (`++`, `--`, `+-`, `-+`) and selects the best
+Scores all four orientation pairs (`++`, `+-`, `-+`, `--`) and selects the best
 with deterministic tie-breaking per ADR 0006: higher score wins, then
 orientation priority `++ > +- > -+ > --`.
 """

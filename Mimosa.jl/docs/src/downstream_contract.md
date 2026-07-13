@@ -56,7 +56,7 @@ scorebounds(model) -> Tuple{Float32, Float32}
 ### Comparison
 
 ```julia
-compare(query::AbstractMotifModel, target::AbstractMotifModel; metric=:pcc) -> ComparisonResult
+compare(query::AbstractMotifModel, target::AbstractMotifModel, sequences::EncodedSequenceBatch; metric=:co) -> ComparisonResult
 compare(query::ScoreProfile, target::ScoreProfile; metric=..., kwargs...) -> ComparisonResult
 ```
 

@@ -53,15 +53,20 @@ BestStrand
 BothStrands
 ```
 
-## Motif comparison
+## Profile comparison
 
 ```@docs
-AbstractColumnMetric
 compare
 ComparisonResult
-PearsonCorrelation
-EuclideanDistance
-CosineSimilarity
+AbstractProfileMetric
+OverlapCoefficient
+OverlapCoefficientRowwise
+DiceSimilarity
+DiceSimilarityRowwise
+CosineSimilarityProfile
+ProfileConfig
+PreparedProfile
+prepare_profile
 ```
 
 ## Site extraction

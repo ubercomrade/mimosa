@@ -1,6 +1,6 @@
 # Portable null-distribution storage: TOML manifest + NPY binary blobs.
 #
-# Implements the v1 schema from ADR 0003. The manifest is a TOML file
+# Implements the profile-only v2 schema from ADR 0003. The manifest is a TOML file
 # (stdlib, no external dependency) with metadata and array references.
 # Binary data uses the standard NPY format (little-endian Float64).
 #
@@ -14,9 +14,9 @@
     NULL_FORMAT_VERSION
 
 Current version of the portable null-distribution bundle format.
-Value is `1`. Bundles with a different version are rejected on load.
+Value is `2`. Bundles with a different version are rejected on load.
 """
-const NULL_FORMAT_VERSION = 1
+const NULL_FORMAT_VERSION = 2
 
 """
     savenull(path, dist::NullDistribution)
@@ -128,7 +128,7 @@ function loadnull(path::AbstractString)
             path, NULL_FORMAT_VERSION; expected_kind="null_distribution"
         )
         strategy = _required_manifest_string(manifest, "strategy", path, "null manifest")
-        strategy in ("motif", "profile") ||
+        strategy == "profile" ||
             throw(_bundle_error(path, "unsupported null strategy '$strategy'."))
         metric = _required_manifest_string(manifest, "metric", path, "null manifest")
         n_null = _required_manifest_int(

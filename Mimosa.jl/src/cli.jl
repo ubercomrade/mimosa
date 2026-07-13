@@ -13,9 +13,8 @@
 
 const CLI_VERSION = "0.1.0"
 
-const MOTIF_MODEL_TYPES = ["pwm", "bamm", "sitega", "dimont", "slim"]
-const PROFILE_MODEL_TYPES = ["scores", "pwm", "bamm", "sitega", "dimont", "slim"]
-const MOTIF_METRICS = ["pcc", "ed", "cosine"]
+const MODEL_TYPES = ["pwm", "bamm", "sitega", "dimont", "slim"]
+const PROFILE_MODEL_TYPES = ["scores", MODEL_TYPES...]
 const PROFILE_METRICS = ["co", "co_rowwise", "dice", "dice_rowwise", "cosine"]
 
 # ── Typed command option specifications ─────────────────────────────────────
@@ -24,25 +23,6 @@ const PROFILE_METRICS = ["co", "co_rowwise", "dice", "dice_rowwise", "cosine"]
 # set of flag names (boolean --flags). These are defined as constants here,
 # separate from both the parser and the runners, so that adding a new option
 # requires only updating the spec, not the main() dispatch.
-
-const MOTIF_OPTIONS = Dict{String,Bool}(
-    "model1-type" => true,
-    "model2-type" => true,
-    "metric" => true,
-    "fasta" => true,
-    "num-sequences" => true,
-    "seq-length" => true,
-    "seed" => true,
-    "background" => true,
-    "query-index" => true,
-    "target-index" => true,
-    "threads" => true,
-    "jobs" => true,
-    "pfm-top-fraction" => true,
-    "null-distribution" => true,
-    "effective-number-of-targets" => true,
-)
-const MOTIF_FLAGS = Set(["pfm-mode", "pvalue", "quiet", "verbose"])
 
 const PROFILE_OPTIONS = Dict{String,Bool}(
     "model1-type" => true,
@@ -59,7 +39,6 @@ const PROFILE_OPTIONS = Dict{String,Bool}(
     "seed" => true,
     "background-freq" => true,
     "threads" => true,
-    "jobs" => true,
     "null-distribution" => true,
     "effective-number-of-targets" => true,
 )
@@ -68,7 +47,6 @@ const PROFILE_FLAGS = Set(["pvalue", "quiet", "verbose"])
 const BUILD_NULL_OPTIONS = Dict{String,Bool}(
     "model-type" => true,
     "groups" => true,
-    "strategy" => true,
     "output" => true,
     "name-column" => true,
     "group-column" => true,
@@ -83,7 +61,6 @@ const BUILD_NULL_OPTIONS = Dict{String,Bool}(
     "min-logfpr" => true,
     "min-null-targets" => true,
     "threads" => true,
-    "jobs" => true,
     "cache-dir" => true,
 )
 const BUILD_NULL_FLAGS = Set(["ignore-missing", "strict", "quiet", "verbose"])
@@ -105,7 +82,6 @@ const CONVERT_FLAGS = Set(["quiet", "verbose"])
 const COMMAND_SPECS = Dict{
     String,NamedTuple{(:options, :flags),Tuple{Dict{String,Bool},Set{String}}}
 }(
-    "motif" => (options=MOTIF_OPTIONS, flags=MOTIF_FLAGS),
     "profile" => (options=PROFILE_OPTIONS, flags=PROFILE_FLAGS),
     "build-null" => (options=BUILD_NULL_OPTIONS, flags=BUILD_NULL_FLAGS),
     "cache" => (options=CACHE_OPTIONS, flags=CACHE_FLAGS),
@@ -140,7 +116,6 @@ function _print_global_help(io::IO)
     println(io, "Usage: mimosa <command> [options]")
     println(io, "")
     println(io, "Commands:")
-    println(io, "  motif         Direct motif comparison (matrix/tensor alignment)")
     println(io, "  profile       Profile-based comparison (scan → normalize → compare)")
     println(
         io, "  build-null    Build a null distribution from unrelated motif comparisons"
@@ -409,129 +384,6 @@ end
 # calls the Mimosa public API, and serializes results as JSON to stdout.
 # Runners do NOT re-parse arguments; they consume the typed CLIParsed struct.
 
-# ── Command: motif ──────────────────────────────────────────────────────────
-
-function _print_motif_help(io::IO)
-    println(
-        io,
-        "Usage: mimosa motif <model1> <model2> --model1-type <type> --model2-type <type> [options]",
-    )
-    println(io, "")
-    println(io, "Direct motif comparison by aligning matrix or tensor representations.")
-    println(io, "")
-    println(io, "Required arguments:")
-    println(io, "  model1                   Path to the first motif model file")
-    println(io, "  model2                   Path to the second motif model file")
-    println(
-        io, "  --model1-type <type>     Type of model1: $(join(MOTIF_MODEL_TYPES, ", "))"
-    )
-    println(
-        io, "  --model2-type <type>     Type of model2: $(join(MOTIF_MODEL_TYPES, ", "))"
-    )
-    println(io, "")
-    println(io, "Options:")
-    println(
-        io,
-        "  --metric <name>         Comparison metric: $(join(MOTIF_METRICS, ", ")) (default: pcc)",
-    )
-    println(io, "  --pfm-mode               Force PFM reconstruction before comparison")
-    println(io, "  --pfm-top-fraction <f>   Fraction of top sites for PFM (default: 0.05)")
-    println(io, "  --fasta <path>           FASTA sequences for PFM reconstruction")
-    println(io, "  --num-sequences <n>      Random sequences if no FASTA (default: 20000)")
-    println(io, "  --seq-length <n>         Random sequence length (default: 100)")
-    println(io, "  --seed <n>               Random seed (default: 127)")
-    println(io, "  --background <f>         Background frequency for PWM (default: 0.25)")
-    println(io, "  --query-index <n>        MEME motif index for model1 (default: 0)")
-    println(io, "  --target-index <n>       MEME motif index for model2 (default: 0)")
-    println(io, "  --threads <n>            Number of threads (default: 1)")
-    println(
-        io, "  --pvalue                 Annotate using an explicit compatible null bundle"
-    )
-    println(io, "  --null-distribution <p>  Portable null-distribution bundle for --pvalue")
-    println(io, "  --effective-number-of-targets <n>  E-value target-count override")
-    println(io, "  --quiet                  Suppress informational output")
-    println(io, "  --verbose                Verbose diagnostics to stderr")
-    return nothing
-end
-
-function _run_motif(parsed::CLIParsed)
-    if length(parsed.positional) < 2
-        _print_motif_help(stderr)
-        throw(CLIError("motif requires two positional arguments: model1 and model2."))
-    end
-    path1 = parsed.positional[1]
-    path2 = parsed.positional[2]
-
-    haskey(parsed.options, "model1-type") || throw(CLIError("--model1-type is required."))
-    haskey(parsed.options, "model2-type") || throw(CLIError("--model2-type is required."))
-
-    type1 = parsed.options["model1-type"]
-    type2 = parsed.options["model2-type"]
-    type1 in MOTIF_MODEL_TYPES ||
-        throw(CLIError("--model1-type must be one of: $(join(MOTIF_MODEL_TYPES, ", "))"))
-    type2 in MOTIF_MODEL_TYPES ||
-        throw(CLIError("--model2-type must be one of: $(join(MOTIF_MODEL_TYPES, ", "))"))
-
-    metric = get(parsed.options, "metric", "pcc")
-    metric in MOTIF_METRICS ||
-        throw(CLIError("--metric must be one of: $(join(MOTIF_METRICS, ", "))"))
-
-    bg = tryparse(Float32, get(parsed.options, "background", "0.25"))
-    bg === nothing && throw(CLIError("--background must be a number."))
-    qidx = tryparse(Int, get(parsed.options, "query-index", "0"))
-    tidx = tryparse(Int, get(parsed.options, "target-index", "0"))
-    seed = tryparse(Int, get(parsed.options, "seed", "127"))
-    num_seq = tryparse(Int, get(parsed.options, "num-sequences", "20000"))
-    seq_len = tryparse(Int, get(parsed.options, "seq-length", "100"))
-    pfm_top = tryparse(Float64, get(parsed.options, "pfm-top-fraction", "0.05"))
-    pfm_top === nothing && throw(CLIError("--pfm-top-fraction must be a number."))
-
-    use_pfm = "pfm-mode" in parsed.flags || type1 != type2
-    fasta = get(parsed.options, "fasta", nothing)
-
-    model1 = _read_typed_model(path1, type1; index=qidx, background=bg)
-    model2 = _read_typed_model(path2, type2; index=tidx, background=bg)
-
-    if use_pfm
-        # PFM reconstruction path: scan models, extract sites, reconstruct PFM
-        sequences = _resolve_sequences(fasta, num_seq, seq_len, seed)
-        pwm1 = _ensure_pwm(model1; index=qidx, background=bg)
-        pwm2 = _ensure_pwm(model2; index=tidx, background=bg)
-        selector = TopFractionHits(pfm_top)
-        pfm1 = PFM(model1.name, reconstruct_pfm(pwm1, sequences, selector))
-        pfm2 = PFM(model2.name, reconstruct_pfm(pwm2, sequences, selector))
-        result = compare(pfm1, pfm2; metric=metric)
-    else
-        result = compare(model1, model2; metric=metric)
-    end
-
-    annotated = _annotate_cli_result(result, parsed; strategy="motif", metric=metric)
-    _println_json(to_dict(annotated))
-    return 0
-end
-
-"""
-    _ensure_pwm(model; kwargs...)
-
-Convert a model to PWM if needed for PFM reconstruction.
-Currently only PWM models are supported for PFM reconstruction.
-"""
-function _ensure_pwm(model::PWM; kwargs...)
-    return model
-end
-
-function _ensure_pwm(model::PFM; kwargs...)
-    return pwm_from_pfm(model; kwargs...)
-end
-
-function _ensure_pwm(model::AbstractMotifModel; kwargs...)
-    return throw(
-        CLIError(
-            "PFM reconstruction is only supported for PWM/PFM models, got $(typeof(model))."
-        ),
-    )
-end
-
 # ── Command: profile ─────────────────────────────────────────────────────────
 
 function _print_profile_help(io::IO)
@@ -668,7 +520,7 @@ end
 function _print_build_null_help(io::IO)
     println(
         io,
-        "Usage: mimosa build-null <motifs> --model-type <type> --groups <path> --strategy <s> --output <path> [options]",
+        "Usage: mimosa build-null <motifs> --model-type <type> --groups <path> --output <path> [options]",
     )
     println(io, "")
     println(io, "Build a pooled null distribution from unrelated motif comparisons.")
@@ -679,10 +531,9 @@ function _print_build_null_help(io::IO)
         "  motifs                    Motif collection: directory or multi-motif MEME file",
     )
     println(
-        io, "  --model-type <type>       Motif format: $(join(MOTIF_MODEL_TYPES, ", "))"
+        io, "  --model-type <type>       Motif format: $(join(MODEL_TYPES, ", "))"
     )
     println(io, "  --groups <path>           TSV/CSV with motif and group columns")
-    println(io, "  --strategy <s>            Comparison strategy: motif, profile")
     println(io, "  --output <path>           Output path for null distribution")
     println(io, "")
     println(io, "Relation options:")
@@ -692,9 +543,9 @@ function _print_build_null_help(io::IO)
     println(io, "")
     println(io, "Comparison options:")
     println(
-        io, "  --metric <name>           Metric (default: co for profile, pcc for motif)"
+        io, "  --metric <name>           Profile metric (default: co)"
     )
-    println(io, "  --fasta <path>            FASTA for profile mode")
+    println(io, "  --fasta <path>            FASTA for profile scanning")
     println(io, "  --num-sequences <n>       Random sequences (default: 1000)")
     println(io, "  --seq-length <n>          Random sequence length (default: 200)")
     println(io, "  --seed <n>                Random seed (default: 127)")
@@ -709,7 +560,6 @@ function _print_build_null_help(io::IO)
     println(io, "")
     println(io, "Technical options:")
     println(io, "  --threads <n>             Number of threads (default: 1)")
-    println(io, "  --jobs <n>               Alias for --threads (deprecated)")
     println(io, "  --quiet                   Suppress informational output")
     println(io, "  --verbose                 Verbose diagnostics to stderr")
     return nothing
@@ -773,16 +623,11 @@ function _run_build_null(parsed::CLIParsed)
 
     haskey(parsed.options, "model-type") || throw(CLIError("--model-type is required."))
     haskey(parsed.options, "groups") || throw(CLIError("--groups is required."))
-    haskey(parsed.options, "strategy") || throw(CLIError("--strategy is required."))
     haskey(parsed.options, "output") || throw(CLIError("--output is required."))
 
     model_type = parsed.options["model-type"]
-    model_type in MOTIF_MODEL_TYPES ||
-        throw(CLIError("--model-type must be one of: $(join(MOTIF_MODEL_TYPES, ", "))"))
-
-    strategy = parsed.options["strategy"]
-    strategy in ("motif", "profile") ||
-        throw(CLIError("--strategy must be 'motif' or 'profile'."))
+    model_type in MODEL_TYPES ||
+        throw(CLIError("--model-type must be one of: $(join(MODEL_TYPES, ", "))"))
 
     groups_path = parsed.options["groups"]
     output_path = parsed.options["output"]
@@ -796,21 +641,9 @@ function _run_build_null(parsed::CLIParsed)
     seq_len = tryparse(Int, get(parsed.options, "seq-length", "200"))
     fasta = get(parsed.options, "fasta", nothing)
 
-    metric_default = strategy == "profile" ? "co" : "pcc"
-    metric = get(parsed.options, "metric", metric_default)
-    if strategy == "motif"
-        metric in MOTIF_METRICS || throw(
-            CLIError(
-                "--metric for motif strategy must be one of: $(join(MOTIF_METRICS, ", "))",
-            ),
-        )
-    else
-        metric in PROFILE_METRICS || throw(
-            CLIError(
-                "--metric for profile strategy must be one of: $(join(PROFILE_METRICS, ", "))",
-            ),
-        )
-    end
+    metric = get(parsed.options, "metric", "co")
+    metric in PROFILE_METRICS ||
+        throw(CLIError("--metric must be one of: $(join(PROFILE_METRICS, ", "))"))
 
     # Read models
     models = _read_model_collection(motifs_path, model_type)
@@ -849,37 +682,31 @@ function _run_build_null(parsed::CLIParsed)
         throw(CLIError("--realign-window must be a non-negative integer."))
     isfinite(min_logfpr) || throw(CLIError("--min-logfpr must be a finite number."))
 
-    # Resolve execution policy from --threads (or --jobs alias)
-    threads_str = get(parsed.options, "threads", get(parsed.options, "jobs", "1"))
+    # Resolve execution policy from --threads.
+    threads_str = get(parsed.options, "threads", "1")
     nthreads_val = tryparse(Int, threads_str)
     nthreads_val === nothing && throw(CLIError("--threads must be a positive integer."))
     nthreads_val > 0 || throw(CLIError("--threads must be a positive integer."))
     exec_policy = nthreads_val <= 1 ? SerialExecution() : ThreadedExecution(nthreads_val)
 
-    config = NullBuildConfig(;
-        strategy=strategy, metric=metric, min_null_targets=min_null, strict=strict
-    )
-    result = if config.strategy isa MotifNullStrategy
-        isnothing(fasta) || throw(CLIError("--fasta is only valid for profile strategy."))
-        build_null(models, relations, config; execution=exec_policy)
+    sequences = if isnothing(fasta)
+        make_random_sequences(num_seq, seq_len; seed=seed)
     else
-        sequences = if isnothing(fasta)
-            make_random_sequences(num_seq, seq_len; seed=seed)
-        else
-            first(readsequences(fasta))
-        end
-        build_null(
-            models,
-            relations,
-            config;
-            execution=exec_policy,
-            sequences=sequences,
-            search_range=search_range,
-            window_radius=window_radius,
-            realign_window=realign_window,
-            min_logfpr=min_logfpr,
-        )
+        first(readsequences(fasta))
     end
+    result = build_null(
+        models,
+        relations;
+        metric=metric,
+        min_null_targets=min_null,
+        strict=strict,
+        execution=exec_policy,
+        sequences=sequences,
+        search_range=search_range,
+        window_radius=window_radius,
+        realign_window=realign_window,
+        min_logfpr=min_logfpr,
+    )
 
     # Save null distribution
     savenull(output_path, result.distribution)
@@ -1101,9 +928,7 @@ function main(args::Vector{String}=ARGS)::Int
 end
 
 function _dispatch_help(command::AbstractString)
-    if command == "motif"
-        _print_motif_help(stdout)
-    elseif command == "profile"
+    if command == "profile"
         _print_profile_help(stdout)
     elseif command == "build-null"
         _print_build_null_help(stdout)
@@ -1118,9 +943,7 @@ function _dispatch_help(command::AbstractString)
 end
 
 function _dispatch_runner(command::AbstractString, parsed::CLIParsed)
-    if command == "motif"
-        return _run_motif(parsed)
-    elseif command == "profile"
+    if command == "profile"
         return _run_profile(parsed)
     elseif command == "build-null"
         return _run_build_null(parsed)

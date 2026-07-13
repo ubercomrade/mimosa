@@ -108,7 +108,7 @@ julia> pwm1 = readmodel(joinpath(dirname(pwd()), "..", "examples", "pif4.meme"))
 
 julia> pwm2 = readmodel(joinpath(dirname(pwd()), "..", "examples", "gata2.meme"));
 
-julia> result = compare(pwm1, pwm2; metric=:pcc);
+julia> result = compare(pwm1, pwm2, sequences; metric=:co);
 
 julia> typeof(result)
 ComparisonResult
@@ -126,7 +126,7 @@ julia> pwm1 = readmodel(joinpath(dirname(pwd()), "..", "examples", "pif4.meme"))
 
 julia> pwm2 = readmodel(joinpath(dirname(pwd()), "..", "examples", "gata2.meme"));
 
-julia> result = compare(pwm1, pwm2; metric=:pcc);
+julia> result = compare(pwm1, pwm2, sequences; metric=:co);
 
 julia> startswith(to_json(result), "{")
 true
@@ -232,7 +232,7 @@ julia> write("/tmp/mimosa_quickstart/rel.tsv", "motif\tgroup\nm1\tA\nm2\tB\nm3\t
 
 julia> relations = parse_group_relations("/tmp/mimosa_quickstart/rel.tsv"; known_names=Set(["m1", "m2", "m3"]));
 
-julia> null_result = build_null(models, relations; strategy="motif", metric=:pcc);
+julia> null_result = build_null(models, relations; sequences=sequences, metric=:co);
 
 julia> typeof(null_result.distribution)
 NullDistribution
@@ -279,7 +279,7 @@ julia> write("/tmp/mimosa_quickstart/rel.tsv", "motif\tgroup\nm1\tA\nm2\tB\nm3\t
 
 julia> relations = parse_group_relations("/tmp/mimosa_quickstart/rel.tsv"; known_names=Set(["m1", "m2", "m3"]));
 
-julia> null_result = build_null(models, relations; strategy="motif", metric=:pcc);
+julia> null_result = build_null(models, relations; sequences=sequences, metric=:co);
 
 julia> savenull("/tmp/mimosa_quickstart/null_dist", null_result.distribution);
 
@@ -310,9 +310,9 @@ julia> write("/tmp/mimosa_quickstart/rel.tsv", "motif\tgroup\nm1\tA\nm2\tB\nm3\t
 
 julia> relations = parse_group_relations("/tmp/mimosa_quickstart/rel.tsv"; known_names=Set(["m1", "m2", "m3"]));
 
-julia> null_result = build_null(models, relations; strategy="motif", metric=:pcc);
+julia> null_result = build_null(models, relations; sequences=sequences, metric=:co);
 
-julia> result = compare(models[1], models[2]; metric=:pcc);
+julia> result = compare(models[1], models[2], sequences; metric=:co);
 
 julia> annotated = annotate_results([result], null_result.distribution; effective_number_of_targets=2);
 

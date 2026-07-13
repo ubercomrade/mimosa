@@ -49,15 +49,12 @@ using Mimosa
 query = readmodel("examples/pif4.meme")
 target = readmodel("examples/gata2.meme")
 
-# Compare two PWMs by direct matrix alignment.
-result = compare(query, target; metric=:pcc)
-# => ComparisonResult("pwm_model", "MA0036.2", 0.4336f0, -1, "+-", "pcc")
+# Compare models through explicit strand-aware score profiles.
+batch, names = readsequences("examples/foreground.fa")
+result = compare(query, target, batch; metric=:co)
 
 # Serialize to JSON matching the Python CLI schema.
 println(to_json(result))
-
-# Read sequences from a FASTA file.
-batch, names = readsequences("examples/foreground.fa")
 
 # Scan sequences with strand policies.
 scores = scan(query, batch; strands=BestStrand())
@@ -68,7 +65,7 @@ scores_t = scan(query, batch; strands=BestStrand(), execution=ThreadedExecution(
 # Build a null distribution from a collection of models.
 models = [query, target]
 relations = parse_group_relations("groups.tsv")
-null_result = build_null(models, relations; strategy="motif", metric=:pcc)
+null_result = build_null(models, relations; sequences=batch, metric=:co)
 dist = null_result.distribution  # NullDistribution
 
 # Save and load null distributions (portable bundle format).
@@ -86,17 +83,13 @@ loaded_model = readmodel("output/model_bundle")
 ## CLI
 
 ```bash
-# Direct motif comparison
-julia --project=Mimosa.jl app/mimosa.jl motif examples/pif4.meme examples/gata2.meme \
-  --model1-type pwm --model2-type pwm --metric pcc
-
 # Profile-based comparison with random sequences
 julia --project=Mimosa.jl app/mimosa.jl profile examples/pif4.meme examples/gata2.meme \
   --model1-type pwm --model2-type pwm --metric co --num-sequences 50 --seq-length 100
 
 # Build a null distribution
 julia --project=Mimosa.jl app/mimosa.jl build-null examples/ \
-  --model-type pwm --groups groups.tsv --strategy motif --output null_dist
+  --model-type pwm --groups groups.tsv --output null_dist
 
 # Inspect a model
 julia --project=Mimosa.jl app/mimosa.jl inspect-model examples/foxa2.ihbcp --type bamm

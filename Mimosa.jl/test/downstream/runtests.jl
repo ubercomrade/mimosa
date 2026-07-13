@@ -78,9 +78,6 @@ const EXAMPLES = joinpath(REPO_ROOT, "examples")
     @test isdefined(Mimosa, :NullDistribution)
     @test isdefined(Mimosa, :NullBuildConfig)
     @test isdefined(Mimosa, :NullBuildResult)
-    @test isdefined(Mimosa, :NullStrategy)
-    @test isdefined(Mimosa, :MotifNullStrategy)
-    @test isdefined(Mimosa, :ProfileNullStrategy)
 
     # Storage format versions
     @test isdefined(Mimosa, :MODEL_FORMAT_VERSION)
@@ -177,14 +174,14 @@ end
 # ---------------------------------------------------------------------------
 # Direct motif comparison
 # ---------------------------------------------------------------------------
-@testset "Downstream contract: motif comparison" begin
+@testset "Downstream contract: profile comparison" begin
     pwm1 = readmodel(joinpath(EXAMPLES, "pif4.meme"))
     pwm2 = readmodel(joinpath(EXAMPLES, "foxa2.meme"))
+    sequences = make_random_sequences(4, 80; seed=12)
 
-    # Test all metrics
     last_result = nothing
-    for metric in (:pcc, :ed, :cosine)
-        result = compare(pwm1, pwm2; metric=metric)
+    for metric in (:co, :dice, :cosine)
+        result = compare(pwm1, pwm2, sequences; metric=metric)
         @test result isa ComparisonResult
         @test result.query == pwm1.name
         @test result.target == pwm2.name
@@ -193,7 +190,7 @@ end
     end
 
     # Self-comparison should give a high score
-    self_result = compare(pwm1, pwm1; metric=:pcc)
+    self_result = compare(pwm1, pwm1, sequences; metric=:co)
     @test self_result.score >= last_result.score
 
     # Serialization
@@ -270,17 +267,17 @@ end
     write(rel_path, relations_str)
     relations = parse_group_relations(rel_path)
 
-    # Motif null strategy
     models = [pwm1, pwm2]
-    result = build_null(models, relations; strategy="motif", metric=:pcc)
+    sequences = make_random_sequences(4, 80; seed=13)
+    result = build_null(models, relations; sequences=sequences, metric=:co)
     @test result isa NullBuildResult
     dist = result.distribution
     @test dist isa NullDistribution
-    @test dist.strategy == "motif"
-    @test dist.metric == "pcc"
+    @test dist.strategy == "profile"
+    @test dist.metric == "co"
     @test dist.model_collection_fingerprint !== nothing
     @test dist.relation_fingerprint !== nothing
-    @test dist.sequence_fingerprint == "none"
+    @test dist.sequence_fingerprint == sequence_fingerprint(sequences)
     @test dist.background_fingerprint == "none"
 
     # Save and reload null (signature: savenull(path, dist))
@@ -345,15 +342,16 @@ end
     write(rel_path, relations_str)
     relations = parse_group_relations(rel_path)
 
-    null_result = build_null(models, relations; strategy="motif", metric=:pcc)
+    sequences = make_random_sequences(6, 80; seed=14)
+    null_result = build_null(models, relations; sequences=sequences, metric=:co)
     dist = null_result.distribution
     @test dist.n_null >= 3  # GEV fit requires at least 3 scores
 
     # Create comparison results to annotate
     results = [
-        compare(models[1], models[2]; metric=:pcc),
-        compare(models[1], models[3]; metric=:pcc),
-        compare(models[2], models[4]; metric=:pcc),
+        compare(models[1], models[2], sequences; metric=:co),
+        compare(models[1], models[3], sequences; metric=:co),
+        compare(models[2], models[4], sequences; metric=:co),
     ]
 
     annotated = annotate_results(results, dist)

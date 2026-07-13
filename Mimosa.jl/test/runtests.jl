@@ -29,8 +29,6 @@ Aqua.test_all(
     # Unit tests
     include("unit/test_models.jl")
     include("unit/test_readers.jl")
-    include("unit/test_metrics.jl")
-    include("unit/test_alignment.jl")
     include("unit/test_serialization.jl")
     include("unit/test_sequences.jl")
     include("unit/test_profiles.jl")

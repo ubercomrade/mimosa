@@ -679,53 +679,6 @@ function bench_batch_scan!(results::Vector{BenchResult}, config::BenchConfig)
 end
 
 """
-    bench_motif_comparison(results, config)
-
-Benchmark direct motif comparison (all metrics, various widths).
-"""
-function bench_motif_comparison!(results::Vector{BenchResult}, config::BenchConfig)
-    println("\n=== Motif Comparison (direct matrix alignment) ===")
-
-    pwm8 = make_pwm(8)
-    pwm15 = make_pwm(15)
-    pwm30 = make_pwm(30)
-
-    for (p1, p2, label) in (
-        (pwm8, pwm8, "8x8"),
-        (pwm8, pwm15, "8x15"),
-        (pwm15, pwm30, "15x30"),
-        (pwm8, pwm30, "8x30"),
-    )
-        for metric in (PearsonCorrelation(), EuclideanDistance(), CosineSimilarity())
-            compare(p1, p2; metric=metric)  # warmup
-            b = BenchmarkTools.@benchmark compare($p1, $p2; metric=($metric))
-            println(
-                @sprintf(
-                    "  %-8s  %-10s  median=%.3f μs  allocs=%d",
-                    label,
-                    metric_name(metric),
-                    median(b).time / 1000,
-                    b.allocs
-                )
-            )
-            push!(
-                results,
-                bench_result(
-                    "motif_compare",
-                    "motif_comparison",
-                    b;
-                    width1=size(p1.weights, 2),
-                    width2=size(p2.weights, 2),
-                    metric=metric_name(metric),
-                    size_label=label,
-                ),
-            )
-        end
-    end
-    return println()
-end
-
-"""
     bench_one_to_many(results, config)
 
 Benchmark one-to-many profile comparison with 10/100/1000 targets.
@@ -1068,57 +1021,11 @@ function bench_null_distribution!(results::Vector{BenchResult}, config::BenchCon
     rel_file = make_relations_file(model_names)
     rel = Mimosa.parse_group_relations(rel_file)
 
-    # Motif strategy
-    build_null(models, rel; strategy="motif", metric=:pcc)  # warmup
-    b = BenchmarkTools.@benchmark build_null($models, $rel; strategy="motif", metric=:pcc)
-    println(
-        @sprintf(
-            "  build_null motif pcc    n_models=%d  median=%.3f ms  allocs=%d",
-            length(models),
-            median(b).time / 1e6,
-            b.allocs
-        )
-    )
-    push!(
-        results,
-        bench_result(
-            "build_null",
-            "null_distribution",
-            b;
-            strategy="motif",
-            metric="pcc",
-            n_models=length(models),
-        ),
-    )
-
-    # Motif strategy with ED
-    build_null(models, rel; strategy="motif", metric=:ed)
-    b = BenchmarkTools.@benchmark build_null($models, $rel; strategy="motif", metric=:ed)
-    println(
-        @sprintf(
-            "  build_null motif ed     n_models=%d  median=%.3f ms  allocs=%d",
-            length(models),
-            median(b).time / 1e6,
-            b.allocs
-        )
-    )
-    push!(
-        results,
-        bench_result(
-            "build_null",
-            "null_distribution",
-            b;
-            strategy="motif",
-            metric="ed",
-            n_models=length(models),
-        ),
-    )
-
     # Profile strategy
     batch = make_random_sequences(50, 200; seed=42)
-    build_null(models, rel; strategy="profile", metric=:co, sequences=batch)
+    build_null(models, rel; metric=:co, sequences=batch)
     b = BenchmarkTools.@benchmark build_null(
-        $models, $rel; strategy="profile", metric=:co, sequences=($batch)
+        $models, $rel; metric=:co, sequences=($batch)
     )
     println(
         @sprintf(
@@ -1140,46 +1047,6 @@ function bench_null_distribution!(results::Vector{BenchResult}, config::BenchCon
             n_sequences=50,
         ),
     )
-
-    # Threaded null build
-    nthreads = max(1, Threads.nthreads())
-    if nthreads > 1
-        build_null(
-            models,
-            rel;
-            strategy="motif",
-            metric=:pcc,
-            execution=ThreadedExecution(nthreads),
-        )
-        b = BenchmarkTools.@benchmark build_null(
-            $models,
-            $rel;
-            strategy="motif",
-            metric=:pcc,
-            execution=ThreadedExecution($nthreads),
-        )
-        println(
-            @sprintf(
-                "  build_null threaded     n_models=%d  t=%d  median=%.3f ms  allocs=%d",
-                length(models),
-                nthreads,
-                median(b).time / 1e6,
-                b.allocs
-            )
-        )
-        push!(
-            results,
-            bench_result(
-                "build_null_threaded",
-                "null_distribution",
-                b;
-                strategy="motif",
-                metric="pcc",
-                n_models=length(models),
-                n_threads=nthreads,
-            ),
-        )
-    end
 
     rm(rel_file; force=true)
     return println()
@@ -1237,7 +1104,8 @@ function bench_serialization!(results::Vector{BenchResult}, config::BenchConfig)
     println("\n=== Serialization Latency ===")
 
     pwm = make_pwm(15)
-    result = compare(pwm, pwm; metric=:pcc)
+    batch = make_random_sequences(10, 100; seed=41)
+    result = compare(pwm, pwm, batch; metric=:co)
 
     to_json(result)  # warmup
     b = BenchmarkTools.@benchmark to_json($result)
@@ -1603,7 +1471,6 @@ function main()
     bench_import_and_startup!(results, config)
     bench_pwm_scan!(results, config)
     bench_batch_scan!(results, config)
-    bench_motif_comparison!(results, config)
     bench_one_to_many!(results, config)
     bench_higher_order_scan!(results, config)
     bench_site_extraction!(results, config)

@@ -56,15 +56,31 @@ end
     @test dest == UInt8[0, 1, 2, 3]  # ACGT is RC palindrome
     @test src == UInt8[0, 1, 2, 3]   # src unchanged
 
-    # Aliasing: dest === src should throw.
+    # Identical and overlapping views are handled through a safe temporary copy.
     aliased = UInt8[0, 1, 2, 3]
-    @test_throws ArgumentError reverse_complement!(aliased, aliased)
+    reverse_complement!(aliased, aliased)
+    @test aliased == UInt8[0, 1, 2, 3]
 
     # dest larger than src is fine.
     src2 = UInt8[0, 0, 0, 0]
     dest2 = Vector{UInt8}(undef, 6)
     reverse_complement!(dest2, src2)
     @test dest2[1:4] == UInt8[3, 3, 3, 3]
+
+    backing = UInt8[0, 1, 2, 3, 0]
+    reverse_complement!(view(backing, 2:5), view(backing, 1:4))
+    @test backing == UInt8[0, 0, 1, 2, 3]
+end
+
+@testset "explicit RNG sequence generation" begin
+    rng1 = MersenneTwister(17)
+    rng2 = MersenneTwister(17)
+    first_batch = make_random_sequences(rng1, 3, 12)
+    second_batch = make_random_sequences(rng2, 3, 12)
+    @test first_batch.data == second_batch.data
+    @test first_batch.offsets == second_batch.offsets
+    rand(rng1)
+    @test rand(rng1) != rand(rng2)
 end
 
 @testset "B2: scan kernel destination validation" begin
