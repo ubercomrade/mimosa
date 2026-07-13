@@ -89,6 +89,38 @@ def test_run_target_comparisons_wraps_progress_iterator(monkeypatch):
     assert observed == [{"enabled": True, "desc": "query targets", "total": 2, "leave": False}]
 
 
+def test_run_target_comparisons_uses_bounded_outer_pool_and_one_inner_thread():
+    """Target workers must be bounded and disable nested Numba parallelism."""
+    from numba import get_num_threads
+
+    from mimosa.comparison.runner import _run_target_comparisons
+
+    targets = [SimpleNamespace(name=f"target-{index}") for index in range(4)]
+
+    def worker(target):
+        return target.name, get_num_threads()
+
+    result = _run_target_comparisons(targets, 2, worker)
+
+    assert [name for name, _ in result] == [target.name for target in targets]
+    assert all(thread_count == 1 for _, thread_count in result)
+
+
+def test_run_target_comparisons_propagates_worker_exception():
+    """A failed target worker must abort the one-to-many operation."""
+    from mimosa.comparison.runner import _run_target_comparisons
+
+    targets = [SimpleNamespace(name="ok"), SimpleNamespace(name="fail")]
+
+    def worker(target):
+        if target.name == "fail":
+            raise RuntimeError("target failed")
+        return target.name
+
+    with pytest.raises(RuntimeError, match="target failed"):
+        _run_target_comparisons(targets, 2, worker)
+
+
 def test_numba_thread_scope_restores_mask_after_exception():
     """A failed comparison must not leak its temporary Numba thread mask."""
     from numba import config as numba_config

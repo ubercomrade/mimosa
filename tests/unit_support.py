@@ -52,6 +52,7 @@ from mimosa.comparison import (
 from mimosa.comparison import registry as comparison_registry
 from mimosa.functions import (
     apply_score_log_tail_table,
+    apply_score_log_tail_table_to_profile_bundle,
     batch_all_scores,
     batch_all_scores_strands,
     build_score_log_tail_table,
@@ -70,6 +71,7 @@ from mimosa.functions import (
     rowwise_dice,
     score_seq,
     scores_to_empirical_log_tail,
+    scores_to_empirical_log_tail_bundle,
     standardized_pauc,
 )
 from mimosa.io import (

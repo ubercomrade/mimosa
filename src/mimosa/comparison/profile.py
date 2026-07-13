@@ -21,6 +21,7 @@ from mimosa.functions import (
     rowwise_co,
     rowwise_cosine,
     rowwise_dice,
+    scores_to_empirical_log_tail_bundle,
 )
 from mimosa.functions.alignment import (
     build_anchor_csr,
@@ -130,6 +131,14 @@ def _resolve_profile_bundle(
             return cached
 
     raw_bundle = _resolve_raw_profile_bundle(model, sequences, runtime_cache)
+    if background_sequences is sequences and profile_kind == "empirical_log_tail":
+        profile_bundle = scores_to_empirical_log_tail_bundle(raw_bundle)
+        runtime_cache[runtime_key] = profile_bundle
+        if cache_spec is not None:
+            store_profile_cache(cache_spec, profile_bundle)
+            logger.debug("Stored profile cache for model '%s'.", model.name)
+        return profile_bundle
+
     normalizer = _fit_profile_normalizer(model, background_sequences, cfg, runtime_cache)
     profile_bundle = _apply_profile_normalizer(raw_bundle, normalizer, profile_kind)
     runtime_cache[runtime_key] = profile_bundle

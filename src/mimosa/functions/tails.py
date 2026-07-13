@@ -28,12 +28,21 @@ def build_score_log_tail_table(scores: np.ndarray) -> np.ndarray:
     if flat.size == 0:
         return np.array([[0.0, 0.0]], dtype=np.float32)
 
-    scores_sorted = np.sort(flat)[::-1]
-    unique_scores, counts = np.unique(scores_sorted, return_counts=True)
-    unique_scores = unique_scores[::-1]
-    counts = counts[::-1]
+    # Keep the sorted permutation so the same run-length pass can be reused by
+    # callers that need normalized values in their original order.
+    order = np.argsort(flat, kind="stable")[::-1]
+    scores_sorted = flat[order]
+    starts = np.empty(scores_sorted.size, dtype=np.bool_)
+    starts[0] = True
+    starts[1:] = scores_sorted[1:] != scores_sorted[:-1]
+    group_starts = np.flatnonzero(starts)
+    group_ends = np.empty_like(group_starts)
+    group_ends[:-1] = group_starts[1:]
+    group_ends[-1] = scores_sorted.size
+    unique_scores = scores_sorted[group_starts]
+    counts = group_ends - group_starts
 
-    cum_counts = np.cumsum(counts)
+    cum_counts = np.cumsum(counts, dtype=np.int64)
     tail_probabilities = cum_counts / flat.size
     log_tail = -np.log10(tail_probabilities)
     return np.column_stack([unique_scores, log_tail]).astype(np.float32, copy=False)
@@ -163,8 +172,40 @@ def apply_score_log_tail_table_to_profile_bundle(profile_bundle, table: np.ndarr
 
 def scores_to_empirical_log_tail_bundle(profile_bundle):
     """Convert one 3D profile bundle to empirical log-tail values within the current sample."""
-    table = build_score_log_tail_table(flatten_profile_bundle(profile_bundle))
-    return apply_score_log_tail_table_to_profile_bundle(profile_bundle, table)
+    values = np.asarray(profile_bundle["values"], dtype=np.float32)
+    lengths = np.asarray(profile_bundle["lengths"], dtype=np.int64)
+    flat = flatten_profile_bundle(profile_bundle)
+    if flat.size == 0:
+        padding_value = profile_bundle["padding_value"]
+        return pack_profile_bundle(np.full_like(values, padding_value), lengths, padding_value)
+
+    order = np.argsort(flat, kind="stable")[::-1]
+    sorted_scores = flat[order]
+    starts = np.empty(sorted_scores.size, dtype=np.bool_)
+    starts[0] = True
+    starts[1:] = sorted_scores[1:] != sorted_scores[:-1]
+    group_starts = np.flatnonzero(starts)
+    group_ends = np.empty_like(group_starts)
+    group_ends[:-1] = group_starts[1:]
+    group_ends[-1] = sorted_scores.size
+    counts = group_ends - group_starts
+    cumulative = np.cumsum(counts, dtype=np.int64)
+    log_tail = (-np.log10(cumulative / flat.size)).astype(np.float32)
+
+    normalized_flat = np.empty_like(flat)
+    normalized_flat[order] = np.repeat(log_tail, counts)
+
+    mapped = np.full_like(values, profile_bundle["padding_value"])
+    valid_per_profile = int(lengths.sum())
+    row_mask = np.arange(values.shape[2], dtype=np.int64)[None, :] < lengths[:, None]
+    cursor = 0
+    for profile_index in range(values.shape[0]):
+        mapped[profile_index][row_mask] = normalized_flat[cursor : cursor + valid_per_profile]
+        cursor += valid_per_profile
+
+    # The public result is unchanged, while calibration and scatter use one
+    # descending sort instead of sort + unique + per-value lookup.
+    return pack_profile_bundle(mapped, lengths, profile_bundle["padding_value"])
 
 
 def normalize_empirical_log_tail_pair(score_batch_plus, score_batch_minus):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import replace
 from typing import Callable, TypeVar
@@ -59,21 +60,37 @@ def _run_target_comparisons(
     progress_desc: str | None = None,
     progress_leave: bool = True,
 ) -> list[_ComparisonJobResult]:
-    """Execute targets sequentially while numerical kernels use Numba threads."""
+    """Execute target jobs with bounded outer parallelism.
+
+    The target worker owns its cache and forces Numba's inner kernels to one
+    thread. Results are consumed in input order, so an exception aborts the
+    call without exposing a partially populated result list.
+    """
     if not target_models:
         return []
 
-    del n_jobs
-    return [
-        worker(target_model)
-        for target_model in iter_progress(
+    target_items = list(
+        iter_progress(
             target_models,
             enabled=progress,
             desc=progress_desc,
             total=len(target_models),
             leave=progress_leave,
         )
-    ]
+    )
+    if n_jobs is None or n_jobs == 1 or len(target_items) == 1:
+        return [worker(target_model) for target_model in target_items]
+
+    worker_count = get_num_threads() if n_jobs == -1 else min(int(n_jobs), len(target_items))
+    if worker_count <= 1:
+        return [worker(target_model) for target_model in target_items]
+
+    def run_target(target_model: GenericModel) -> _ComparisonJobResult:
+        with _numba_thread_scope(1):
+            return worker(target_model)
+
+    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="mimosa-target") as pool:
+        return list(pool.map(run_target, target_items))
 
 
 def compare(
