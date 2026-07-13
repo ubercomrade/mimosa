@@ -299,20 +299,15 @@ function _scan_batch(
     W = length(model)
     weights = model.weights
     T = eltype(weights)
-
-    # Pre-allocate output rows
-    out_rows = Vector{Vector{T}}(undef, n)
-    for i in 1:n
-        n_pos = npositions(seqlength(batch, i), W)
-        out_rows[i] = Vector{T}(undef, n_pos)
-    end
-
+    offsets = _scan_offsets(batch, W)
+    data = Vector{T}(undef, offsets[end] - 1)
     for i in 1:n
         seq = sequence(batch, i)
-        _scan_one_seq!(strands, out_rows[i], weights, seq, length(out_rows[i]))
+        _scan_one_seq!(
+            strands, _scan_dest(data, offsets, i), weights, seq, offsets[i + 1] - offsets[i]
+        )
     end
-
-    return build_ragged(out_rows)
+    return RaggedArray(data, offsets)
 end
 
 function _scan_batch(
@@ -323,36 +318,33 @@ function _scan_batch(
     weights = model.weights
     T = eltype(weights)
 
-    # Pre-allocate output rows (pre-allocation happens before spawning tasks)
-    out_rows = Vector{Vector{T}}(undef, n)
-    for i in 1:n
-        n_pos = npositions(seqlength(batch, i), W)
-        out_rows[i] = Vector{T}(undef, n_pos)
-    end
+    offsets = _scan_offsets(batch, W)
+    data = Vector{T}(undef, offsets[end] - 1)
 
     # Parallel execution: each task processes its chunk of sequences
     # Results written to pre-allocated slots → deterministic order
     _parallel_for(pol, n) do i
         seq = sequence(batch, i)
-        return _scan_one_seq!(strands, out_rows[i], weights, seq, length(out_rows[i]))
+        return _scan_one_seq!(
+            strands, _scan_dest(data, offsets, i), weights, seq, offsets[i + 1] - offsets[i]
+        )
     end
-
-    return build_ragged(out_rows)
+    return RaggedArray(data, offsets)
 end
 
 # Dispatch helper: scan one sequence into pre-allocated dest
 function _scan_one_seq!(
-    ::ForwardOnly, dest::Vector{T}, weights::AbstractMatrix{T}, seq, n_pos
+    ::ForwardOnly, dest::AbstractVector{T}, weights::AbstractMatrix{T}, seq, n_pos
 ) where {T<:AbstractFloat}
     return scan_forward!(dest, weights, seq, n_pos)
 end
 function _scan_one_seq!(
-    ::ReverseOnly, dest::Vector{T}, weights::AbstractMatrix{T}, seq, n_pos
+    ::ReverseOnly, dest::AbstractVector{T}, weights::AbstractMatrix{T}, seq, n_pos
 ) where {T<:AbstractFloat}
     return scan_reverse!(dest, weights, seq, n_pos)
 end
 function _scan_one_seq!(
-    ::BestStrand, dest::Vector{T}, weights::AbstractMatrix{T}, seq, n_pos
+    ::BestStrand, dest::AbstractVector{T}, weights::AbstractMatrix{T}, seq, n_pos
 ) where {T<:AbstractFloat}
     return scan_best!(dest, weights, seq, n_pos)
 end
@@ -365,20 +357,21 @@ function _scan_batch(
     weights = model.weights
     T = eltype(weights)
 
-    fwd_rows = Vector{Vector{T}}(undef, n)
-    rev_rows = Vector{Vector{T}}(undef, n)
-    for i in 1:n
-        n_pos = npositions(seqlength(batch, i), W)
-        fwd_rows[i] = Vector{T}(undef, n_pos)
-        rev_rows[i] = Vector{T}(undef, n_pos)
-    end
+    offsets = _scan_offsets(batch, W)
+    fwd = Vector{T}(undef, offsets[end] - 1)
+    rev = Vector{T}(undef, offsets[end] - 1)
 
     for i in 1:n
         seq = sequence(batch, i)
-        scan_both!(fwd_rows[i], rev_rows[i], weights, seq, length(fwd_rows[i]))
+        scan_both!(
+            _scan_dest(fwd, offsets, i),
+            _scan_dest(rev, offsets, i),
+            weights,
+            seq,
+            offsets[i + 1] - offsets[i],
+        )
     end
-
-    return StrandPair(build_ragged(fwd_rows), build_ragged(rev_rows))
+    return StrandPair(RaggedArray(fwd, offsets), RaggedArray(rev, copy(offsets)))
 end
 
 function _scan_batch(
@@ -389,20 +382,36 @@ function _scan_batch(
     weights = model.weights
     T = eltype(weights)
 
-    fwd_rows = Vector{Vector{T}}(undef, n)
-    rev_rows = Vector{Vector{T}}(undef, n)
-    for i in 1:n
-        n_pos = npositions(seqlength(batch, i), W)
-        fwd_rows[i] = Vector{T}(undef, n_pos)
-        rev_rows[i] = Vector{T}(undef, n_pos)
-    end
+    offsets = _scan_offsets(batch, W)
+    fwd = Vector{T}(undef, offsets[end] - 1)
+    rev = Vector{T}(undef, offsets[end] - 1)
 
     _parallel_for(pol, n) do i
         seq = sequence(batch, i)
-        return scan_both!(fwd_rows[i], rev_rows[i], weights, seq, length(fwd_rows[i]))
+        return scan_both!(
+            _scan_dest(fwd, offsets, i),
+            _scan_dest(rev, offsets, i),
+            weights,
+            seq,
+            offsets[i + 1] - offsets[i],
+        )
     end
+    return StrandPair(RaggedArray(fwd, offsets), RaggedArray(rev, copy(offsets)))
+end
 
-    return StrandPair(build_ragged(fwd_rows), build_ragged(rev_rows))
+function _scan_offsets(batch::EncodedSequenceBatch, width::Int)
+    offsets = Vector{Int}(undef, nsequences(batch) + 1)
+    offsets[1] = 1
+    for i in 1:nsequences(batch)
+        offsets[i + 1] = offsets[i] + npositions(seqlength(batch, i), width)
+    end
+    return offsets
+end
+
+function _scan_dest(data::AbstractVector, offsets::Vector{Int}, row_index::Int)
+    start = offsets[row_index]
+    stop = offsets[row_index + 1] - 1
+    return start > stop ? view(data, 1:0) : @view(data[start:stop])
 end
 
 # ── Score bounds for scan results ─────────────────────────────────────────

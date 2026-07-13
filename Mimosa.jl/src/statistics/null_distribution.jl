@@ -73,11 +73,7 @@ struct NullBuildConfig{M<:AbstractProfileMetric}
     end
 end
 
-function NullBuildConfig(;
-    metric=nothing,
-    min_null_targets::Int=1,
-    strict::Bool=false,
-)
+function NullBuildConfig(; metric=nothing, min_null_targets::Int=1, strict::Bool=false)
     resolved_metric = _resolve_profile_metric(isnothing(metric) ? :co : metric)
     return NullBuildConfig(resolved_metric, min_null_targets, strict)
 end
@@ -135,7 +131,9 @@ function build_null(
     min_logfpr::Real=0.0,
     kwargs...,
 )
-    config = NullBuildConfig(; metric=metric, min_null_targets=min_null_targets, strict=strict)
+    config = NullBuildConfig(;
+        metric=metric, min_null_targets=min_null_targets, strict=strict
+    )
     return build_null(
         models,
         relations,
@@ -169,17 +167,30 @@ function build_null(
     window_radius >= 0 || throw(ArgumentError("window_radius must be non-negative."))
     realign_window >= 0 || throw(ArgumentError("realign_window must be non-negative."))
     isfinite(min_logfpr) || throw(ArgumentError("min_logfpr must be finite."))
+    prepared = Vector{PreparedProfile}(undef, length(models))
+    _parallel_for(execution, length(models)) do i
+        model = models[i]
+        return prepared[i] = if model isa ScoreProfile
+            prepare_profile(model; min_logfpr=min_logfpr)
+        else
+            prepare_profile(
+                model,
+                sequences;
+                background=background,
+                min_logfpr=min_logfpr,
+                execution=SerialExecution(),
+            )
+        end
+    end
+    prepared_by_name = Dict(profile.name => profile for profile in prepared)
     result = _build_null(models, relations, config, execution) do q, t
         return compare(
-            q,
-            t,
-            sequences;
+            prepared_by_name[q.name],
+            prepared_by_name[t.name];
             metric=config.metric,
-            background=background,
             search_range=search_range,
             window_radius=window_radius,
             realign_window=realign_window,
-            min_logfpr=Float32(min_logfpr),
         )
     end
     dist = result.distribution

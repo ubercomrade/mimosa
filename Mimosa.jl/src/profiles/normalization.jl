@@ -42,7 +42,7 @@ function fit(::EmpiricalLogTail, scores::AbstractVector{T}) where {T<:Real}
     flat = Float32[float(s) for s in scores]
     sort!(flat; rev=true)
 
-    # Count unique scores in descending order
+    # Count unique scores in descending order.
     n_unique = 1
     @inbounds for i in 2:n
         if flat[i] != flat[i - 1]
@@ -51,29 +51,66 @@ function fit(::EmpiricalLogTail, scores::AbstractVector{T}) where {T<:Real}
     end
 
     unique_scores = Vector{Float32}(undef, n_unique)
-    counts = Vector{Int}(undef, n_unique)
     unique_scores[1] = flat[1]
-    counts[1] = 1
     j = 1
     @inbounds for i in 2:n
-        if flat[i] == unique_scores[j]
-            counts[j] += 1
-        else
+        if flat[i] != unique_scores[j]
             j += 1
             unique_scores[j] = flat[i]
-            counts[j] = 1
         end
     end
 
     # Cumulative counts → tail probabilities → -log10
     log_tail = Vector{Float32}(undef, n_unique)
     cum = 0
+    group_start = 1
     @inbounds for i in 1:n_unique
-        cum += counts[i]
+        while group_start <= n && flat[group_start] == unique_scores[i]
+            cum += 1
+            group_start += 1
+        end
         log_tail[i] = Float32(-log10(Float64(cum) / Float64(n)))
     end
 
     return LogTailTable(unique_scores, log_tail)
+end
+
+function _fit_transform_empirical(scores::RaggedArray{Float32})
+    n = length(scores.data)
+    n == 0 && return (
+        LogTailTable(Float32[0.0f0], Float32[0.0f0]),
+        RaggedArray(Float32[], copy(scores.offsets)),
+    )
+
+    perm = sortperm(scores.data; rev=true)
+    n_unique = 1
+    @inbounds for k in 2:n
+        n_unique += scores.data[perm[k]] != scores.data[perm[k - 1]]
+    end
+    unique_scores = Vector{Float32}(undef, n_unique)
+    log_tail = Vector{Float32}(undef, n_unique)
+    normalized = Vector{Float32}(undef, n)
+    group = 1
+    cum = 0
+    k = 1
+    @inbounds while k <= n
+        score = scores.data[perm[k]]
+        unique_scores[group] = score
+        j = k
+        while j <= n && scores.data[perm[j]] == score
+            j += 1
+        end
+        cum = j - 1
+        value = Float32(-log10(Float64(cum) / Float64(n)))
+        log_tail[group] = value
+        for p in k:(j - 1)
+            normalized[perm[p]] = value
+        end
+        group += 1
+        k = j
+    end
+    table = LogTailTable(unique_scores, log_tail)
+    return table, RaggedArray(normalized, copy(scores.offsets))
 end
 
 """

@@ -45,7 +45,7 @@ function _precompile_workload()
     scan(pwm, batch; strands=BestStrand(), execution=SerialExecution())
 
     # ── Motif comparison ────────────────────────────────────────────────
-    compare(pwm, pwm, batch; metric=OverlapCoefficient())
+    compare(pwm, pwm, batch; metric=OverlapCoefficient(), min_logfpr=0.0f0)
 
     # ── Site extraction ─────────────────────────────────────────────────
     sites = selectsites(pwm, batch, BestPerSequence(); strands=BestStrand())
@@ -85,7 +85,7 @@ function _precompile_workload()
     adjusted_pvalues(pvals; method=BenjaminiHochberg())
 
     # ── JSON serialization ──────────────────────────────────────────────
-    result = compare(pwm, pwm, batch; metric=:co)
+    result = compare(pwm, pwm, batch; metric=:co, min_logfpr=0.0f0)
     to_json(result)
     to_dict(result)
 

@@ -32,9 +32,16 @@ function _realign_query_position(r::AbstractVector{Float32}, expected::Int, radi
     return best_pos
 end
 
-# Collect unique candidate positions for one row from both query and target
-# anchors. Returns a vector of unique 1-based positions in query coordinates.
-function _collect_row_candidates(
+mutable struct CandidateScratch
+    candidates::Vector{Int}
+    seen_epoch::Vector{UInt32}
+    epoch::UInt32
+end
+
+CandidateScratch(max_len::Int) = CandidateScratch(Int[], zeros(UInt32, max_len), 0)
+
+function _collect_row_candidates!(
+    scratch::CandidateScratch,
     r1::AbstractVector{Float32},
     len1::Int,
     len2::Int,
@@ -45,8 +52,19 @@ function _collect_row_candidates(
     window_radius::Int,
     realign_window::Int,
 )
-    candidates = Int[]
-    seen = falses(len1)
+    empty!(scratch.candidates)
+    if length(scratch.seen_epoch) < len1
+        resize!(scratch.seen_epoch, len1)
+        fill!(scratch.seen_epoch, 0)
+        scratch.epoch = 0
+    end
+    if scratch.epoch == typemax(UInt32)
+        fill!(scratch.seen_epoch, 0)
+        scratch.epoch = UInt32(1)
+    else
+        scratch.epoch += UInt32(1)
+    end
+    epoch = scratch.epoch
 
     # Query anchors
     @inbounds for idx in query_csr.offsets[row]:(query_csr.offsets[row + 1] - 1)
@@ -54,9 +72,9 @@ function _collect_row_candidates(
         pos2 = pos1 + shift
         if _window_fits(pos1, len1, window_radius) &&
             _window_fits(pos2, len2, window_radius)
-            if !seen[pos1]
-                seen[pos1] = true
-                push!(candidates, pos1)
+            if scratch.seen_epoch[pos1] != epoch
+                scratch.seen_epoch[pos1] = epoch
+                push!(scratch.candidates, pos1)
             end
         end
     end
@@ -69,14 +87,14 @@ function _collect_row_candidates(
         pos2 = pos1 + shift
         if _window_fits(pos1, len1, window_radius) &&
             _window_fits(pos2, len2, window_radius)
-            if !seen[pos1]
-                seen[pos1] = true
-                push!(candidates, pos1)
+            if scratch.seen_epoch[pos1] != epoch
+                scratch.seen_epoch[pos1] = epoch
+                push!(scratch.candidates, pos1)
             end
         end
     end
 
-    return candidates
+    return scratch.candidates
 end
 
 # Accumulate pooled overlap sums (for CO and Dice metrics).
@@ -191,6 +209,32 @@ function score_shift(
     realign_window::Int,
     metric::AbstractProfileMetric,
 )
+    max_len = maximum((rowlength(scores1, r) for r in 1:nrows(scores1)); init=0)
+    scratch = CandidateScratch(max_len)
+    return _score_shift!(
+        scratch,
+        scores1,
+        scores2,
+        query_csr,
+        target_csr,
+        shift,
+        window_radius,
+        realign_window,
+        metric,
+    )
+end
+
+function _score_shift!(
+    scratch::CandidateScratch,
+    scores1::RaggedArray{Float32},
+    scores2::RaggedArray{Float32},
+    query_csr::AnchorCSR,
+    target_csr::AnchorCSR,
+    shift::Int,
+    window_radius::Int,
+    realign_window::Int,
+    metric::AbstractProfileMetric,
+)
     n = nrows(scores1)
     total_sum1 = 0.0
     total_sum2 = 0.0
@@ -206,8 +250,17 @@ function score_shift(
         r1 = row(scores1, r)
         r2 = row(scores2, r)
 
-        candidates = _collect_row_candidates(
-            r1, len1, len2, query_csr, target_csr, r, shift, window_radius, realign_window
+        candidates = _collect_row_candidates!(
+            scratch,
+            r1,
+            len1,
+            len2,
+            query_csr,
+            target_csr,
+            r,
+            shift,
+            window_radius,
+            realign_window,
         )
         count = length(candidates)
         total_sites += count
@@ -261,6 +314,15 @@ end
 const PROFILE_ORIENTATION_PAIRS = (("++", 1, 1), ("+-", 1, 2), ("-+", 2, 1), ("--", 2, 2))
 const PROFILE_ORIENTATION_RANK = Dict("++" => 0, "+-" => 1, "-+" => 2, "--" => 3)
 
+function _orientation_pairs(query_bundle, target_bundle)
+    qs = query_bundle.forward === query_bundle.reverse
+    ts = target_bundle.forward === target_bundle.reverse
+    qs && ts && return (("++", 1, 1),)
+    qs && return (("++", 1, 1), ("+-", 1, 2))
+    ts && return (("++", 1, 1), ("-+", 2, 1))
+    return PROFILE_ORIENTATION_PAIRS
+end
+
 """
     _score_orientation_pair(query_bundle, target_bundle, query_anchors, target_anchors, search_range, window_radius, realign_window, metric)
 
@@ -292,9 +354,12 @@ function _score_orientation_pair(
     best_score = 0.0f0
     best_shift = 0
     best_n_sites = 0
+    max_len = maximum((rowlength(query_scores, r) for r in 1:nrows(query_scores)); init=0)
+    scratch = CandidateScratch(max_len)
 
     for shift in (-search_range):search_range
-        score, n_sites = score_shift(
+        score, n_sites = _score_shift!(
+            scratch,
             query_scores,
             target_scores,
             query_anchors,
@@ -353,8 +418,7 @@ struct ProfileConfig{M<:AbstractProfileMetric}
     end
 end
 
-function ProfileConfig(
-    ;
+function ProfileConfig(;
     metric::AbstractProfileMetric=OverlapCoefficient(),
     search_range::Int=10,
     window_radius::Int=10,
@@ -362,11 +426,7 @@ function ProfileConfig(
     min_logfpr::Real=0.0,
 )
     return ProfileConfig(
-        metric,
-        search_range,
-        window_radius,
-        realign_window,
-        Float32(min_logfpr),
+        metric, search_range, window_radius, realign_window, Float32(min_logfpr)
     )
 end
 
@@ -399,7 +459,7 @@ function profile_compare(
     best_orientation = "++"
     best_rank = typemax(Int)
 
-    for (label, q_strand, t_strand) in PROFILE_ORIENTATION_PAIRS
+    for (label, q_strand, t_strand) in _orientation_pairs(query_bundle, target_bundle)
         qa = q_strand == 1 ? query_anchors[1] : query_anchors[2]
         ta = t_strand == 1 ? target_anchors[1] : target_anchors[2]
         result = _score_orientation_pair(
@@ -419,12 +479,16 @@ function profile_compare(
 
         # Tie-breaking: score, site count, shift magnitude, then orientation rank.
         rank = PROFILE_ORIENTATION_RANK[label]
-        if Float64(score) > Float64(best_score) ||
-            (Float64(score) == Float64(best_score) &&
-             (n_sites > best_n_sites ||
-              (n_sites == best_n_sites &&
-               (abs(shift) < abs(best_shift) ||
-                (abs(shift) == abs(best_shift) && rank < best_rank)))))
+        if Float64(score) > Float64(best_score) || (
+            Float64(score) == Float64(best_score) && (
+                n_sites > best_n_sites || (
+                    n_sites == best_n_sites && (
+                        abs(shift) < abs(best_shift) ||
+                        (abs(shift) == abs(best_shift) && rank < best_rank)
+                    )
+                )
+            )
+        )
             best_score = score
             best_shift = shift
             best_n_sites = n_sites
@@ -480,6 +544,11 @@ struct PreparedProfile{T}
     name::String
     bundle::T
     anchors::Tuple{AnchorCSR,AnchorCSR}
+    min_logfpr::Float32
+end
+
+function PreparedProfile(name::String, bundle, anchors::Tuple{AnchorCSR,AnchorCSR})
+    return PreparedProfile(name, bundle, anchors, 0.0f0)
 end
 
 """
@@ -493,9 +562,11 @@ function _collect_both_anchors(
     n_rows = nrows(bundle.forward)
     fwd_rows, fwd_pos = collect_anchors(bundle.forward, threshold)
     fwd_csr = build_anchor_csr(fwd_rows, fwd_pos, n_rows)
+    if bundle.forward === bundle.reverse
+        return (fwd_csr, fwd_csr)
+    end
     rev_rows, rev_pos = collect_anchors(bundle.reverse, threshold)
-    rev_csr = build_anchor_csr(rev_rows, rev_pos, n_rows)
-    return (fwd_csr, rev_csr)
+    return (fwd_csr, build_anchor_csr(rev_rows, rev_pos, n_rows))
 end
 
 """
@@ -508,13 +579,15 @@ strands. Returns a [`PreparedProfile`](@ref).
 Keyword arguments:
 - `min_logfpr::Float32=0.0`: minimum log FPR for threshold anchors (0 = best anchors).
 """
-function prepare_profile(model::ScoreProfile; min_logfpr::Float32=Float32(0.0))
+function prepare_profile(
+    model::ScoreProfile; min_logfpr::Real=0.0, execution::ExecutionPolicy=SerialExecution()
+)
+    threshold = Float32(min_logfpr)
     raw = profile_bundle(model)
-    flat = flatten_bundle(raw)
-    table = fit(EmpiricalLogTail(), flat)
-    norm_bundle = normalize_bundle(table, raw)
-    anchors = _collect_both_anchors(norm_bundle, min_logfpr)
-    return PreparedProfile(model.name, norm_bundle, anchors)
+    _, normalized = _fit_transform_empirical(model.scores)
+    norm_bundle = StrandPair(normalized, normalized)
+    anchors = _collect_both_anchors(norm_bundle, threshold)
+    return PreparedProfile(model.name, norm_bundle, anchors, threshold)
 end
 
 """
@@ -531,16 +604,19 @@ function prepare_profile(
     model::AbstractMotifModel,
     sequences::EncodedSequenceBatch;
     background::Union{EncodedSequenceBatch,Nothing}=nothing,
-    min_logfpr::Float32=Float32(0.0),
+    min_logfpr::Real=0.0,
+    execution::ExecutionPolicy=SerialExecution(),
 )
-    raw = scan(model, sequences; strands=BothStrands())
+    threshold = Float32(min_logfpr)
+    raw = scan(model, sequences; strands=BothStrands(), execution=execution)
     bg = background === nothing ? sequences : background
-    bg_raw = scan(model, bg; strands=BothStrands())
+    bg_raw =
+        bg === sequences ? raw : scan(model, bg; strands=BothStrands(), execution=execution)
     flat = flatten_bundle(bg_raw)
     table = fit(EmpiricalLogTail(), flat)
     norm_bundle = normalize_bundle(table, raw)
-    anchors = _collect_both_anchors(norm_bundle, min_logfpr)
-    return PreparedProfile(model.name, norm_bundle, anchors)
+    anchors = _collect_both_anchors(norm_bundle, threshold)
+    return PreparedProfile(model.name, norm_bundle, anchors, threshold)
 end
 
 # ── PreparedProfile compare methods ────────────────────────────────────────────
@@ -565,23 +641,50 @@ function compare(
     search_range::Int=10,
     window_radius::Int=10,
     realign_window::Int=3,
-    min_logfpr::Float32=Float32(0.0),
+    min_logfpr::Union{Nothing,Real}=nothing,
 )
     m = _resolve_profile_metric(metric)
+    threshold = min_logfpr === nothing ? query.min_logfpr : Float32(min_logfpr)
+    threshold == query.min_logfpr ||
+        throw(ArgumentError("min_logfpr differs from the prepared query threshold."))
     target_raw = profile_bundle(target)
-    target_flat = flatten_bundle(target_raw)
-    target_table = fit(EmpiricalLogTail(), target_flat)
-    target_norm = normalize_bundle(target_table, target_raw)
-    target_anchors = _collect_both_anchors(target_norm, min_logfpr)
+    _, target_scores = _fit_transform_empirical(target.scores)
+    target_norm = StrandPair(target_scores, target_scores)
+    target_anchors = _collect_both_anchors(target_norm, threshold)
     config = ProfileConfig(;
         metric=m,
         search_range=search_range,
         window_radius=window_radius,
         realign_window=realign_window,
-        min_logfpr=min_logfpr,
+        min_logfpr=threshold,
     )
     score, shift, orientation, n_sites, metric_str = profile_compare(
         query.bundle, query.anchors, target_norm, target_anchors, config
+    )
+    return ComparisonResult(
+        query.name, target.name, score, shift, orientation, metric_str, n_sites
+    )
+end
+
+function compare(
+    query::PreparedProfile,
+    target::PreparedProfile;
+    metric::Union{AbstractString,Symbol,AbstractProfileMetric}=:co,
+    search_range::Int=10,
+    window_radius::Int=10,
+    realign_window::Int=3,
+)
+    query.min_logfpr == target.min_logfpr ||
+        throw(ArgumentError("prepared profiles use different min_logfpr thresholds."))
+    config = ProfileConfig(;
+        metric=_resolve_profile_metric(metric),
+        search_range,
+        window_radius,
+        realign_window,
+        min_logfpr=query.min_logfpr,
+    )
+    score, shift, orientation, n_sites, metric_str = profile_compare(
+        query.bundle, query.anchors, target.bundle, target.anchors, config
     )
     return ComparisonResult(
         query.name, target.name, score, shift, orientation, metric_str, n_sites
@@ -597,8 +700,70 @@ Returns a `Vector{ComparisonResult}`.
 
 Each target is prepared (normalized, anchors collected) independently.
 """
-function compare(query::PreparedProfile, targets::Vector{ScoreProfile}; kwargs...)
-    return [compare(query, t; kwargs...) for t in targets]
+function compare(
+    query::PreparedProfile,
+    targets::AbstractVector{<:ScoreProfile};
+    execution::ExecutionPolicy=SerialExecution(),
+    metric::Union{AbstractString,Symbol,AbstractProfileMetric}=:co,
+    search_range::Int=10,
+    window_radius::Int=10,
+    realign_window::Int=3,
+    min_logfpr::Union{Nothing,Real}=nothing,
+)
+    threshold = min_logfpr === nothing ? query.min_logfpr : Float32(min_logfpr)
+    threshold == query.min_logfpr ||
+        throw(ArgumentError("min_logfpr differs from the prepared query threshold."))
+    m = _resolve_profile_metric(metric)
+    config = ProfileConfig(;
+        metric=m, search_range, window_radius, realign_window, min_logfpr=threshold
+    )
+    results = Vector{ComparisonResult}(undef, length(targets))
+    isempty(targets) && return results
+    _parallel_for(execution, length(targets)) do i
+        target = targets[i]
+        _, target_scores = _fit_transform_empirical(target.scores)
+        target_bundle = StrandPair(target_scores, target_scores)
+        target_anchors = _collect_both_anchors(target_bundle, threshold)
+        score, shift, orientation, n_sites, metric_str = profile_compare(
+            query.bundle, query.anchors, target_bundle, target_anchors, config
+        )
+        return results[i] = ComparisonResult(
+            query.name, target.name, score, shift, orientation, metric_str, n_sites
+        )
+    end
+    return results
+end
+
+function compare(
+    query::PreparedProfile,
+    targets::AbstractVector{<:PreparedProfile};
+    execution::ExecutionPolicy=SerialExecution(),
+    metric::Union{AbstractString,Symbol,AbstractProfileMetric}=:co,
+    search_range::Int=10,
+    window_radius::Int=10,
+    realign_window::Int=3,
+)
+    config = ProfileConfig(;
+        metric=_resolve_profile_metric(metric),
+        search_range,
+        window_radius,
+        realign_window,
+        min_logfpr=query.min_logfpr,
+    )
+    results = Vector{ComparisonResult}(undef, length(targets))
+    isempty(targets) && return results
+    _parallel_for(execution, length(targets)) do i
+        target = targets[i]
+        query.min_logfpr == target.min_logfpr ||
+            throw(ArgumentError("prepared profiles use different min_logfpr thresholds."))
+        score, shift, orientation, n_sites, metric_str = profile_compare(
+            query.bundle, query.anchors, target.bundle, target.anchors, config
+        )
+        return results[i] = ComparisonResult(
+            query.name, target.name, score, shift, orientation, metric_str, n_sites
+        )
+    end
+    return results
 end
 
 """

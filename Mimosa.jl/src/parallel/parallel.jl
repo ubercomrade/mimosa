@@ -98,20 +98,13 @@ function _parallel_for(f!, pol::ThreadedExecution, n::Int)
     ntasks = min(pol.ntasks, n)
     ntasks <= 1 && return _parallel_for(f!, SerialExecution(), n)
 
-    # Partition 1:n into ntasks contiguous chunks
-    chunk_size = cld(n, ntasks)
-    chunks = Vector{UnitRange{Int}}(undef, ntasks)
-    for t in 1:ntasks
-        lo = (t - 1) * chunk_size + 1
-        hi = min(t * chunk_size, n)
-        chunks[t] = lo:hi
-    end
-
-    # Spawn a task per chunk. Each task processes its chunk sequentially.
+    # A bounded queue avoids stranding a worker behind a long ragged item.
+    next_index = Threads.Atomic{Int}(1)
     @sync for t in 1:ntasks
-        chunk = chunks[t]
         Threads.@spawn begin
-            @inbounds for i in chunk
+            while true
+                i = Threads.atomic_add!(next_index, 1)
+                i > n && break
                 f!(i)
             end
         end

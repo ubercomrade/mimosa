@@ -30,42 +30,17 @@ function compare(
     search_range::Int=10,
     window_radius::Int=10,
     realign_window::Int=3,
-    min_logfpr::Float32=Float32(0.0),
+    min_logfpr::Real=0.0,
 )
     m = _resolve_profile_metric(metric)
 
-    # Resolve profile bundles (both strands = same for ScoreProfile)
-    query_raw = profile_bundle(query)
-    target_raw = profile_bundle(target)
-
-    # Fit normalization from each model's own scores
-    query_flat = flatten_bundle(query_raw)
-    target_flat = flatten_bundle(target_raw)
-
-    query_table = fit(EmpiricalLogTail(), query_flat)
-    target_table = fit(EmpiricalLogTail(), target_flat)
-
-    # Apply normalization
-    query_norm = normalize_bundle(query_table, query_raw)
-    target_norm = normalize_bundle(target_table, target_raw)
-
-    # Configure and compare
-    config = ProfileConfig(;
+    return compare(
+        prepare_profile(query; min_logfpr=Float32(min_logfpr)),
+        prepare_profile(target; min_logfpr=Float32(min_logfpr));
         metric=m,
         search_range=search_range,
         window_radius=window_radius,
         realign_window=realign_window,
-        min_logfpr=min_logfpr,
-    )
-
-    query_anchors = _collect_both_anchors(query_norm, config.min_logfpr)
-    target_anchors = _collect_both_anchors(target_norm, config.min_logfpr)
-    score, shift, orientation, n_sites, metric_str = profile_compare(
-        query_norm, query_anchors, target_norm, target_anchors, config
-    )
-
-    return ComparisonResult(
-        query.name, target.name, score, shift, orientation, metric_str, n_sites
     )
 end
 
@@ -85,11 +60,12 @@ function _resolve_profile_bundle(
     model::AbstractMotifModel,
     sequences::EncodedSequenceBatch,
     background_sequences::Union{EncodedSequenceBatch,Nothing};
-    kwargs...,
+    execution::ExecutionPolicy=SerialExecution(),
 )
-    raw = scan(model, sequences; strands=BothStrands())
+    raw = scan(model, sequences; strands=BothStrands(), execution=execution)
     bg = background_sequences === nothing ? sequences : background_sequences
-    bg_raw = scan(model, bg; strands=BothStrands())
+    bg_raw =
+        bg === sequences ? raw : scan(model, bg; strands=BothStrands(), execution=execution)
     flat = flatten_bundle(bg_raw)
     table = fit(EmpiricalLogTail(), flat)
     return normalize_bundle(table, raw)
@@ -121,12 +97,15 @@ function compare(
     search_range::Int=10,
     window_radius::Int=10,
     realign_window::Int=3,
-    min_logfpr::Float32=Float32(0.0),
+    min_logfpr::Real=0.0,
     background::Union{EncodedSequenceBatch,Nothing}=nothing,
+    execution::ExecutionPolicy=SerialExecution(),
 )
     m = _resolve_profile_metric(metric)
-    query_norm = _resolve_profile_bundle(query, sequences, background)
-    target_norm = _resolve_profile_bundle(target, sequences, background)
+    query_norm = _resolve_profile_bundle(query, sequences, background; execution=execution)
+    target_norm = _resolve_profile_bundle(
+        target, sequences, background; execution=execution
+    )
     config = ProfileConfig(;
         metric=m,
         search_range=search_range,
