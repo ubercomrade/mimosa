@@ -8,14 +8,3 @@ include("dimont_reader.jl")
 include("slim_reader.jl")
 include("bundle_storage.jl")
 include("model_storage.jl")
-
-export readmodel,
-    read_meme,
-    read_pfm,
-    read_scores,
-    read_bamm,
-    read_sitega,
-    read_dimont,
-    read_slim,
-    write_sitega,
-    writemodel

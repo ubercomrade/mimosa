@@ -68,6 +68,8 @@ atomic rename.
 Raises `InvariantError` when a model cannot be represented by the v1 bundle.
 """
 function writemodel(path::AbstractString, model::AbstractMotifModel; format::Symbol=:auto)
+    format in (:auto, :bundle) ||
+        throw(ArgumentError("unsupported model output format '$format'."))
     kind = _model_kind(model)
     arr = _model_array(model)
     arr_name = _model_array_name(model)

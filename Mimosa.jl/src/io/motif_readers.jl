@@ -162,6 +162,8 @@ Auto-detects orientation: if the file has 4 or 5 columns it is transposed to
 """
 function read_pfm(path::AbstractString)
     isfile(path) || throw(ModelFormatError(path, "file not found."))
+    filesize(path) <= 256 * 1024^2 ||
+        throw(ModelFormatError(path, "PFM file exceeds the size limit."))
     rows = Vector{Vector{Float32}}()
     open(path, "r") do io
         while !eof(io)
@@ -178,6 +180,10 @@ function read_pfm(path::AbstractString)
                 v === nothing && throw(ModelFormatError(path, "non-numeric value: $(p)."))
                 row[j] = v
             end
+            length(rows) < MAX_PFM_LENGTH ||
+                throw(ModelFormatError(path, "PFM row count exceeds the size limit."))
+            length(parts) <= MAX_PFM_LENGTH ||
+                throw(ModelFormatError(path, "PFM column count exceeds the size limit."))
             push!(rows, row)
         end
     end
@@ -252,7 +258,12 @@ end
 # `MarkovModelDiffSM` element. This is an I/O-boundary check (model loading,
 # not a hot path).
 function _detect_xml_format(path::AbstractString)
-    content = read(path, String)
+    isfile(path) || throw(ModelFormatError(path, "file not found."))
+    filesize(path) <= 256 * 1024^2 ||
+        throw(ModelFormatError(path, "XML model exceeds the size limit."))
+    content = open(path, "r") do io
+        return String(read(io, min(filesize(path), 64 * 1024)))
+    end
     if occursin("<SLIM", content)
         return :slim
     end

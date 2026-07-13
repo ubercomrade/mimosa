@@ -44,6 +44,23 @@ export readmodel,
     to_dict,
     main
 export MimosaError, ModelFormatError, ModelDimensionError, InvariantError
+export AbstractMotifModel,
+    AbstractMatrixMotif,
+    AbstractHigherOrderMotif,
+    PFM,
+    PWM,
+    BaMM,
+    SiteGA,
+    Dimont,
+    Slim,
+    pcm_to_pfm,
+    pfm_to_pwm,
+    pwm_from_pfm,
+    extend_pwm_with_n,
+    site_start_offset,
+    ComparisonResult,
+    metric_name,
+    read_fasta
 
 # Sequence / scanning exports
 export EncodedSequenceBatch,
@@ -69,14 +86,24 @@ export scan,
     scan_both!,
     npositions,
     npositions_bamm,
+    npositions_sitega,
     npositions_dimont,
     npositions_slim,
     scan_result_lengths
 
 # Model exports
 export ScoreProfile,
-    BaMM, SiteGA, Dimont, Slim, scorebounds, profile_bundle, site_start_offset,
-    motif_length, window_size, scorematrix, scoretype
+    BaMM,
+    SiteGA,
+    Dimont,
+    Slim,
+    scorebounds,
+    profile_bundle,
+    site_start_offset,
+    motif_length,
+    window_size,
+    scorematrix,
+    scoretype
 
 # Sites and PFM reconstruction exports
 export SiteSelector,
@@ -137,6 +164,7 @@ export GEVFit,
     eligible_targets,
     NullDistribution,
     NullPair,
+    ProfileComparisonContract,
     NullBuildConfig,
     NullBuildResult,
     AnnotatedResult,

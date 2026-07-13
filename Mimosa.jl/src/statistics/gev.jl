@@ -141,7 +141,7 @@ _vec_dot(a::Vector{Float64}, b::Vector{Float64}) = sum(a[i] * b[i] for i in each
 
 function _numerical_gradient(f, x::Vector{Float64}; h::Float64=1e-5)
     n = length(x)
-    g = zeros(n)
+    g = Vector{Float64}(undef, n)
     # Pre-allocate work vectors to avoid per-dimension allocations
     xp = copy(x)
     xm = copy(x)
@@ -161,6 +161,31 @@ function _numerical_gradient(f, x::Vector{Float64}; h::Float64=1e-5)
         elseif isinf(fm)
             f0 = f(x)
             g[i] = (fp - f0) / h
+        else
+            g[i] = (fp - fm) / (2.0 * h)
+        end
+    end
+    return g
+end
+
+function _numerical_gradient!(g::Vector{Float64}, f, x::Vector{Float64}; h::Float64=1e-5)
+    length(g) == length(x) || throw(ArgumentError("gradient buffer has wrong length."))
+    n = length(x)
+    xp = copy(x)
+    xm = copy(x)
+    for i in 1:n
+        xp[i] = x[i] + h
+        fp = f(xp)
+        xm[i] = x[i] - h
+        fm = f(xm)
+        xp[i] = x[i]
+        xm[i] = x[i]
+        if isinf(fp) && isinf(fm)
+            g[i] = 0.0
+        elseif isinf(fp)
+            g[i] = (f(x) - fm) / h
+        elseif isinf(fm)
+            g[i] = (fp - f(x)) / h
         else
             g[i] = (fp - fm) / (2.0 * h)
         end
@@ -247,7 +272,7 @@ function _bfgs_optimize(f, x0::Vector{Float64}; max_iter::Int=500, tol::Float64=
             end
         end
 
-        g_new = _numerical_gradient(f, x_new)
+        _numerical_gradient!(g_new, f, x_new)
         for i in 1:n
             s[i] = x_new[i] - x[i]
             y_vec[i] = g_new[i] - g[i]
@@ -408,13 +433,6 @@ CDF `P(X ≤ x)` for a fitted GEV distribution.
 function cdf(gev::GEVFit, x::Real)
     return 1.0 - survival(gev, x)
 end
-
-"""
-    nparams(::GEVFit)
-
-Number of GEV parameters (always 3: shape, location, scale).
-"""
-nparams(::GEVFit) = 3
 
 """
     scipy_params(gev::GEVFit)

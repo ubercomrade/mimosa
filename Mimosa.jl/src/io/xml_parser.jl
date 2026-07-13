@@ -29,13 +29,6 @@ struct XMLElement
 end
 
 """
-    xml_tag(elem::XMLElement)
-
-Return the tag name of `elem`.
-"""
-xml_tag(elem::XMLElement) = elem.tag
-
-"""
     xml_attribute(elem::XMLElement, key::AbstractString)
 
 Return the attribute value for `key`, or `nothing` if not present.
@@ -98,15 +91,6 @@ function xml_find(elem::XMLElement, path::AbstractString)
     end
 
     return isempty(current) ? nothing : current[1]
-end
-
-"""
-    xml_findall(elem::XMLElement, tag::AbstractString)
-
-Return all direct children of `elem` with the given `tag`.
-"""
-function xml_findall(elem::XMLElement, tag::AbstractString)
-    return [c for c in elem.children if c.tag == tag]
 end
 
 function _all_descendants(elem::XMLElement)

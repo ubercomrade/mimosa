@@ -7,22 +7,3 @@ include("bamm_scan.jl")
 include("sitega_scan.jl")
 include("dimont_scan.jl")
 include("slim_scan.jl")
-
-export StrandPolicy,
-    ForwardOnly,
-    ReverseOnly,
-    BestStrand,
-    BothStrands,
-    StrandPair,
-    scan,
-    scan!,
-    scan_forward!,
-    scan_reverse!,
-    scan_best!,
-    scan_both!,
-    npositions,
-    npositions_bamm,
-    npositions_sitega,
-    npositions_dimont,
-    npositions_slim,
-    scan_result_lengths

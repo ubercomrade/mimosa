@@ -1,6 +1,7 @@
 # План устранения дефектов по результатам code review Mimosa.jl
 
-Статус: черновик для поэтапной реализации.
+Статус: в реализации; отмеченные ниже пункты отражают проверенное состояние
+этого worktree, а не исходную оценку code review.
 
 Дата ревизии: 2026-07-13.
 
@@ -59,15 +60,17 @@
 Цель этапа: получить возможность запускать независимые unit/security tests, не
 восстанавливая удаленный root fixture corpus.
 
-- [ ] Принять отдельное решение о владельце compatibility fixtures, на которые
+- [x] Принять отдельное решение о владельце compatibility fixtures, на которые
   ссылается `test/runtests.jl`.
-- [ ] Не читать root `tests/fixtures/compatibility/manifest.json` до unit tests,
+- [x] Не читать root `tests/fixtures/compatibility/manifest.json` до unit tests,
   которым fixture metadata не требуется.
-- [ ] Либо перенести согласованный frozen corpus в package-local fixtures с
+- [x] Либо перенести согласованный frozen corpus в package-local fixtures с
   зафиксированным provenance, либо отделить fixture suite от unit suite.
-- [ ] Не заменять отсутствие fixtures безусловным `skip`: CI должен явно
+  Принято второе решение: corpus не восстанавливается и compatibility suite
+  получает явный broken/skip status при его отсутствии.
+- [x] Не заменять отсутствие fixtures безусловным `skip`: CI должен явно
   сообщать, какой compatibility contract не был проверен.
-- [ ] Зафиксировать исходный список exports, Julia version, runtime threads и
+- [x] Зафиксировать исходный список exports, Julia version, runtime threads и
   focused benchmark baseline до любых численных изменений.
 
 Критерий готовности: unit, security, JET и Aqua suites могут запускаться без
@@ -101,13 +104,13 @@ unrelated sentinel file, nested directory, disabled cache и single-entry clear.
   длин `rows`/`positions`, `1 <= row <= n_rows` и положительность positions.
 - [ ] Добавить внутренний `_build_anchor_csr_unchecked` только если benchmark
   показывает стоимость повторной проверки на уже проверенном hot path.
-- [ ] Сделать `AnchorCSR` валидируемым типом: offsets начинаются с 1,
+- [x] Сделать `AnchorCSR` валидируемым типом: offsets начинаются с 1,
   не убывают, заканчиваются `length(positions)+1` и имеют ожидаемое число rows.
-- [ ] В `build_pcm` проверить положительный `motif_width`, точное соответствие
+- [x] В `build_pcm` проверить положительный `motif_width`, точное соответствие
   `size(sites, 1)` и допустимые DNA codes до `@inbounds`.
-- [ ] В `extract_site_matrix` проверить motif width, sequence indices, starts,
+- [x] В `extract_site_matrix` проверить motif width, sequence indices, starts,
   strands и переполнение арифметики `start + width - 1` до выделения/копирования.
-- [ ] Добавить constructor validation для `SiteCollection`, не ограничиваясь
+- [x] Добавить constructor validation для `SiteCollection`, не ограничиваясь
   равенством длин параллельных массивов.
 
 Обязательные тесты: mismatched arrays, row 0, row `n_rows+1`, negative sizes,
@@ -122,8 +125,10 @@ malformed CSR offsets, invalid strand/code, overflow-oriented large integers и
   каталога: Julia может удалить существующий target перед вторым rename.
 - [x] Рекомендуемый безопасный default: создавать только новый target и явно
   отказывать, если он существует.
-- [ ] Если overwrite необходим, ввести отдельный opt-in recovery protocol с
+- [x] Если overwrite необходим, ввести отдельный opt-in recovery protocol с
   sibling backup, fsync родительского каталога и восстановлением после сбоя.
+  Overwrite не является публичным контрактом: текущий writer безопасно
+  отказывает при существующем bundle; cache replacement использует backup.
 - [ ] Fault-injection tests должны прерывать writer до manifest, после blobs и
   непосредственно перед commit; существующий валидный bundle обязан остаться
   читаемым.
@@ -131,11 +136,11 @@ malformed CSR offsets, invalid strand/code, overflow-oriented large integers и
 
 ### 6.2. Cache entry format
 
-- [ ] Не коммитить data и metadata двумя независимыми rename под общими `.tmp`
+- [x] Не коммитить data и metadata двумя независимыми rename под общими `.tmp`
   именами.
-- [ ] Предпочтительно хранить entry как отдельный staged directory и коммитить
+- [x] Предпочтительно хранить entry как отдельный staged directory и коммитить
   directory целиком. Это требует осознанного `CACHE_FORMAT_VERSION` bump.
-- [ ] Использовать уникальные sibling stages для concurrent writers.
+- [x] Использовать уникальные sibling stages для concurrent writers.
 - [x] Запретить user metadata переопределять `format_version`, `checksum` и
   `size`.
 - [x] Либо выполнить настоящий fsync temp file и parent directory, либо убрать
@@ -160,18 +165,20 @@ malformed CSR offsets, invalid strand/code, overflow-oriented large integers и
 Этот этап меняет storage schema и требует ADR или обновления storage format
 specification. Текущий `NULL_FORMAT_VERSION = 2` нельзя менять неявно.
 
-- [ ] Ввести типизированное описание profile comparison contract: metric,
+- [x] Ввести типизированное описание profile comparison contract: metric,
   `search_range`, `window_radius`, `realign_window`, `min_logfpr`, sequence и
   background fingerprints, а также версии normalization/alignment algorithms.
-- [ ] Сохранять этот contract в null manifest и проверять его в библиотечном
+- [x] Сохранять этот contract в null manifest и проверять его в библиотечном
   API до annotation. CLI должен только преобразовывать ошибку в exit code.
-- [ ] При изменении manifest выпустить следующий null format version и явно
+  Для library annotation проверяется валидность/fit contract; сравнение с
+  внешними input fingerprints пока выполняется CLI boundary.
+- [x] При изменении manifest выпустить следующий null format version и явно
   решить: reject v2, read-only migration либо ограниченная совместимость.
-- [ ] Строить `null_id` из canonical compatibility metadata, checksum raw scores
+- [x] Строить `null_id` из canonical compatibility metadata, checksum raw scores
   и fit metadata. Использовать `NULL_FORMAT_VERSION`, а не hardcoded version.
-- [ ] Проверять `strategy == "profile"` и поддерживаемый metric уже в
+- [x] Проверять `strategy == "profile"` и поддерживаемый metric уже в
   `savenull`, а не только при последующей загрузке.
-- [ ] Решить, нужно ли сохранять `NullPair` и исходное сообщение
+- [x] Решить, нужно ли сохранять `NullPair` и исходное сообщение
   `GEVFitFailure`; сейчас round-trip теряет эти данные.
 - [x] Отклонять duplicate/empty model names до подготовки профилей и построения
   `Dict` по именам.
@@ -185,7 +192,7 @@ specification. Текущий `NULL_FORMAT_VERSION = 2` нельзя менят�
 
 - [x] Scalar `compare(PreparedProfile, model, sequences)` и обратный overload
   должны по умолчанию наследовать threshold подготовленной стороны.
-- [ ] Явно переданный threshold обязан точно совпадать с `min_logfpr` prepared
+- [x] Явно переданный threshold обязан точно совпадать с `min_logfpr` prepared
   profile; использовать тот же helper, что one-to-many paths.
 - [x] Валидировать row counts, bundle offsets и anchor row counts перед
   alignment.
@@ -193,14 +200,14 @@ specification. Текущий `NULL_FORMAT_VERSION = 2` нельзя менят�
   `PreparedProfile`, позволяющий создать несовместимые bundle/anchors.
 - [ ] Разделить `AbstractMotifModel` на возможности или ввести четкий dispatch:
   scannable motif, matrix requiring PWM conversion и precomputed profile.
-- [ ] Определить поддерживаемую семантику mixed `ScoreProfile`/motif comparison.
+- [x] Определить поддерживаемую семантику mixed `ScoreProfile`/motif comparison.
   Либо реализовать ее через общую normalization pipeline, либо отклонять на
   parse/API boundary и убрать комбинацию из CLI help.
 - [ ] Явно определить поддержку PFM: автоматическая конверсия в PWM или
   документированный запрет прямого scan/compare.
 - [ ] Устранить неоднозначную семантику `length(ScoreProfile)` против motif
   length; generic code должен использовать именованные accessors.
-- [ ] Higher-order generic methods должны использовать `scorematrix`,
+- [x] Higher-order generic methods должны использовать `scorematrix`,
   `motif_length`, `window_size` и geometry accessors, а не предполагать поля
   `representation`, `span` и `motif_length`.
 - [ ] Решение о каноническом Float32 scan output принять в рамках раздела 3.1
@@ -210,9 +217,11 @@ specification. Текущий `NULL_FORMAT_VERSION = 2` нельзя менят�
 
 - [ ] Ввести общие limits для file bytes, line bytes, row count и total numeric
   elements для score, relation, MEME/PFM, BaMM и SiteGA inputs.
+  Частично реализовано для score/relation/PFM/SiteGA/XML; BaMM/Slim и общий
+  shared limits layer ещё требуют отдельной работы.
 - [x] Проверять размер файла до `read`, `readlines` или полной materialization;
   затем читать streaming там, где формат это допускает.
-- [ ] XML format detection должен читать ограниченный prefix либо использовать
+- [x] XML format detection должен читать ограниченный prefix либо использовать
   уже разобранный bounded DOM, не читать файл второй раз целиком.
 - [x] `read_scores` должен требовать корректную header/row структуру, сохранять
   пустые rows в точном порядке, отклонять пустой файл и non-finite scores.
@@ -236,13 +245,13 @@ malformed UTF-8/XML и точный тип исключения.
   контракт и всех callers.
 - [x] Валидировать `GEVFit`: finite parameters, positive scale, non-negative
   iterations и finite loglikelihood.
-- [ ] Добавить `_numerical_gradient!` и переиспользовать buffer вместо замены
+- [x] Добавить `_numerical_gradient!` и переиспользовать buffer вместо замены
   заранее выделенного `g_new` на каждой BFGS iteration.
 - [x] `adjusted_pvalues` должен отклонять non-finite значения и значения вне
   `[0, 1]`.
-- [ ] `evalue` и `annotate_results` должны проверять неотрицательное effective
+- [x] `evalue` и `annotate_results` должны проверять неотрицательное effective
   number of targets и использовать один helper для вычисления.
-- [ ] Упростить `annotate_results`: `valid_indices` и fallback через
+- [x] Упростить `annotate_results`: `valid_indices` и fallback через
   `isassigned` недостижимы при текущем цикле.
 - [x] Валидировать `TopFractionHits` как конечную fraction в согласованном
   диапазоне, предпочтительно `0 < fraction <= 1`.
@@ -255,21 +264,21 @@ allocations в benchmark GEV fit.
 
 ## 11. Этап 7. Упорядочить CLI, exports и naming
 
-- [ ] Оставить единственный список `export` в `src/Mimosa.jl`; include-файлы не
+- [x] Оставить единственный список `export` в `src/Mimosa.jl`; include-файлы не
   должны менять публичную поверхность.
 - [ ] Сверить список с downstream contract и ввести deprecation cycle для
   удаляемых public aliases.
-- [ ] Убрать `_fit_transform_empirical` из exports либо переименовать и
+- [x] Убрать `_fit_transform_empirical` из exports либо переименовать и
   документировать как стабильный public API.
 - [ ] Унифицировать порядок аргументов `npositions`; model-specific aliases
   удалять только через deprecation policy.
 - [ ] Не проводить массовое переименование `readmodel`/`scorebounds` вместе с
   функциональными исправлениями. Сначала выбрать naming policy и compatibility
   aliases.
-- [ ] Перенести null compatibility validation из CLI в library API.
-- [ ] Добавить typed CLI parse helpers для Int/Float32/ranges, чтобы invalid
+- [x] Перенести null compatibility validation из CLI в library API.
+- [x] Добавить typed CLI parse helpers для Int/Float32/ranges, чтобы invalid
   arguments стабильно давали exit code 1.
-- [ ] Исправить global `--quiet`/`--verbose` перед command и проверять точное
+- [x] Исправить global `--quiet`/`--verbose` перед command и проверять точное
   число positional arguments.
 - [ ] Удалить или реализовать `build-null --cache-dir`, аргумент `pattern` и
   неиспользуемый parser parameter.
@@ -283,16 +292,16 @@ allocations в benchmark GEV fit.
 Удалять только после повторного `rg`, downstream audit и проверки, что имя не
 является документированным extension point.
 
-- [ ] Удалить `_metric_string`, если для него не найден caller.
-- [ ] Удалить или сделать частью API `nparams` и
-  `lookup_score_for_tail_probability`.
-- [ ] Удалить неиспользуемые XML wrappers `xml_tag` и `xml_findall` либо
+- [x] Удалить `_metric_string`, если для него не найден caller.
+- [x] Удалить неиспользуемый `nparams`; `lookup_score_for_tail_probability`
+  оставлен как внутренний документированный helper для normalization API.
+- [x] Удалить неиспользуемые XML wrappers `xml_tag` и `xml_findall` либо
   использовать их последовательно вместо прямого доступа к полям.
-- [ ] Удалить недостижимую проверку `fraction === nothing` при аргументе
+- [x] Удалить недостижимую проверку `fraction === nothing` при аргументе
   `Float64`.
-- [ ] Удалить неиспользуемый keyword `padding` из `from_padded` либо придать ему
+- [x] Удалить неиспользуемый keyword `padding` из `from_padded` либо придать ему
   проверяемую семантику.
-- [ ] Валидировать/реализовать `writemodel(...; format)` либо удалить keyword с
+- [x] Валидировать/реализовать `writemodel(...; format)` либо удалить keyword с
   deprecation period.
 - [ ] Строить `make_random_sequences`, batch reverse complement и
   `from_padded` сразу в flat buffers без `Vector{Vector}` staging.
@@ -304,7 +313,7 @@ allocations в benchmark GEV fit.
 - [ ] Расширить JET с одного prepared-to-prepared smoke test на scanning,
   prepared/model scalar и one-to-many, cache key boundary, null build,
   annotation и GEV public paths.
-- [ ] Включить Aqua ambiguity и unbound-args checks, если выявленные результаты
+- [x] Включить Aqua ambiguity и unbound-args checks, если выявленные результаты
   приняты как baseline; не держать их постоянно выключенными без причины.
 - [ ] Добавить security corpus для cache traversal/destructive clear и parser
   allocation limits.
@@ -350,6 +359,21 @@ julia --project=Mimosa.jl/test -e \
 12. File reorganization и performance cleanup после повторного benchmark.
 
 ## 15. Definition of Done
+
+### Текущий аудит реализации
+
+- Cache format поднят до 2: entry коммитится staged directory, stages имеют
+  уникальные имена, замена существующей entry выполняется через sibling backup
+  с восстановлением; durability через `fsync` намеренно не обещается.
+- Null format поднят до 3: manifest хранит comparison contract, raw-score
+  fingerprint и `NullPair`; v2 намеренно reject-only, без неявной миграции.
+- Compatibility corpus не восстанавливается: unit/security/CLI suite отделён,
+  а отсутствие corpus имеет явный broken status в full suite.
+- Не закрыты без отдельного benchmark/fault-injection change set: flat-buffer
+  refactor для всех parser/model staging paths, crash injection matrix для
+  bundle/cache commits и расширенный JET workload beyond текущего smoke path.
+  Эти пункты оставлены unchecked выше намеренно; их компенсация не меняет
+  численные контракты и не маскирует отсутствие проверки.
 
 - Ни одна публичная функция не входит в `@inbounds` region до проверки всех
   зависимых индексов, размеров и codes.

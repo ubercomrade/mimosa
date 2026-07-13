@@ -44,6 +44,38 @@ function compare(
     )
 end
 
+function compare(
+    query::ScoreProfile,
+    target::AbstractMotifModel,
+    sequences::EncodedSequenceBatch;
+    kwargs...,
+)
+    return throw(
+        ArgumentError(
+            "mixed ScoreProfile/motif comparison is unsupported; prepare both inputs as profiles first.",
+        ),
+    )
+end
+
+function compare(
+    query::AbstractMotifModel,
+    target::ScoreProfile,
+    sequences::EncodedSequenceBatch;
+    kwargs...,
+)
+    return throw(
+        ArgumentError(
+            "mixed motif/ScoreProfile comparison is unsupported; prepare both inputs as profiles first.",
+        ),
+    )
+end
+
+function compare(
+    query::ScoreProfile, target::ScoreProfile, sequences::EncodedSequenceBatch; kwargs...
+)
+    return throw(ArgumentError("ScoreProfile comparison does not consume sequences."))
+end
+
 # ── Motif-derived profile comparison ──────────────────────────────────────────
 
 """

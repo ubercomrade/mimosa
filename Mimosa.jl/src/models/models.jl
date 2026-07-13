@@ -6,20 +6,3 @@ include("bamm.jl")
 include("sitega.jl")
 include("dimont.jl")
 include("slim.jl")
-
-export AbstractMotifModel,
-    AbstractMatrixMotif,
-    AbstractHigherOrderMotif,
-    PFM,
-    PWM,
-    BaMM,
-    SiteGA,
-    Dimont,
-    Slim,
-    pcm_to_pfm,
-    pfm_to_pwm,
-    pwm_from_pfm,
-    extend_pwm_with_n,
-    reverse_complement,
-    scorebounds,
-    site_start_offset

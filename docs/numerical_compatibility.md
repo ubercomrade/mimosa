@@ -13,7 +13,7 @@ The following must match exactly:
 - result ordering and eligible null-pair ordering;
 - comparison offsets and orientation labels;
 - site coordinates and strand labels;
-- model format version 1, null format version 2, cache format version 1, and
+- model format version 1, null format version 3, cache format version 2, and
   annotated-result schema version 1.
 
 ## Floating-Point Values

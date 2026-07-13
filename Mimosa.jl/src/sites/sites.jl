@@ -98,6 +98,11 @@ struct SiteCollection
             throw(ArgumentError("strands length $(length(strands)) != $n."))
         length(scores) == n ||
             throw(ArgumentError("scores length $(length(scores)) != $n."))
+        all(>(0), seq_indices) || throw(ArgumentError("sequence indices must be positive."))
+        all(>(0), starts) || throw(ArgumentError("site starts must be positive."))
+        all(strand -> strand == 0 || strand == 1, strands) ||
+            throw(ArgumentError("strands must be 0 (forward) or 1 (reverse)."))
+        all(isfinite, scores) || throw(ArgumentError("site scores must be finite."))
         return new(seq_indices, starts, strands, scores)
     end
 end
@@ -328,7 +333,8 @@ Matches Python's `_select_top_hit_arrays`.
 function select_top_fraction(coll::SiteCollection, fraction::Float64)
     n = length(coll)
     n == 0 && return coll
-    fraction === nothing && return coll
+    isfinite(fraction) && 0.0 < fraction <= 1.0 ||
+        throw(ArgumentError("fraction must be finite and lie in (0, 1]."))
 
     n_keep = max(1, floor(Int, n * fraction))
     n_keep >= n && return coll
@@ -364,14 +370,23 @@ function extract_site_matrix(
     batch::EncodedSequenceBatch, coll::SiteCollection, motif_width::Int; site_offset::Int=0
 )
     n_hits = length(coll)
+    motif_width > 0 || throw(ArgumentError("motif_width must be positive."))
+    site_offset >= 0 || throw(ArgumentError("site_offset must be non-negative."))
+    nsequences(batch) >= 0 || throw(InvariantError("invalid sequence batch."))
+    all(1 <= i <= nsequences(batch) for i in coll.seq_indices) ||
+        throw(ArgumentError("site sequence indices are outside the batch."))
+    all(strand -> strand == 0 || strand == 1, coll.strands) ||
+        throw(ArgumentError("site strands must be 0 or 1."))
     sites = Matrix{UInt8}(undef, motif_width, n_hits)
 
     for h in 1:n_hits
         seq = sequence(batch, coll.seq_indices[h])
         # The motif starts at scan_position + site_offset (1-based)
+        coll.starts[h] <= typemax(Int) - site_offset ||
+            throw(ArgumentError("site start plus offset overflows Int."))
         start = coll.starts[h] + site_offset
         # Validate that the site window fits within the sequence.
-        if start < 1 || start + motif_width - 1 > length(seq)
+        if start < 1 || start > length(seq) || motif_width > length(seq) - start + 1
             throw(
                 InvariantError(
                     "site $h: window [start=$start, width=$motif_width] " *
@@ -452,6 +467,11 @@ Only valid bases (A=0, C=1, G=2, T=3) are counted; N (4) is skipped.
 Returns a `Matrix{Float32}` of shape `(4, motif_width)`.
 """
 function build_pcm(sites::Matrix{UInt8}, motif_width::Int)
+    motif_width > 0 || throw(ArgumentError("motif_width must be positive."))
+    size(sites, 1) == motif_width ||
+        throw(ArgumentError("sites row count must equal motif_width."))
+    all(code -> code <= N_CODE, sites) ||
+        throw(ArgumentError("sites contain invalid DNA codes."))
     pcm = zeros(Float32, 4, motif_width)
     n_hits = size(sites, 2)
     @inbounds for h in 1:n_hits

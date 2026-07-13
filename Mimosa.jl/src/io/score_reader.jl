@@ -71,3 +71,5 @@ function read_scores(path::AbstractString)
     name = splitext(basename(file))[1]
     return ScoreProfile(name, build_ragged(rows))
 end
+
+@doc "Read a bounded FASTA-like numerical score profile file." read_scores

@@ -118,24 +118,26 @@ end
 # ---------------------------------------------------------------------------
 
 function _read_table(path::AbstractString)
-    content = try
-        read(path, String)
-    catch error
-        throw(
-            ArgumentError(
-                "could not read relation file '$path': $(sprint(showerror, error))."
-            ),
-        )
+    isfile(path) ||
+        throw(ArgumentError("could not read relation file '$path': file not found."))
+    filesize(path) <= 256 * 1024^2 ||
+        throw(ArgumentError("relation file exceeds the size limit."))
+    sample = open(path, "r") do io
+        return read(io, min(filesize(path), 4096))
     end
-    delimiter = _sniff_delimiter(content)
-    lines = split(content, '\n')
+    delimiter = _sniff_delimiter(String(sample))
+    lines = String[]
+    open(path, "r") do io
+        for line in eachline(io)
+            ncodeunits(line) <= 4 * 1024^2 ||
+                throw(ArgumentError("relation line exceeds the size limit."))
+            stripped = strip(line)
+            isempty(stripped) || startswith(stripped, '#') || push!(lines, line)
+        end
+    end
+    isempty(lines) && throw(ArgumentError("Relation file is empty: $path"))
 
-    # Skip empty lines and comments
-    data_lines = filter(l -> !isempty(strip(l)) && !startswith(strip(l), '#'), lines)
-    isempty(data_lines) && throw(ArgumentError("Relation file is empty: $path"))
-
-    # Parse header
-    headers = String.(strip.(split(data_lines[1], delimiter; keepempty=true)))
+    headers = String.(strip.(split(lines[1], delimiter; keepempty=true)))
     isempty(headers) && throw(ArgumentError("Relation file has no header: $path"))
     any(isempty, headers) &&
         throw(ArgumentError("Relation file contains an empty header: $path"))
@@ -143,7 +145,7 @@ function _read_table(path::AbstractString)
         throw(ArgumentError("Relation file contains duplicate headers: $path"))
 
     rows = Vector{Vector{String}}()
-    for line in data_lines[2:end]
+    for line in lines[2:end]
         fields = split(line, delimiter; keepempty=true)
         length(fields) == length(headers) || throw(
             ArgumentError(

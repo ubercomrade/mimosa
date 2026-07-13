@@ -10,9 +10,12 @@ using .NPYReader: read_npy
 const REPO_ROOT = joinpath(dirname(@__DIR__), "..")
 const EXAMPLES = joinpath(REPO_ROOT, "examples")
 const FIXTURE_COMPAT = joinpath(REPO_ROOT, "tests", "fixtures", "compatibility")
-const _MANIFEST = JSON3.read(read(joinpath(FIXTURE_COMPAT, "manifest.json"), String))
+const _MANIFEST_PATH = joinpath(FIXTURE_COMPAT, "manifest.json")
+const _HAS_COMPAT_FIXTURES = isfile(_MANIFEST_PATH)
+const _MANIFEST = _HAS_COMPAT_FIXTURES ? JSON3.read(read(_MANIFEST_PATH, String)) : nothing
 
 function fixture_metadata(id::AbstractString)
+    _HAS_COMPAT_FIXTURES || error("compatibility fixtures are unavailable: $FIXTURE_COMPAT")
     for f in _MANIFEST["fixtures"]
         f["id"] == id && return f["metadata"]
     end
@@ -21,9 +24,7 @@ end
 
 # Aqua quality checks — fail-closed (Aqua is a required test dependency).
 using Aqua
-Aqua.test_all(
-    Mimosa; ambiguities=false, unbound_args=false, stale_deps=false, project_extras=false
-)
+Aqua.test_all(Mimosa; stale_deps=false, project_extras=false)
 
 @testset "Mimosa.jl Stage 1-7" begin
     # Unit tests
@@ -52,16 +53,22 @@ Aqua.test_all(
     # Property tests
     include("properties/test_properties.jl")
 
-    # Compatibility tests against frozen oracle fixtures
-    include("compatibility/test_oracle_fixtures.jl")
-    include("compatibility/test_scan_fixtures.jl")
-    include("compatibility/test_profile_fixtures.jl")
-    include("compatibility/test_sites_fixtures.jl")
-    include("compatibility/test_bamm_fixtures.jl")
-    include("compatibility/test_sitega_fixtures.jl")
-    include("compatibility/test_dimont_fixtures.jl")
-    include("compatibility/test_slim_fixtures.jl")
-    include("compatibility/test_gev_fixtures.jl")
+    # Compatibility fixtures are an explicitly separate contract. The root
+    # Python corpus may be absent in a source checkout, but must not prevent
+    # independent unit/security tests from running.
+    if _HAS_COMPAT_FIXTURES
+        include("compatibility/test_oracle_fixtures.jl")
+        include("compatibility/test_scan_fixtures.jl")
+        include("compatibility/test_profile_fixtures.jl")
+        include("compatibility/test_sites_fixtures.jl")
+        include("compatibility/test_bamm_fixtures.jl")
+        include("compatibility/test_sitega_fixtures.jl")
+        include("compatibility/test_dimont_fixtures.jl")
+        include("compatibility/test_slim_fixtures.jl")
+        include("compatibility/test_gev_fixtures.jl")
+    else
+        @test_skip "compatibility fixture corpus is unavailable; compatibility contract not checked"
+    end
 
     # Integration tests (CLI path)
     include("integration/test_cli.jl")

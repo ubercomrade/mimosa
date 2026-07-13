@@ -107,6 +107,22 @@ struct CLIParsed
     flags::Set{String}
 end
 
+function _cli_int(parsed::CLIParsed, name::String, default::String; minimum=nothing)
+    value = tryparse(Int, get(parsed.options, name, default))
+    value === nothing && throw(CLIError("--$name must be an integer."))
+    minimum !== nothing &&
+        value < minimum &&
+        throw(CLIError("--$name must be at least $minimum."))
+    return value
+end
+
+function _cli_float32(parsed::CLIParsed, name::String, default::String)
+    value = tryparse(Float32, get(parsed.options, name, default))
+    value === nothing && throw(CLIError("--$name must be a finite Float32."))
+    isfinite(value) || throw(CLIError("--$name must be a finite Float32."))
+    return value
+end
+
 function CLIParsed(command::String)
     return CLIParsed(command, String[], Dict{String,String}(), Set{String}())
 end
@@ -146,6 +162,7 @@ function _parse_cli(args::Vector{String})
     end
 
     idx = 1
+    global_flags = String[]
     # Check for global flags before command
     while idx <= length(args) && startswith(args[idx], "-")
         if args[idx] in ("--help", "-h")
@@ -155,10 +172,9 @@ function _parse_cli(args::Vector{String})
             println(stdout, "mimosa $(CLI_VERSION)")
             return nothing
         elseif args[idx] == "--quiet"
-            # Consumed at global level; will be re-parsed by command
-            break
+            push!(global_flags, "--quiet")
         elseif args[idx] == "--verbose"
-            break
+            push!(global_flags, "--verbose")
         else
             throw(CLIError("unknown global option: $(args[idx])"))
         end
@@ -169,7 +185,7 @@ function _parse_cli(args::Vector{String})
     command = args[idx]
     idx += 1
 
-    return (command, args[idx:end])
+    return (command, vcat(global_flags, args[idx:end]))
 end
 
 """
@@ -457,7 +473,7 @@ function _print_profile_help(io::IO)
 end
 
 function _run_profile(parsed::CLIParsed)
-    if length(parsed.positional) < 2
+    if length(parsed.positional) != 2
         _print_profile_help(stderr)
         throw(CLIError("profile requires two positional arguments."))
     end
@@ -478,15 +494,17 @@ function _run_profile(parsed::CLIParsed)
     metric in PROFILE_METRICS ||
         throw(CLIError("--metric must be one of: $(join(PROFILE_METRICS, ", "))"))
 
-    search_range = tryparse(Int, get(parsed.options, "search-range", "10"))
-    window_radius = tryparse(Int, get(parsed.options, "window-radius", "10"))
-    realign_window = tryparse(Int, get(parsed.options, "realign-window", "3"))
+    search_range = _cli_int(parsed, "search-range", "10"; minimum=0)
+    window_radius = _cli_int(parsed, "window-radius", "10"; minimum=0)
+    realign_window = _cli_int(parsed, "realign-window", "3"; minimum=0)
     min_logfpr_str = get(parsed.options, "min-logfpr", nothing)
-    min_logfpr = min_logfpr_str === nothing ? Float32(0.0) : parse(Float32, min_logfpr_str)
-    seed = tryparse(Int, get(parsed.options, "seed", "127"))
-    num_seq = tryparse(Int, get(parsed.options, "num-sequences", "1000"))
-    seq_len = tryparse(Int, get(parsed.options, "seq-length", "200"))
-    bg_freq = tryparse(Float32, get(parsed.options, "background-freq", "0.25"))
+    min_logfpr =
+        min_logfpr_str === nothing ? 0.0f0 : _cli_float32(parsed, "min-logfpr", "0.0")
+    isfinite(min_logfpr) || throw(CLIError("--min-logfpr must be finite."))
+    seed = _cli_int(parsed, "seed", "127")
+    num_seq = _cli_int(parsed, "num-sequences", "1000"; minimum=1)
+    seq_len = _cli_int(parsed, "seq-length", "200"; minimum=1)
+    bg_freq = _cli_float32(parsed, "background-freq", "0.25")
     fasta = get(parsed.options, "fasta", nothing)
     bg_fasta = get(parsed.options, "background", nothing)
     execution = _execution_policy(parsed)
@@ -637,7 +655,7 @@ function _read_model_collection(
 end
 
 function _run_build_null(parsed::CLIParsed)
-    if length(parsed.positional) < 1
+    if length(parsed.positional) != 1
         _print_build_null_help(stderr)
         throw(CLIError("build-null requires a motif collection path."))
     end
@@ -769,7 +787,7 @@ function _print_cache_help(io::IO)
 end
 
 function _run_cache(parsed::CLIParsed)
-    if isempty(parsed.positional) || parsed.positional[1] != "clear"
+    if length(parsed.positional) != 1 || parsed.positional[1] != "clear"
         _print_cache_help(stderr)
         throw(CLIError("cache requires a subcommand: clear"))
     end
@@ -777,7 +795,8 @@ function _run_cache(parsed::CLIParsed)
     cache_dir = get(parsed.options, "cache-dir", ".mimosa-cache")
     cache = Cache(cache_dir)
     removed = clearcache(cache)
-    _println_json(Dict{String,Any}("cache_dir" => cache_dir, "removed" => removed))
+    "quiet" in parsed.flags ||
+        _println_json(Dict{String,Any}("cache_dir" => cache_dir, "removed" => removed))
     return 0
 end
 

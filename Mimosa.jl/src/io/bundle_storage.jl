@@ -731,11 +731,7 @@ end
 function _with_bundle_write(path::AbstractString, writer::F) where {F}
     target = abspath(String(path))
     if ispath(target)
-        isdir(target) ||
-            throw(InvariantError("bundle target '$target' is not a directory."))
-        isempty(readdir(target)) ||
-            throw(InvariantError("bundle target '$target' already exists."))
-        rm(target; recursive=true)
+        throw(InvariantError("bundle target '$target' already exists."))
     end
     parent = dirname(target)
     mkpath(parent)
@@ -763,6 +759,6 @@ function _with_bundle_write(path::AbstractString, writer::F) where {F}
     end
 end
 
-function _with_bundle_write(writer::F, path::AbstractString) where {F}
+function _with_bundle_write(writer::F, path::AbstractString) where {F<:Function}
     return _with_bundle_write(path, writer)
 end

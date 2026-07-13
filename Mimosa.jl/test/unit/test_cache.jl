@@ -80,13 +80,13 @@ end
 
     # Clear single entry
     removed = clearcache(cache, "key1")
-    @test removed == 2  # data + meta
+    @test removed == 1  # one committed cache entry directory
     @test !cache_has(cache, "key1")
     @test cache_has(cache, "key2")
 
     # Clear all
     count = clearcache(cache)
-    @test count >= 2  # key2's data + meta
+    @test count >= 1  # key2's committed entry
     @test !cache_has(cache, "key2")
 end
 
@@ -104,16 +104,16 @@ end
     sentinel = joinpath(cache.directory, "sentinel.bin")
     write(sentinel, "keep")
     mkpath(joinpath(cache.directory, "unrelated"))
-    @test clearcache(cache) == 2
+    @test clearcache(cache) == 1
     @test isfile(sentinel)
     @test isdir(joinpath(cache.directory, "unrelated"))
 
     if Sys.isunix()
         outside = tempname()
         write(outside, UInt8[9])
-        symlink(outside, joinpath(cache.directory, "escape.bin"))
+        symlink(outside, joinpath(cache.directory, "escape"))
         @test_throws ArgumentError cache_has(cache, "escape")
-        @test islink(joinpath(cache.directory, "escape.bin"))
+        @test islink(joinpath(cache.directory, "escape"))
         rm(outside; force=true)
     end
 end
@@ -128,7 +128,7 @@ end
     @test cache_has(cache, key)
 
     # Corrupt the data file
-    data_path = joinpath(dir, "$key.bin")
+    data_path = joinpath(dir, key, "data.bin")
     write(data_path, UInt8[0, 0, 0, 0, 0])
 
     # Should be detected as corrupted (checksum mismatch)

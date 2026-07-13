@@ -67,6 +67,8 @@ The representation is a `(25, motif_length)` `Float32` matrix with row indexing
 """
 function read_sitega(path::AbstractString)
     isfile(path) || throw(ModelFormatError(path, "file not found."))
+    filesize(path) <= 256 * 1024^2 ||
+        throw(ModelFormatError(path, "SiteGA file exceeds the size limit."))
 
     lines = readlines(path)
 

@@ -19,7 +19,9 @@ using TOML
 
 # ── Schema versions ────────────────────────────────────────────────────────
 
-const CACHE_FORMAT_VERSION = 1
+const CACHE_FORMAT_VERSION = 2
+const _CACHE_DATA_NAME = "data.bin"
+const _CACHE_META_NAME = "meta.toml"
 
 # Algorithm version tags: bump when the algorithm changes so stale caches
 # are automatically invalidated.
@@ -270,12 +272,26 @@ function _cache_path(cache::Cache, key::AbstractString, suffix::AbstractString)
     return path
 end
 
+function _cache_entry_dir(cache::Cache, key::AbstractString)
+    value = _validate_cache_key(key)
+    root = abspath(cache.directory)
+    path = joinpath(root, value)
+    islink(path) && throw(ArgumentError("cache entry path must not be a symlink."))
+    root_real = ispath(root) ? realpath(root) : root
+    parent_real = ispath(dirname(path)) ? realpath(dirname(path)) : dirname(path)
+    relative = relpath(joinpath(parent_real, basename(path)), root_real)
+    separator = Sys.iswindows() ? "\\\\" : "/"
+    (relative == ".." || startswith(relative, ".." * separator)) &&
+        throw(ArgumentError("cache path escapes cache root."))
+    return path
+end
+
 function cache_path(cache::Cache, key::AbstractString)
-    return _cache_path(cache, key, ".bin")
+    return joinpath(_cache_entry_dir(cache, key), _CACHE_DATA_NAME)
 end
 
 function cache_meta_path(cache::Cache, key::AbstractString)
-    return _cache_path(cache, key, ".meta.toml")
+    return joinpath(_cache_entry_dir(cache, key), _CACHE_META_NAME)
 end
 
 # ── Cache get/set ───────────────────────────────────────────────────────────
@@ -331,7 +347,7 @@ end
     cache_set(cache::Cache, key::AbstractString, data::AbstractVector{UInt8};
               metadata=Dict{String,Any}())
 
-Write binary data and metadata using temporary sibling files.
+Write binary data and metadata using a staged sibling directory.
 No-op if the cache is disabled. Each file is committed with an atomic rename;
 an interruption between the two commits leaves a cache miss, never a usable
 partially validated entry.
@@ -352,11 +368,6 @@ function cache_set(
     # Compute checksum
     checksum = bytes2hex(SHA.sha256(data))
 
-    # Write data atomically: temp + rename
-    tmp_path = path * ".tmp"
-    write(tmp_path, data)
-    _flush_and_rename(tmp_path, path)
-
     # Write metadata atomically
     meta = Dict{String,Any}(
         "format_version" => CACHE_FORMAT_VERSION,
@@ -367,13 +378,37 @@ function cache_set(
         name in ("format_version", "checksum", "size") && continue
         meta[name] = value
     end
-    tmp_meta = meta_path * ".tmp"
-    open(tmp_meta, "w") do io
-        return TOML.print(io, meta; sorted=true)
+    parent = abspath(cache.directory)
+    stage = mktempdir(parent; prefix=".mimosa-cache-stage-", cleanup=false)
+    entry_stage = joinpath(stage, _validate_cache_key(key))
+    mkpath(entry_stage)
+    try
+        staged_path = joinpath(entry_stage, _CACHE_DATA_NAME)
+        staged_meta = joinpath(entry_stage, _CACHE_META_NAME)
+        write(staged_path, data)
+        open(staged_meta, "w") do io
+            return TOML.print(io, meta; sorted=true)
+        end
+        _flush_file(staged_path)
+        _flush_file(staged_meta)
+        target = _cache_entry_dir(cache, key)
+        backup = nothing
+        if ispath(target)
+            backup = target * ".backup-" * string(rand(UInt))
+            mv(target, backup)
+        end
+        try
+            mv(entry_stage, target)
+            backup !== nothing && rm(backup; recursive=true, force=true)
+        catch
+            ispath(target) && rm(target; recursive=true, force=true)
+            backup !== nothing && ispath(backup) && mv(backup, target)
+            rethrow()
+        end
+        return path
+    finally
+        isdir(stage) && rm(stage; recursive=true, force=true)
     end
-    _flush_and_rename(tmp_meta, meta_path)
-
-    return path
 end
 
 """
@@ -385,28 +420,17 @@ Does not remove the directory itself.
 function clearcache(cache::Cache)
     !cache.enabled && return 0
     isdir(cache.directory) || return 0
-    names = readdir(cache.directory)
-    keys = Set{String}()
-    for filename in names
-        for suffix in (".bin", ".meta.toml")
-            endswith(filename, suffix) || continue
-            push!(keys, chop(filename; tail=length(suffix)))
-        end
-    end
-
     count = 0
-    for key in keys
+    for key in readdir(cache.directory)
         try
-            path = _cache_path(cache, key, ".bin")
-            meta_path = _cache_path(cache, key, ".meta.toml")
-            isfile(path) && isfile(meta_path) || continue
-            rm(path; force=true)
-            rm(meta_path; force=true)
-            count += 2
-            for suffix in (".bin.tmp", ".meta.toml.tmp")
-                tmp = _cache_path(cache, key, suffix)
-                isfile(tmp) && (rm(tmp; force=true); count += 1)
-            end
+            _validate_cache_key(key)
+            entry = _cache_entry_dir(cache, key)
+            isdir(entry) || continue
+            path = cache_path(cache, key)
+            meta_path = cache_meta_path(cache, key)
+            _validate_cache_entry(path, meta_path) || continue
+            rm(entry; recursive=true, force=true)
+            count += 1
         catch error
             error isa ArgumentError || rethrow()
         end
@@ -423,12 +447,12 @@ function clearcache(cache::Cache, key::AbstractString)
     value = _validate_cache_key(key)
     !cache.enabled && return 0
     removed = 0
-    for suffix in (".bin", ".meta.toml", ".bin.tmp", ".meta.toml.tmp")
-        path = _cache_path(cache, value, suffix)
-        if isfile(path)
-            rm(path; force=true)
-            removed += 1
-        end
+    entry = _cache_entry_dir(cache, value)
+    path = cache_path(cache, value)
+    meta_path = cache_meta_path(cache, value)
+    if isdir(entry) && _validate_cache_entry(path, meta_path)
+        rm(entry; recursive=true, force=true)
+        removed = 1
     end
     return removed
 end
@@ -454,5 +478,12 @@ function _flush_and_rename(tmp_path::AbstractString, final_path::AbstractString)
         return flush(io)
     end
     mv(tmp_path, final_path; force=true)
+    return nothing
+end
+
+function _flush_file(path::AbstractString)
+    open(path, "r+") do io
+        return flush(io)
+    end
     return nothing
 end

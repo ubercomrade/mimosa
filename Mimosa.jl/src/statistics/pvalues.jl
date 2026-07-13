@@ -69,6 +69,13 @@ function evalue(pvalue::Real, effective_n::Int)
     return p * effective_n
 end
 
+function evalue(pvalue::Real, effective_n::Real)
+    isfinite(effective_n) && effective_n >= 0 ||
+        throw(ArgumentError("effective_n must be finite and non-negative."))
+    isinteger(effective_n) || throw(ArgumentError("effective_n must be an integer."))
+    return evalue(pvalue, Int(effective_n))
+end
+
 """
     pvalue(gev::GEVFit, score::Real)
 

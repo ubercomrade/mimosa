@@ -10,7 +10,7 @@ using Mimosa
         "co",
         gev,
         raw_scores,
-        NullPair[],
+        [NullPair("m1", "t1", score) for score in raw_scores],
         8,
         2,
         [(query="m1", reason="too few")],
@@ -20,7 +20,8 @@ using Mimosa
         "bg_fp",
     )
 
-    mktempdir() do path
+    mktempdir() do parent
+        path = joinpath(parent, "null_bundle")
         savenull(path, dist)
 
         # Verify files exist
@@ -58,7 +59,7 @@ end
         "co",
         gev,
         Float64[0.1, 0.2, 0.3, 0.4, 0.5],
-        NullPair[],
+        [NullPair("m", "t", score) for score in 0.1:0.1:0.5],
         5,
         1,
         [],
@@ -68,7 +69,8 @@ end
         "none",
     )
 
-    mktempdir() do path
+    mktempdir() do parent
+        path = joinpath(parent, "null_bundle")
         savenull(path, dist)
 
         # Corrupt the NPY file
@@ -104,7 +106,7 @@ end
         "co",
         gev,
         Float64[1.0, 2.0, 3.0],
-        NullPair[],
+        [NullPair("m", "t", score) for score in 1.0:1.0:3.0],
         3,
         1,
         NamedTuple{(:query, :reason),Tuple{String,String}}[],
@@ -114,7 +116,8 @@ end
         "none",
     )
 
-    mktempdir() do path
+    mktempdir() do parent
+        path = joinpath(parent, "null_bundle")
         savenull(path, dist)
         manifest_path = joinpath(path, "manifest.toml")
         original = read(manifest_path, String)

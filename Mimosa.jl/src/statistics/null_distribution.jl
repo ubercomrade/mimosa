@@ -16,6 +16,20 @@ struct NullPair
     score::Float64
 end
 
+"""Canonical numerical and data provenance required to annotate a null."""
+struct ProfileComparisonContract
+    metric::String
+    search_range::Int
+    window_radius::Int
+    realign_window::Int
+    min_logfpr::Float32
+    normalization_version::String
+    alignment_version::String
+    sequence_fingerprint::String
+    background_fingerprint::String
+    raw_scores_fingerprint::String
+end
+
 """
     NullDistribution
 
@@ -48,6 +62,50 @@ struct NullDistribution
     relation_fingerprint::Union{Nothing,String}
     sequence_fingerprint::String
     background_fingerprint::String
+    contract::ProfileComparisonContract
+end
+
+function NullDistribution(
+    strategy::String,
+    metric::String,
+    fit::GEVFitResult,
+    raw_scores::Vector{Float64},
+    pairs::Vector{NullPair},
+    n_null::Int,
+    n_queries::Int,
+    skipped,
+    model_collection_fingerprint,
+    relation_fingerprint,
+    sequence_fingerprint::String,
+    background_fingerprint::String,
+)
+    contract = ProfileComparisonContract(
+        metric,
+        10,
+        10,
+        3,
+        0.0f0,
+        "empirical-log-tail-v1",
+        "profile-alignment-v1",
+        sequence_fingerprint,
+        background_fingerprint,
+        content_fingerprint(raw_scores),
+    )
+    return NullDistribution(
+        strategy,
+        metric,
+        fit,
+        raw_scores,
+        pairs,
+        n_null,
+        n_queries,
+        skipped,
+        model_collection_fingerprint,
+        relation_fingerprint,
+        sequence_fingerprint,
+        background_fingerprint,
+        contract,
+    )
 end
 
 """
@@ -211,6 +269,18 @@ function build_null(
         dist.relation_fingerprint,
         sequence_fingerprint(sequences),
         isnothing(background) ? "none" : sequence_fingerprint(background),
+        ProfileComparisonContract(
+            dist.metric,
+            search_range,
+            window_radius,
+            realign_window,
+            Float32(min_logfpr),
+            "empirical-log-tail-v1",
+            "profile-alignment-v1",
+            sequence_fingerprint(sequences),
+            isnothing(background) ? "none" : sequence_fingerprint(background),
+            content_fingerprint(dist.raw_scores),
+        ),
     )
     return NullBuildResult(profiled_dist, result.total_comparisons)
 end
@@ -406,14 +476,13 @@ function annotate_results(
     else
         effective_number_of_targets
     end
+    effective >= 0 ||
+        throw(ArgumentError("effective_number_of_targets must be non-negative."))
 
-    pvalues = Float64[]
-    valid_indices = Int[]
+    pvalues = Vector{Float64}(undef, length(results))
 
     for (idx, result) in enumerate(results)
-        pval = survival(gev, result.score)
-        push!(pvalues, pval)
-        push!(valid_indices, idx)
+        pvalues[idx] = survival(gev, result.score)
     end
 
     adj = adjusted_pvalues(pvalues)
@@ -421,24 +490,17 @@ function annotate_results(
     null_id = _null_id(dist)
 
     annotated = Vector{AnnotatedResult}(undef, length(results))
-    for (j, idx) in enumerate(valid_indices)
+    for idx in eachindex(results)
         r = results[idx]
         annotated[idx] = AnnotatedResult(
             r;
-            p_value=pvalues[j],
-            adj_p_value=adj[j],
-            e_value=pvalues[j] * effective,
+            p_value=pvalues[idx],
+            adj_p_value=adj[idx],
+            e_value=evalue(pvalues[idx], effective),
             null_id=null_id,
             null_n=n_null,
             null_estimator="genextreme",
         )
-    end
-
-    # Fill any non-annotated entries (shouldn't normally happen)
-    for i in 1:length(results)
-        if !isassigned(annotated, i)
-            annotated[i] = AnnotatedResult(results[i])
-        end
     end
 
     return annotated
@@ -448,28 +510,19 @@ end
 # Helpers
 # ---------------------------------------------------------------------------
 
-function _metric_string(metric)
-    if metric isa AbstractString
-        return String(metric)
-    elseif metric isa Symbol
-        return String(metric)
-    else
-        # Try to call metric_name for typed metrics
-        try
-            return metric_name(metric)
-        catch
-            return string(metric)
-        end
-    end
-end
-
 function _null_id(dist::NullDistribution)
-    # Create a stable hash from key metadata fields
     parts = [
-        "format_version=1",
+        "format_version=$(NULL_FORMAT_VERSION)",
         "strategy=$(dist.strategy)",
         "metric=$(dist.metric)",
         "n_null=$(dist.n_null)",
+        "raw=$(dist.contract.raw_scores_fingerprint)",
+        "seq=$(dist.contract.sequence_fingerprint)",
+        "bg=$(dist.contract.background_fingerprint)",
+        "contract=$(join(string.((dist.contract.search_range,
+            dist.contract.window_radius, dist.contract.realign_window,
+            dist.contract.min_logfpr, dist.contract.normalization_version,
+            dist.contract.alignment_version)), ":"))",
     ]
     if dist.model_collection_fingerprint !== nothing
         push!(parts, "mcf=$(dist.model_collection_fingerprint)")
@@ -477,5 +530,15 @@ function _null_id(dist::NullDistribution)
     if dist.relation_fingerprint !== nothing
         push!(parts, "rf=$(dist.relation_fingerprint)")
     end
+    dist.fit isa GEVFit && append!(
+        parts,
+        [
+            "shape=$(dist.fit.shape)",
+            "location=$(dist.fit.location)",
+            "scale=$(dist.fit.scale)",
+            "iterations=$(dist.fit.iterations)",
+            "loglikelihood=$(dist.fit.loglikelihood)",
+        ],
+    )
     return bytes2hex(SHA.sha256(Vector{UInt8}(codeunits(join(parts, "|")))))
 end

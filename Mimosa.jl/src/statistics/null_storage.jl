@@ -14,9 +14,9 @@
     NULL_FORMAT_VERSION
 
 Current version of the portable null-distribution bundle format.
-Value is `2`. Bundles with a different version are rejected on load.
+Value is `3`. Bundles with a different version are rejected on load.
 """
-const NULL_FORMAT_VERSION = 2
+const NULL_FORMAT_VERSION = 3
 
 """
     savenull(path, dist::NullDistribution)
@@ -29,12 +29,18 @@ sibling staging directory, then commits the directory with an atomic rename.
 function savenull(path::AbstractString, dist::NullDistribution)
     dist.n_null == length(dist.raw_scores) ||
         throw(InvariantError("null distribution n_null does not match raw_scores length."))
+    length(dist.pairs) == dist.n_null ||
+        throw(InvariantError("null distribution pairs do not match n_null."))
     dist.n_queries >= 0 ||
         throw(InvariantError("null distribution n_queries must be non-negative."))
     isempty(dist.strategy) &&
         throw(InvariantError("null distribution strategy must not be empty."))
     isempty(dist.metric) &&
         throw(InvariantError("null distribution metric must not be empty."))
+    dist.strategy == "profile" ||
+        throw(InvariantError("only profile null distributions are supported."))
+    dist.metric in ("co", "co_rowwise", "dice", "dice_rowwise", "cosine") ||
+        throw(InvariantError("unsupported profile metric '$(dist.metric)'."))
     all(isfinite, dist.raw_scores) ||
         throw(InvariantError("null distribution raw_scores contain non-finite values."))
     _bundle_shape_payload_bytes(
@@ -80,6 +86,9 @@ function savenull(path::AbstractString, dist::NullDistribution)
             "genextreme_loglikelihood" => loglikelihood,
             "n_null" => dist.n_null,
             "n_queries" => dist.n_queries,
+            "pairs" => [
+                Dict("query" => pair.query, "target" => pair.target, "score" => pair.score) for pair in dist.pairs
+            ],
             "skipped" =>
                 [Dict("query" => s.query, "reason" => s.reason) for s in dist.skipped],
             "compatibility" => Dict{String,Any}(
@@ -99,6 +108,13 @@ function savenull(path::AbstractString, dist::NullDistribution)
                 else
                     dist.relation_fingerprint
                 end,
+                "search_range" => dist.contract.search_range,
+                "window_radius" => dist.contract.window_radius,
+                "realign_window" => dist.contract.realign_window,
+                "min_logfpr" => dist.contract.min_logfpr,
+                "normalization_version" => dist.contract.normalization_version,
+                "alignment_version" => dist.contract.alignment_version,
+                "raw_scores_fingerprint" => dist.contract.raw_scores_fingerprint,
             ),
             "arrays" => Dict{String,Any}(
                 "raw_null_scores" => Dict{String,Any}(
@@ -212,6 +228,21 @@ function loadnull(path::AbstractString)
             push!(skipped, (query=query, reason=reason))
         end
 
+        pairs_raw = get(manifest, "pairs", nothing)
+        pairs_raw isa AbstractVector ||
+            throw(_bundle_error(path, "null manifest 'pairs' must be an array."))
+        pairs = NullPair[]
+        for (index, item) in enumerate(pairs_raw)
+            item isa AbstractDict ||
+                throw(_bundle_error(path, "pair entry $index must be a TOML table."))
+            query = _required_manifest_string(item, "query", path, "pair entry $index")
+            target = _required_manifest_string(item, "target", path, "pair entry $index")
+            score = _required_manifest_float(item, "score", path, "pair entry $index")
+            push!(pairs, NullPair(query, target, score))
+        end
+        length(pairs) == n_null ||
+            throw(_bundle_error(path, "pair count does not match n_null."))
+
         compat = _required_manifest_table(manifest, "compatibility", path, "null manifest")
         compat_version = _required_manifest_int(
             compat,
@@ -246,13 +277,49 @@ function loadnull(path::AbstractString)
         rf = _required_manifest_string(
             compat, "relation_fingerprint", path, "compatibility metadata"
         )
+        search_range = _required_manifest_int(
+            compat, "search_range", path, "compatibility metadata"; minimum=0
+        )
+        window_radius = _required_manifest_int(
+            compat, "window_radius", path, "compatibility metadata"; minimum=0
+        )
+        realign_window = _required_manifest_int(
+            compat, "realign_window", path, "compatibility metadata"; minimum=0
+        )
+        min_logfpr = _required_manifest_float(
+            compat, "min_logfpr", path, "compatibility metadata"
+        )
+        normalization_version = _required_manifest_string(
+            compat, "normalization_version", path, "compatibility metadata"
+        )
+        alignment_version = _required_manifest_string(
+            compat, "alignment_version", path, "compatibility metadata"
+        )
+        raw_scores_fingerprint = _required_manifest_string(
+            compat, "raw_scores_fingerprint", path, "compatibility metadata"
+        )
+        actual_raw_scores_fingerprint = content_fingerprint(raw_scores)
+        raw_scores_fingerprint == actual_raw_scores_fingerprint ||
+            throw(_bundle_error(path, "raw score fingerprint does not match payload."))
+        contract = ProfileComparisonContract(
+            metric,
+            search_range,
+            window_radius,
+            realign_window,
+            Float32(min_logfpr),
+            normalization_version,
+            alignment_version,
+            seq_fp,
+            bg_fp,
+            raw_scores_fingerprint,
+        )
 
         return NullDistribution(
             strategy,
             metric,
             fit_result,
             raw_scores,
-            NullPair[],
+            pairs,
             n_null,
             n_queries,
             skipped,
@@ -260,6 +327,7 @@ function loadnull(path::AbstractString)
             rf != "none" ? rf : nothing,
             seq_fp,
             bg_fp,
+            contract,
         )
     catch err
         _rethrow_bundle_error(path, err)
