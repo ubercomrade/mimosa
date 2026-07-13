@@ -121,6 +121,27 @@ function _accumulate_pooled(
     return (sum1, sum2, intersection)
 end
 
+function _accumulate_pooled(
+    r1::AbstractVector{Float32},
+    r2::AbstractVector{Float32},
+    pos1::Int,
+    shift::Int,
+    window_radius::Int,
+)
+    pos2 = pos1 + shift
+    sum1 = 0.0
+    sum2 = 0.0
+    intersection = 0.0
+    @inbounds for offset in (-window_radius):window_radius
+        v1 = Float64(r1[pos1 + offset])
+        v2 = Float64(r2[pos2 + offset])
+        sum1 += v1
+        sum2 += v2
+        intersection += min(v1, v2)
+    end
+    return (sum1, sum2, intersection)
+end
+
 # Accumulate rowwise overlap-based values (for CO_rowwise and Dice_rowwise).
 function _accumulate_rowwise_overlap(
     r1::AbstractVector{Float32},
@@ -154,6 +175,32 @@ function _accumulate_rowwise_overlap(
     return (score_sum, finite_count)
 end
 
+function _accumulate_rowwise_overlap(
+    r1::AbstractVector{Float32},
+    r2::AbstractVector{Float32},
+    pos1::Int,
+    shift::Int,
+    window_radius::Int,
+    use_dice::Bool,
+)
+    pos2 = pos1 + shift
+    sum1 = 0.0
+    sum2 = 0.0
+    intersection = 0.0
+    @inbounds for offset in (-window_radius):window_radius
+        v1 = Float64(r1[pos1 + offset])
+        v2 = Float64(r2[pos2 + offset])
+        sum1 += v1
+        sum2 += v2
+        intersection += min(v1, v2)
+    end
+    denom = use_dice ? sum1 + sum2 : min(sum1, sum2)
+    if denom > PROFILE_EPS
+        return (use_dice ? 2.0 * intersection / denom : intersection / denom, 1)
+    end
+    return (0.0, 0)
+end
+
 # Accumulate rowwise cosine values.
 function _accumulate_cosine(
     r1::AbstractVector{Float32},
@@ -183,6 +230,28 @@ function _accumulate_cosine(
         end
     end
     return (score_sum, finite_count)
+end
+
+function _accumulate_cosine(
+    r1::AbstractVector{Float32},
+    r2::AbstractVector{Float32},
+    pos1::Int,
+    shift::Int,
+    window_radius::Int,
+)
+    pos2 = pos1 + shift
+    dot = 0.0
+    norm1 = 0.0
+    norm2 = 0.0
+    @inbounds for offset in (-window_radius):window_radius
+        v1 = Float64(r1[pos1 + offset])
+        v2 = Float64(r2[pos2 + offset])
+        dot += v1 * v2
+        norm1 += v1 * v1
+        norm2 += v2 * v2
+    end
+    denom = sqrt(norm1) * sqrt(norm2)
+    return denom > PROFILE_EPS ? (dot / denom, 1) : (0.0, 0)
 end
 
 """
@@ -307,6 +376,111 @@ function _score_shift!(
     return (Float32(score), total_sites)
 end
 
+function _score_shift_best!(
+    scores1::RaggedArray{Float32},
+    scores2::RaggedArray{Float32},
+    query_csr::AnchorCSR,
+    target_csr::AnchorCSR,
+    shift::Int,
+    window_radius::Int,
+    realign_window::Int,
+    metric::AbstractProfileMetric,
+)
+    total_sum1 = 0.0
+    total_sum2 = 0.0
+    total_intersection = 0.0
+    total_row_score = 0.0
+    total_finite = 0
+    total_sites = 0
+
+    for row_index in 1:nrows(scores1)
+        len1 = rowlength(scores1, row_index)
+        len2 = rowlength(scores2, row_index)
+        r1 = row(scores1, row_index)
+        r2 = row(scores2, row_index)
+        query_pos = 0
+        target_pos = 0
+
+        query_start = query_csr.offsets[row_index]
+        query_stop = query_csr.offsets[row_index + 1] - 1
+        if query_start <= query_stop
+            candidate = query_csr.positions[query_start]
+            if _window_fits(candidate, len1, window_radius) &&
+                _window_fits(candidate + shift, len2, window_radius)
+                query_pos = candidate
+            end
+        end
+
+        target_start = target_csr.offsets[row_index]
+        target_stop = target_csr.offsets[row_index + 1] - 1
+        if target_start <= target_stop
+            expected = target_csr.positions[target_start] - shift
+            candidate = _realign_query_position(r1, expected, realign_window)
+            if candidate != 0 &&
+                _window_fits(candidate, len1, window_radius) &&
+                _window_fits(candidate + shift, len2, window_radius)
+                target_pos = candidate
+            end
+        end
+
+        if query_pos != 0
+            total_sites += 1
+            if is_pooled(metric)
+                s1, s2, inter = _accumulate_pooled(r1, r2, query_pos, shift, window_radius)
+                total_sum1 += s1
+                total_sum2 += s2
+                total_intersection += inter
+            elseif metric isa CosineSimilarityProfile
+                s_sum, f_count = _accumulate_cosine(r1, r2, query_pos, shift, window_radius)
+                total_row_score += s_sum
+                total_finite += f_count
+            else
+                s_sum, f_count = _accumulate_rowwise_overlap(
+                    r1, r2, query_pos, shift, window_radius, is_dice_metric(metric)
+                )
+                total_row_score += s_sum
+                total_finite += f_count
+            end
+        end
+
+        if target_pos != 0 && target_pos != query_pos
+            total_sites += 1
+            if is_pooled(metric)
+                s1, s2, inter = _accumulate_pooled(r1, r2, target_pos, shift, window_radius)
+                total_sum1 += s1
+                total_sum2 += s2
+                total_intersection += inter
+            elseif metric isa CosineSimilarityProfile
+                s_sum, f_count = _accumulate_cosine(
+                    r1, r2, target_pos, shift, window_radius
+                )
+                total_row_score += s_sum
+                total_finite += f_count
+            else
+                s_sum, f_count = _accumulate_rowwise_overlap(
+                    r1, r2, target_pos, shift, window_radius, is_dice_metric(metric)
+                )
+                total_row_score += s_sum
+                total_finite += f_count
+            end
+        end
+    end
+
+    total_sites == 0 && return (0.0f0, 0)
+    if is_pooled(metric)
+        if is_dice_metric(metric)
+            denom = total_sum1 + total_sum2
+            score = denom > PROFILE_EPS ? 2.0 * total_intersection / denom : 0.0
+        else
+            denom = min(total_sum1, total_sum2)
+            score = denom > PROFILE_EPS ? total_intersection / denom : 0.0
+        end
+    else
+        score = total_finite == 0 ? 0.0 : total_row_score / total_finite
+    end
+    return (Float32(score), total_sites)
+end
+
 # ── Orientation scoring ──────────────────────────────────────────────────
 
 # Profile orientation pairs: (label, query_strand, target_strand).
@@ -335,7 +509,7 @@ Tie-breaking (matching Python):
 3. On equal n_sites: smaller |shift| wins.
 4. First in iteration order wins on complete tie.
 """
-function _score_orientation_pair(
+function _score_orientation_pair_csr(
     query_bundle::StrandPair{<:RaggedArray{Float32}},
     target_bundle::StrandPair{<:RaggedArray{Float32}},
     query_anchors::AnchorCSR,
@@ -381,6 +555,64 @@ function _score_orientation_pair(
         end
     end
 
+    return (best_score, best_shift, best_n_sites, orientation_label)
+end
+
+function _score_orientation_pair(
+    query_bundle::StrandPair{<:RaggedArray{Float32}},
+    target_bundle::StrandPair{<:RaggedArray{Float32}},
+    query_anchors::AnchorCSR,
+    target_anchors::AnchorCSR,
+    query_strand::Int,
+    target_strand::Int,
+    orientation_label::String,
+    search_range::Int,
+    window_radius::Int,
+    realign_window::Int,
+    metric::AbstractProfileMetric,
+    min_logfpr::Float32=0.0f0,
+)
+    min_logfpr > 0.0f0 && return _score_orientation_pair_csr(
+        query_bundle,
+        target_bundle,
+        query_anchors,
+        target_anchors,
+        query_strand,
+        target_strand,
+        orientation_label,
+        search_range,
+        window_radius,
+        realign_window,
+        metric,
+    )
+
+    query_scores = query_strand == 1 ? query_bundle.forward : query_bundle.reverse
+    target_scores = target_strand == 1 ? target_bundle.forward : target_bundle.reverse
+    best_score = 0.0f0
+    best_shift = 0
+    best_n_sites = 0
+    for shift in (-search_range):search_range
+        score, n_sites = _score_shift_best!(
+            query_scores,
+            target_scores,
+            query_anchors,
+            target_anchors,
+            shift,
+            window_radius,
+            realign_window,
+            metric,
+        )
+        if Float64(score) > Float64(best_score) || (
+            Float64(score) == Float64(best_score) && (
+                n_sites > best_n_sites ||
+                (n_sites == best_n_sites && abs(shift) < abs(best_shift))
+            )
+        )
+            best_score = score
+            best_shift = shift
+            best_n_sites = n_sites
+        end
+    end
     return (best_score, best_shift, best_n_sites, orientation_label)
 end
 
@@ -474,6 +706,7 @@ function profile_compare(
             config.window_radius,
             config.realign_window,
             metric,
+            config.min_logfpr,
         )
         score, shift, n_sites, _ = result
 
@@ -583,7 +816,6 @@ function prepare_profile(
     model::ScoreProfile; min_logfpr::Real=0.0, execution::ExecutionPolicy=SerialExecution()
 )
     threshold = Float32(min_logfpr)
-    raw = profile_bundle(model)
     _, normalized = _fit_transform_empirical(model.scores)
     norm_bundle = StrandPair(normalized, normalized)
     anchors = _collect_both_anchors(norm_bundle, threshold)
@@ -610,11 +842,13 @@ function prepare_profile(
     threshold = Float32(min_logfpr)
     raw = scan(model, sequences; strands=BothStrands(), execution=execution)
     bg = background === nothing ? sequences : background
-    bg_raw =
-        bg === sequences ? raw : scan(model, bg; strands=BothStrands(), execution=execution)
-    flat = flatten_bundle(bg_raw)
-    table = fit(EmpiricalLogTail(), flat)
-    norm_bundle = normalize_bundle(table, raw)
+    if bg === sequences
+        _, norm_bundle = _fit_transform_empirical(raw)
+    else
+        bg_raw = scan(model, bg; strands=BothStrands(), execution=execution)
+        table = fit(EmpiricalLogTail(), flatten_bundle(bg_raw))
+        norm_bundle = normalize_bundle(table, raw)
+    end
     anchors = _collect_both_anchors(norm_bundle, threshold)
     return PreparedProfile(model.name, norm_bundle, anchors, threshold)
 end
@@ -647,7 +881,6 @@ function compare(
     threshold = min_logfpr === nothing ? query.min_logfpr : Float32(min_logfpr)
     threshold == query.min_logfpr ||
         throw(ArgumentError("min_logfpr differs from the prepared query threshold."))
-    target_raw = profile_bundle(target)
     _, target_scores = _fit_transform_empirical(target.scores)
     target_norm = StrandPair(target_scores, target_scores)
     target_anchors = _collect_both_anchors(target_norm, threshold)
@@ -843,5 +1076,83 @@ function compare(
     )
     return ComparisonResult(
         query.name, target.name, score, shift, orientation, metric_str, n_sites
+    )
+end
+
+"""
+    compare(query::PreparedProfile, targets, sequences; execution=...)
+
+Compare one prepared query against motif-model targets. Each target owns a
+serial scan, normalization, anchor collection, and alignment path.
+"""
+function compare(
+    query::PreparedProfile,
+    targets::AbstractVector{<:AbstractMotifModel},
+    sequences::EncodedSequenceBatch;
+    execution::ExecutionPolicy=SerialExecution(),
+    metric::Union{AbstractString,Symbol,AbstractProfileMetric}=:co,
+    search_range::Int=10,
+    window_radius::Int=10,
+    realign_window::Int=3,
+    min_logfpr::Union{Nothing,Real}=nothing,
+    background::Union{EncodedSequenceBatch,Nothing}=nothing,
+)
+    threshold = min_logfpr === nothing ? query.min_logfpr : Float32(min_logfpr)
+    threshold == query.min_logfpr ||
+        throw(ArgumentError("min_logfpr differs from the prepared query threshold."))
+    config = ProfileConfig(;
+        metric=_resolve_profile_metric(metric),
+        search_range,
+        window_radius,
+        realign_window,
+        min_logfpr=threshold,
+    )
+    results = Vector{ComparisonResult}(undef, length(targets))
+    isempty(targets) && return results
+    _parallel_for(execution, length(targets)) do i
+        target = targets[i]
+        target_bundle = _resolve_profile_bundle(
+            target, sequences, background; execution=SerialExecution()
+        )
+        target_anchors = _collect_both_anchors(target_bundle, threshold)
+        score, shift, orientation, n_sites, metric_str = profile_compare(
+            query.bundle, query.anchors, target_bundle, target_anchors, config
+        )
+        return results[i] = ComparisonResult(
+            query.name, target.name, score, shift, orientation, metric_str, n_sites
+        )
+    end
+    return results
+end
+
+"""
+    compare(query_model, targets, sequences; execution=...)
+
+Prepare the query once, then compare it against motif-model targets at the
+outer target level. Inner target work is explicitly serial.
+"""
+function compare(
+    query::AbstractMotifModel,
+    targets::AbstractVector{<:AbstractMotifModel},
+    sequences::EncodedSequenceBatch;
+    execution::ExecutionPolicy=SerialExecution(),
+    metric::Union{AbstractString,Symbol,AbstractProfileMetric}=:co,
+    search_range::Int=10,
+    window_radius::Int=10,
+    realign_window::Int=3,
+    min_logfpr::Real=0.0,
+    background::Union{EncodedSequenceBatch,Nothing}=nothing,
+)
+    prepared_query = prepare_profile(query, sequences; background, min_logfpr, execution)
+    return compare(
+        prepared_query,
+        targets,
+        sequences;
+        execution,
+        metric,
+        search_range,
+        window_radius,
+        realign_window,
+        background,
     )
 end

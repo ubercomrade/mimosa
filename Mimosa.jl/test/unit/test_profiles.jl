@@ -76,6 +76,53 @@ end
     @test row(normed.forward, 1) ≈ row(normed.reverse, 1)
 end
 
+@testset "fused two-strand empirical normalization" begin
+    forward = build_ragged([Float32[3, 1, 3], Float32[], Float32[2, 0]])
+    reverse = build_ragged([Float32[0, 2, 3], Float32[1], Float32[]])
+    bundle = StrandPair(forward, reverse)
+
+    fused_table, fused = Mimosa._fit_transform_empirical(bundle)
+    reference_table = fit(EmpiricalLogTail(), flatten_bundle(bundle))
+    reference = normalize_bundle(reference_table, bundle)
+
+    @test fused_table.scores == reference_table.scores
+    @test fused_table.log_tail == reference_table.log_tail
+    @test fused.forward.offsets == forward.offsets
+    @test fused.reverse.offsets == reverse.offsets
+    @test fused.forward.data == reference.forward.data
+    @test fused.reverse.data == reference.reverse.data
+
+    _, symmetric = Mimosa._fit_transform_empirical(StrandPair(forward, forward))
+    @test symmetric.forward === symmetric.reverse
+end
+
+@testset "best-anchor scalar alignment matches CSR alignment" begin
+    query = build_ragged([Float32[0.1, 0.8, 0.2, 0.4, 0.3], Float32[]])
+    target = build_ragged([Float32[0.2, 0.7, 0.1, 0.5, 0.3], Float32[]])
+    query_anchors = Mimosa._collect_both_anchors(StrandPair(query, query), 0.0f0)[1]
+    target_anchors = Mimosa._collect_both_anchors(StrandPair(target, target), 0.0f0)[1]
+    metrics = (
+        OverlapCoefficient(),
+        OverlapCoefficientRowwise(),
+        DiceSimilarity(),
+        DiceSimilarityRowwise(),
+        CosineSimilarityProfile(),
+    )
+
+    for metric in metrics
+        for shift in -2:2
+            scratch = Mimosa.CandidateScratch(5)
+            reference = Mimosa._score_shift!(
+                scratch, query, target, query_anchors, target_anchors, shift, 1, 1, metric
+            )
+            optimized = Mimosa._score_shift_best!(
+                query, target, query_anchors, target_anchors, shift, 1, 1, metric
+            )
+            @test optimized == reference
+        end
+    end
+end
+
 @testset "AnchorCSR" begin
     # Build anchors: row 1 has positions [3, 5], row 2 has position [1]
     rows = [1, 1, 2]
@@ -170,4 +217,58 @@ end
     results2 = compare(prepared, [sp2, sp3]; metric=:co, search_range=3, window_radius=2)
     @test results[1].score ≈ results2[1].score atol = 1e-6
     @test results[2].score ≈ results2[2].score atol = 1e-6
+end
+
+@testset "motif model one-to-many profile comparison" begin
+    weights = Float32[
+        0.5 -0.2 0.1
+        -0.1 0.6 -0.3
+        0.2 -0.1 0.7
+        -0.4 0.1 -0.2
+        -0.5 -0.5 -0.5
+    ]
+    background = (0.25f0, 0.25f0, 0.25f0, 0.25f0)
+    query = PWM("query", weights, background)
+    targets = [
+        PWM("target1", weights .+ 0.05f0, background),
+        PWM("target2", reverse(weights; dims=2), background),
+    ]
+    batch = EncodedSequenceBatch(
+        UInt8[0, 1, 2, 3, 0, 1, 2, 3, 3, 2, 1, 0, 3, 2, 1, 0], [1, 9, 17]
+    )
+
+    serial = compare(
+        query,
+        targets,
+        batch;
+        metric=:co,
+        search_range=2,
+        window_radius=1,
+        realign_window=1,
+        execution=SerialExecution(),
+    )
+    prepared = compare(
+        prepare_profile(query, batch),
+        targets,
+        batch;
+        metric=:co,
+        search_range=2,
+        window_radius=1,
+        realign_window=1,
+        execution=SerialExecution(),
+    )
+    @test [r.target for r in serial] == ["target1", "target2"]
+    @test prepared == serial
+
+    threaded = compare(
+        query,
+        targets,
+        batch;
+        metric=:co,
+        search_range=2,
+        window_radius=1,
+        realign_window=1,
+        execution=ThreadedExecution(4),
+    )
+    @test threaded == serial
 end

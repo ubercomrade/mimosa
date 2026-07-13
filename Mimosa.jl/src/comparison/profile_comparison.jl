@@ -64,10 +64,12 @@ function _resolve_profile_bundle(
 )
     raw = scan(model, sequences; strands=BothStrands(), execution=execution)
     bg = background_sequences === nothing ? sequences : background_sequences
-    bg_raw =
-        bg === sequences ? raw : scan(model, bg; strands=BothStrands(), execution=execution)
-    flat = flatten_bundle(bg_raw)
-    table = fit(EmpiricalLogTail(), flat)
+    if bg === sequences
+        _, normalized = _fit_transform_empirical(raw)
+        return normalized
+    end
+    bg_raw = scan(model, bg; strands=BothStrands(), execution=execution)
+    table = fit(EmpiricalLogTail(), flatten_bundle(bg_raw))
     return normalize_bundle(table, raw)
 end
 

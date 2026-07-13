@@ -132,7 +132,7 @@ and JIT warm-up from timing, then measures query scan/preparation plus target
 scan, normalization, and alignment. The JSON report records serial and threaded
 median/minimum times and Julia speedup relative to Python.
 
-### Cross-language results (2026-07-13)
+### Cross-language results (2026-07-13, optimized pipeline)
 
 Environment: Intel Core i7-11370H (4 cores/8 threads), Julia 1.12.6,
 Python 3.13.12, NumPy 2.3.5, Numba 0.65.0. Values are medians of three runs
@@ -140,12 +140,12 @@ after one warm-up and are machine-specific, not release thresholds.
 
 | Runtime | 1 thread | 4 threads | 1-to-4 speedup |
 |---------|----------|-----------|----------------|
-| Python | 25.552 s | 21.704 s | 1.18x |
-| Julia | 18.594 s | 17.161 s | 1.08x |
+| Python | 19.493 s | 11.418 s | 1.71x |
+| Julia | 13.480 s | 5.336 s | 2.53x |
 
-Julia was 1.37x faster in serial and 1.26x faster with four threads for this
-end-to-end compute scope. Limited thread scaling indicates that profile
-normalization and alignment dominate the parallel scan portion.
+Julia was 1.45x faster in serial and 2.14x faster with four threads for this
+end-to-end compute scope. Target-level parallelism is now visible in both
+implementations; normalization remains the largest isolated stage.
 
 ### Configuration
 
@@ -158,7 +158,7 @@ normalization and alignment dominate the parallel scan portion.
 | Metric | CO (overlap coefficient) |
 | Search range | 10 |
 | Window radius | 5 |
-| Repetitions per measurement | 5 |
+| Repetitions per measurement | 3 |
 
 ### Running
 

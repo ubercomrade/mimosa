@@ -114,6 +114,66 @@ function _fit_transform_empirical(scores::RaggedArray{Float32})
 end
 
 """
+    _fit_transform_empirical(bundle::StrandPair)
+
+Fit one empirical table from both strands and scatter normalized values while
+walking the single descending permutation. This is the common case where the
+calibration bundle and the output bundle are the same raw scan.
+"""
+function _fit_transform_empirical(bundle::StrandPair{<:RaggedArray{Float32}})
+    if bundle.forward === bundle.reverse
+        table, normalized = _fit_transform_empirical(bundle.forward)
+        return table, StrandPair(normalized, normalized)
+    end
+
+    n_forward = length(bundle.forward.data)
+    n_reverse = length(bundle.reverse.data)
+    n = n_forward + n_reverse
+    if n == 0
+        empty_table = LogTailTable(Float32[0.0f0], Float32[0.0f0])
+        empty_forward = RaggedArray(Float32[], copy(bundle.forward.offsets))
+        empty_reverse = RaggedArray(Float32[], copy(bundle.reverse.offsets))
+        return empty_table, StrandPair(empty_forward, empty_reverse)
+    end
+
+    flat = Vector{Float32}(undef, n)
+    copyto!(flat, 1, bundle.forward.data, 1, n_forward)
+    copyto!(flat, n_forward + 1, bundle.reverse.data, 1, n_reverse)
+    perm = sortperm(flat; rev=true)
+
+    n_unique = 1
+    @inbounds for k in 2:n
+        n_unique += flat[perm[k]] != flat[perm[k - 1]]
+    end
+    unique_scores = Vector{Float32}(undef, n_unique)
+    log_tail = Vector{Float32}(undef, n_unique)
+    normalized = Vector{Float32}(undef, n)
+    group = 1
+    k = 1
+    @inbounds while k <= n
+        score = flat[perm[k]]
+        unique_scores[group] = score
+        j = k + 1
+        while j <= n && flat[perm[j]] == score
+            j += 1
+        end
+        value = Float32(-log10(Float64(j - 1) / Float64(n)))
+        log_tail[group] = value
+        for p in k:(j - 1)
+            normalized[perm[p]] = value
+        end
+        group += 1
+        k = j
+    end
+
+    forward_data = @view normalized[1:n_forward]
+    reverse_data = @view normalized[(n_forward + 1):n]
+    forward = RaggedArray(forward_data, copy(bundle.forward.offsets))
+    reverse = RaggedArray(reverse_data, copy(bundle.reverse.offsets))
+    return LogTailTable(unique_scores, log_tail), StrandPair(forward, reverse)
+end
+
+"""
     _lower_bound_desc(scores::Vector{Float32}, target::Float32)
 
 Binary search in a descending-sorted array: return the 1-based index of

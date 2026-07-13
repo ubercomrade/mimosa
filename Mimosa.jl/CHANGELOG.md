@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Execution-aware `selectsites` and `reconstruct_pfm` workflows.
 - Bounded nested-parallelism protection and cost-weighted scan scheduling.
+- Fused empirical profile normalization and target-level one-to-many comparison
+  paths in Python and Julia, with serial/threaded equivalence coverage.
 - **CITATION.cff** for citation support via GitHub and Zenodo.
 - **CHANGELOG.md** tracking all notable changes through the migration and
   remediation process.
@@ -33,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tests and benchmark documentation now follow the profile-only API, CLI, and
   null-storage contracts; the cross-language 1-vs-50 harness uses shared FASTA
   and MEME inputs.
+- The cross-language profile benchmark now reports scan, normalization, anchor,
+  alignment, prepared one-to-many, and end-to-end stages separately.
 
 ### Fixed
 
