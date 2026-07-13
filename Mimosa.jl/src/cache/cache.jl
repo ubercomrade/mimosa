@@ -161,7 +161,27 @@ function content_fingerprint(model::AbstractMotifModel)
         write(io, "|")
         write(io, "span=" * string(model.span))
         write(io, ",ml=" * string(model.motif_length))
+    else
+        throw(ArgumentError("no content fingerprint is defined for $(typeof(model))."))
     end
+    return content_fingerprint(take!(io))
+end
+
+"""
+    content_fingerprint(profile::ScoreProfile)
+
+Return a fingerprint of a precomputed profile's name, score data, offsets,
+and storage layout. Profiles with the same name but different scores never
+share a fingerprint.
+"""
+function content_fingerprint(profile::ScoreProfile)
+    io = IOBuffer()
+    write(io, "ScoreProfile|layout=ragged-column-major|dtype=Float32|")
+    write(io, profile.name)
+    write(io, "|data=")
+    write(io, content_fingerprint(profile.scores.data))
+    write(io, "|offsets=")
+    write(io, content_fingerprint(profile.scores.offsets))
     return content_fingerprint(take!(io))
 end
 
@@ -211,12 +231,51 @@ end
 
 Return the filesystem path for a cache entry with the given key.
 """
+function _validate_cache_key(key::AbstractString)
+    value = String(key)
+    isempty(value) && throw(ArgumentError("cache key must not be empty."))
+    (value == "." || value == "..") &&
+        throw(ArgumentError("cache key must be a single path component."))
+    occursin('\0', value) && throw(ArgumentError("cache key must not contain NUL."))
+    isabspath(value) && throw(ArgumentError("absolute cache keys are not allowed."))
+    occursin(r"[/\\]", value) &&
+        throw(ArgumentError("cache key must not contain path separators."))
+    occursin(r"^[A-Za-z]:", value) &&
+        throw(ArgumentError("cache key must not contain a drive prefix."))
+    return value
+end
+
+function _cache_path(cache::Cache, key::AbstractString, suffix::AbstractString)
+    value = _validate_cache_key(key)
+    root = abspath(cache.directory)
+    path = joinpath(root, value * suffix)
+    root_real = ispath(root) ? realpath(root) : root
+    path_real = try
+        if islink(path)
+            realpath(path)
+        elseif ispath(path)
+            realpath(path)
+        else
+            parent = dirname(path)
+            parent_real = ispath(parent) ? realpath(parent) : parent
+            joinpath(parent_real, basename(path))
+        end
+    catch error
+        throw(ArgumentError("could not resolve cache path: $(sprint(showerror, error))."))
+    end
+    relative = relpath(path_real, root_real)
+    separator = Sys.iswindows() ? "\\\\" : "/"
+    (relative == ".." || startswith(relative, ".." * separator)) &&
+        throw(ArgumentError("cache path escapes cache root."))
+    return path
+end
+
 function cache_path(cache::Cache, key::AbstractString)
-    return joinpath(cache.directory, "$key.bin")
+    return _cache_path(cache, key, ".bin")
 end
 
 function cache_meta_path(cache::Cache, key::AbstractString)
-    return joinpath(cache.directory, "$key.meta.toml")
+    return _cache_path(cache, key, ".meta.toml")
 end
 
 # ── Cache get/set ───────────────────────────────────────────────────────────
@@ -228,9 +287,9 @@ Check whether a cache entry exists and is valid (not corrupted).
 Returns `false` if the cache is disabled or the entry is missing/corrupted.
 """
 function cache_has(cache::Cache, key::AbstractString)
-    !cache.enabled && return false
     path = cache_path(cache, key)
     meta_path = cache_meta_path(cache, key)
+    !cache.enabled && return false
     isfile(path) && isfile(meta_path) || return false
     # Validate checksum
     return _validate_cache_entry(path, meta_path)
@@ -243,9 +302,9 @@ Read a cache entry's binary data. Returns `nothing` if the cache is disabled,
 the entry is missing, or the checksum does not match.
 """
 function cache_get(cache::Cache, key::AbstractString)
-    !cache.enabled && return nothing
     path = cache_path(cache, key)
     meta_path = cache_meta_path(cache, key)
+    !cache.enabled && return nothing
     isfile(path) && isfile(meta_path) || return nothing
     _validate_cache_entry(path, meta_path) || return nothing
     return read(path)
@@ -258,8 +317,8 @@ Read and parse the metadata (TOML) for a cache entry.
 Returns `nothing` if missing or cache disabled.
 """
 function cache_get_meta(cache::Cache, key::AbstractString)
-    !cache.enabled && return nothing
     meta_path = cache_meta_path(cache, key)
+    !cache.enabled && return nothing
     isfile(meta_path) || return nothing
     try
         return TOML.parsefile(meta_path)
@@ -272,12 +331,10 @@ end
     cache_set(cache::Cache, key::AbstractString, data::AbstractVector{UInt8};
               metadata=Dict{String,Any}())
 
-Write binary data and metadata to the cache atomically.
-No-op if the cache is disabled.
-
-The write is atomic: data is written to a temp file, then renamed. The
-metadata (TOML with checksum) is written similarly. If the process is
-interrupted, the temp files are orphaned but the cache entry is not created.
+Write binary data and metadata using temporary sibling files.
+No-op if the cache is disabled. Each file is committed with an atomic rename;
+an interruption between the two commits leaves a cache miss, never a usable
+partially validated entry.
 """
 function cache_set(
     cache::Cache,
@@ -285,13 +342,12 @@ function cache_set(
     data::AbstractVector{UInt8};
     metadata::Dict=Dict{String,Any}(),
 )
+    path = cache_path(cache, key)
+    meta_path = cache_meta_path(cache, key)
     !cache.enabled && return nothing
 
     # Create directory lazily
     isdir(cache.directory) || mkpath(cache.directory)
-
-    path = cache_path(cache, key)
-    meta_path = cache_meta_path(cache, key)
 
     # Compute checksum
     checksum = bytes2hex(SHA.sha256(data))
@@ -299,7 +355,7 @@ function cache_set(
     # Write data atomically: temp + rename
     tmp_path = path * ".tmp"
     write(tmp_path, data)
-    _fsync_and_rename(tmp_path, path)
+    _flush_and_rename(tmp_path, path)
 
     # Write metadata atomically
     meta = Dict{String,Any}(
@@ -307,12 +363,15 @@ function cache_set(
         "checksum" => "sha256:$checksum",
         "size" => length(data),
     )
-    merge!(meta, metadata)
+    for (name, value) in metadata
+        name in ("format_version", "checksum", "size") && continue
+        meta[name] = value
+    end
     tmp_meta = meta_path * ".tmp"
     open(tmp_meta, "w") do io
         return TOML.print(io, meta; sorted=true)
     end
-    _fsync_and_rename(tmp_meta, meta_path)
+    _flush_and_rename(tmp_meta, meta_path)
 
     return path
 end
@@ -324,13 +383,32 @@ Remove all cache entries from the cache directory.
 Does not remove the directory itself.
 """
 function clearcache(cache::Cache)
+    !cache.enabled && return 0
     isdir(cache.directory) || return 0
+    names = readdir(cache.directory)
+    keys = Set{String}()
+    for filename in names
+        for suffix in (".bin", ".meta.toml")
+            endswith(filename, suffix) || continue
+            push!(keys, chop(filename; tail=length(suffix)))
+        end
+    end
+
     count = 0
-    for f in readdir(cache.directory)
-        fp = joinpath(cache.directory, f)
-        if isfile(fp)
-            rm(fp; force=true)
-            count += 1
+    for key in keys
+        try
+            path = _cache_path(cache, key, ".bin")
+            meta_path = _cache_path(cache, key, ".meta.toml")
+            isfile(path) && isfile(meta_path) || continue
+            rm(path; force=true)
+            rm(meta_path; force=true)
+            count += 2
+            for suffix in (".bin.tmp", ".meta.toml.tmp")
+                tmp = _cache_path(cache, key, suffix)
+                isfile(tmp) && (rm(tmp; force=true); count += 1)
+            end
+        catch error
+            error isa ArgumentError || rethrow()
         end
     end
     return count
@@ -342,17 +420,15 @@ end
 Remove a single cache entry and its metadata.
 """
 function clearcache(cache::Cache, key::AbstractString)
+    value = _validate_cache_key(key)
+    !cache.enabled && return 0
     removed = 0
-    path = cache_path(cache, key)
-    meta_path = cache_meta_path(cache, key)
-    isfile(path) && (rm(path); removed += 1)
-    isfile(meta_path) && (rm(meta_path); removed += 1)
-    # Clean up any temp files for this key
-    for suffix in (".tmp",)
-        tmp = path * suffix
-        isfile(tmp) && rm(tmp; force=true)
-        tmp_meta = meta_path * suffix
-        isfile(tmp_meta) && rm(tmp_meta; force=true)
+    for suffix in (".bin", ".meta.toml", ".bin.tmp", ".meta.toml.tmp")
+        path = _cache_path(cache, value, suffix)
+        if isfile(path)
+            rm(path; force=true)
+            removed += 1
+        end
     end
     return removed
 end
@@ -372,8 +448,8 @@ function _validate_cache_entry(path::AbstractString, meta_path::AbstractString)
     end
 end
 
-function _fsync_and_rename(tmp_path::AbstractString, final_path::AbstractString)
-    # fsync the temp file for durability, then atomic rename
+function _flush_and_rename(tmp_path::AbstractString, final_path::AbstractString)
+    # Flush before rename; filesystem durability is not promised here.
     open(tmp_path, "r+") do io
         return flush(io)
     end

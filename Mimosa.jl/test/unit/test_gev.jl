@@ -35,6 +35,14 @@ using Random
     @test scale ≈ result.scale
 end
 
+@testset "GEV input validation" begin
+    @test_throws ArgumentError fit_gev([1.0, 2.0, 3.0]; max_iter=0)
+    @test_throws ArgumentError fit_gev([1.0, 2.0, 3.0]; tol=0.0)
+    @test_throws ArgumentError GEVFit(0.0, 0.0, 0.0, true, 1, 0.0)
+    @test_throws ArgumentError GEVFit(0.0, 0.0, 1.0, true, -1, 0.0)
+    @test_throws ArgumentError GEVFit(NaN, 0.0, 1.0, true, 1, 0.0)
+end
+
 @testset "GEV fit edge cases" begin
     # Too few scores
     result = fit_gev([1.0, 2.0])

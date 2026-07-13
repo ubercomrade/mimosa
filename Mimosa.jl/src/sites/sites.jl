@@ -34,12 +34,19 @@ end
 Keep only the top `fraction` of hits by score after collection. At least one
 hit is kept. This wraps an underlying selection mode (`best` or `threshold`).
 """
-struct TopFractionHits <: SiteSelector
+struct TopFractionHits{S<:SiteSelector} <: SiteSelector
     fraction::Float64
-    base::SiteSelector
+    base::S
 end
 
-function TopFractionHits(fraction::Float64)
+function TopFractionHits(fraction::Real, base::S) where {S<:SiteSelector}
+    value = Float64(fraction)
+    isfinite(value) && 0.0 < value <= 1.0 ||
+        throw(ArgumentError("fraction must be finite and lie in (0, 1]."))
+    return TopFractionHits{S}(value, base)
+end
+
+function TopFractionHits(fraction::Real)
     return TopFractionHits(fraction, BestPerSequence())
 end
 

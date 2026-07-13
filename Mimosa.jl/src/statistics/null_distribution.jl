@@ -163,6 +163,10 @@ function build_null(
     kwargs...,
 )
     isempty(kwargs) || throw(ArgumentError("unsupported profile null-build option."))
+    names = String[model.name for model in models]
+    length(unique(names)) == length(names) ||
+        throw(ArgumentError("model names must be unique for null construction."))
+    all(!isempty, names) || throw(ArgumentError("model names must not be empty."))
     search_range >= 0 || throw(ArgumentError("search_range must be non-negative."))
     window_radius >= 0 || throw(ArgumentError("window_radius must be non-negative."))
     realign_window >= 0 || throw(ArgumentError("realign_window must be non-negative."))

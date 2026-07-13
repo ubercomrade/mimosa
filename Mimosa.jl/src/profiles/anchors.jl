@@ -13,6 +13,16 @@ Fields:
 struct AnchorCSR
     positions::Vector{Int}
     offsets::Vector{Int}
+
+    function AnchorCSR(positions::Vector{Int}, offsets::Vector{Int})
+        isempty(offsets) && throw(ArgumentError("anchor offsets must not be empty."))
+        offsets[1] == 1 || throw(ArgumentError("anchor offsets must start at 1."))
+        offsets[end] == length(positions) + 1 ||
+            throw(ArgumentError("anchor offsets must end at positions length + 1."))
+        all(diff(offsets) .>= 0) ||
+            throw(ArgumentError("anchor offsets must be nondecreasing."))
+        return new(positions, offsets)
+    end
 end
 
 Base.isempty(csr::AnchorCSR) = isempty(csr.positions)
@@ -24,6 +34,14 @@ Build an [`AnchorCSR`](@ref) from flat row/position arrays using a stable
 counting sort. Matches Python's `build_anchor_csr`.
 """
 function build_anchor_csr(rows::Vector{Int}, positions::Vector{Int}, n_rows::Int)
+    n_rows >= 0 || throw(ArgumentError("n_rows must be non-negative."))
+    length(rows) == length(positions) ||
+        throw(ArgumentError("rows and positions must have equal lengths."))
+    all(1 <= row <= n_rows for row in rows) ||
+        throw(ArgumentError("anchor rows must be within 1:n_rows."))
+    all(position > 0 for position in positions) ||
+        throw(ArgumentError("anchor positions must be positive."))
+
     n = length(rows)
     n == 0 && return AnchorCSR(Int[], ones(Int, n_rows + 1))
 

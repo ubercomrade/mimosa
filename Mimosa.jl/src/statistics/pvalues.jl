@@ -25,6 +25,8 @@ function adjusted_pvalues(
     n == 0 && return Float64[]
 
     p = Float64.(collect(pvalues))
+    all(isfinite, p) && all((0.0 .<= p) .& (p .<= 1.0)) ||
+        throw(ArgumentError("p-values must be finite and lie in [0, 1]."))
     order = sortperm(p)
     sorted_p = p[order]
 
@@ -60,7 +62,11 @@ Compute E-value: `p * effective_n`. The effective number of targets accounts
 for multiple testing in the comparison set.
 """
 function evalue(pvalue::Real, effective_n::Int)
-    return Float64(pvalue) * effective_n
+    p = Float64(pvalue)
+    isfinite(p) && 0.0 <= p <= 1.0 ||
+        throw(ArgumentError("p-value must be finite and lie in [0, 1]."))
+    effective_n >= 0 || throw(ArgumentError("effective_n must be non-negative."))
+    return p * effective_n
 end
 
 """

@@ -32,6 +32,39 @@ struct GEVFit
     converged::Bool
     iterations::Int
     loglikelihood::Float64
+
+    function GEVFit(
+        shape::Float64,
+        location::Float64,
+        scale::Float64,
+        converged::Bool,
+        iterations::Int,
+        loglikelihood::Float64,
+    )
+        all(isfinite, (shape, location, scale, loglikelihood)) ||
+            throw(ArgumentError("GEV parameters must be finite."))
+        scale > 0 || throw(ArgumentError("GEV scale must be positive."))
+        iterations >= 0 || throw(ArgumentError("GEV iterations must be non-negative."))
+        return new(shape, location, scale, converged, iterations, loglikelihood)
+    end
+end
+
+function GEVFit(
+    shape::Real,
+    location::Real,
+    scale::Real,
+    converged::Bool,
+    iterations::Int,
+    loglikelihood::Real,
+)
+    return GEVFit(
+        Float64(shape),
+        Float64(location),
+        Float64(scale),
+        converged,
+        iterations,
+        Float64(loglikelihood),
+    )
 end
 
 """
@@ -259,6 +292,8 @@ The shape parameter uses the textbook convention `k` (sign flipped from
 SciPy's `c`): `k = -c`.
 """
 function fit_gev(scores::AbstractVector{<:Real}; max_iter::Int=500, tol::Float64=1e-8)
+    max_iter > 0 || throw(ArgumentError("max_iter must be positive."))
+    isfinite(tol) && tol > 0 || throw(ArgumentError("tol must be finite and positive."))
     data = sort!(Float64.(collect(scores)))
     n = length(data)
 

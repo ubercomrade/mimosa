@@ -40,6 +40,17 @@ end
     @test meta["algorithm"] == "test"
     @test startswith(meta["checksum"], "sha256:")
     @test meta["size"] == 5
+
+    cache_set(
+        cache,
+        key,
+        data;
+        metadata=Dict("format_version" => 99, "checksum" => "sha256:bad", "size" => 0),
+    )
+    meta = cache_get_meta(cache, key)
+    @test meta["format_version"] == Mimosa.CACHE_FORMAT_VERSION
+    @test meta["size"] == length(data)
+    @test cache_has(cache, key)
 end
 
 @testset "Cache disabled" begin
@@ -77,6 +88,34 @@ end
     count = clearcache(cache)
     @test count >= 2  # key2's data + meta
     @test !cache_has(cache, "key2")
+end
+
+@testset "Cache key containment" begin
+    cache = Cache(mktempdir())
+    for key in ("../escape", "/tmp/escape", "a\\\\b", "a\0b", "C:/escape", ".", "..")
+        @test_throws ArgumentError cache_has(cache, key)
+        @test_throws ArgumentError cache_get(cache, key)
+        @test_throws ArgumentError cache_get_meta(cache, key)
+        @test_throws ArgumentError cache_set(cache, key, UInt8[1])
+        @test_throws ArgumentError clearcache(cache, key)
+    end
+
+    cache_set(cache, "keep", UInt8[1, 2])
+    sentinel = joinpath(cache.directory, "sentinel.bin")
+    write(sentinel, "keep")
+    mkpath(joinpath(cache.directory, "unrelated"))
+    @test clearcache(cache) == 2
+    @test isfile(sentinel)
+    @test isdir(joinpath(cache.directory, "unrelated"))
+
+    if Sys.isunix()
+        outside = tempname()
+        write(outside, UInt8[9])
+        symlink(outside, joinpath(cache.directory, "escape.bin"))
+        @test_throws ArgumentError cache_has(cache, "escape")
+        @test islink(joinpath(cache.directory, "escape.bin"))
+        rm(outside; force=true)
+    end
 end
 
 @testset "Cache corruption recovery" begin
@@ -155,6 +194,14 @@ end
     weights2[1, 1] = 0.6f0
     pwm4 = PWM("model_a", weights2, bg)
     @test model_fingerprint(pwm1) != model_fingerprint(pwm4)
+end
+
+@testset "ScoreProfile fingerprint" begin
+    first = ScoreProfile("same", RaggedArray(Float32[1, 2], [1, 3]))
+    second = ScoreProfile("same", RaggedArray(Float32[1, 3], [1, 3]))
+    shifted = ScoreProfile("same", RaggedArray(Float32[1, 2], [1, 2, 3]))
+    @test content_fingerprint(first) != content_fingerprint(second)
+    @test content_fingerprint(first) != content_fingerprint(shifted)
 end
 
 @testset "Sequence fingerprint" begin

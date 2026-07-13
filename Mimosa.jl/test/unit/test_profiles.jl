@@ -136,6 +136,15 @@ end
     csr_empty = build_anchor_csr(Int[], Int[], 2)
     @test isempty(csr_empty)
     @test csr_empty.offsets == [1, 1, 1]
+
+    @test_throws ArgumentError AnchorCSR([1], [2, 2])
+    @test_throws ArgumentError AnchorCSR([1], [1, 3])
+    @test_throws ArgumentError AnchorCSR([1], [1, 0])
+    @test_throws ArgumentError build_anchor_csr([1], Int[], 1)
+    @test_throws ArgumentError build_anchor_csr([0], [1], 1)
+    @test_throws ArgumentError build_anchor_csr([2], [1], 1)
+    @test_throws ArgumentError build_anchor_csr([1], [0], 1)
+    @test_throws ArgumentError build_anchor_csr(Int[], Int[], -1)
 end
 
 @testset "collect_best_anchors" begin
@@ -212,6 +221,15 @@ end
     @test results[1].offset == prepared_result.offset
     @test results[2].query == "query"
     @test results[2].target == "target2"
+
+    thresholded = prepare_profile(sp1; min_logfpr=0.25)
+    @test compare(thresholded, sp2; search_range=3, window_radius=2).score isa Float32
+    @test_throws ArgumentError compare(
+        thresholded, sp2; search_range=3, window_radius=2, min_logfpr=0.0
+    )
+    @test_throws ArgumentError compare(
+        thresholded, [sp2]; search_range=3, window_radius=2, min_logfpr=0.0
+    )
 
     # Determinism: repeated calls give same results
     results2 = compare(prepared, [sp2, sp3]; metric=:co, search_range=3, window_radius=2)

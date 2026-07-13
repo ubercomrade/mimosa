@@ -728,11 +728,15 @@ function _file_sha256(path::AbstractString)
     end
 end
 
-function _with_bundle_write(path::AbstractString, writer::Function)
+function _with_bundle_write(path::AbstractString, writer::F) where {F}
     target = abspath(String(path))
-    ispath(target) &&
-        !isdir(target) &&
-        throw(InvariantError("bundle target '$target' is not a directory."))
+    if ispath(target)
+        isdir(target) ||
+            throw(InvariantError("bundle target '$target' is not a directory."))
+        isempty(readdir(target)) ||
+            throw(InvariantError("bundle target '$target' already exists."))
+        rm(target; recursive=true)
+    end
     parent = dirname(target)
     mkpath(parent)
     prefix = ".$(basename(target)).mimosa-stage-"
@@ -740,7 +744,9 @@ function _with_bundle_write(path::AbstractString, writer::Function)
     mkpath(joinpath(stage, BUNDLE_DATA_DIR))
     try
         writer(target, stage)
-        mv(stage, target; force=true)
+        # A directory rename is atomic only when the destination is absent.
+        # Refusing overwrite preserves an existing valid bundle on any failure.
+        mv(stage, target)
         return target
     catch err
         err isa MimosaError && throw(err)
@@ -757,6 +763,6 @@ function _with_bundle_write(path::AbstractString, writer::Function)
     end
 end
 
-function _with_bundle_write(writer::Function, path::AbstractString)
+function _with_bundle_write(writer::F, path::AbstractString) where {F}
     return _with_bundle_write(path, writer)
 end

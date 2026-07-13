@@ -16,8 +16,7 @@ end
     w2 = Float32[0.1 0.8; 0.8 0.1; 0.05 0.05; 0.05 0.05; 0.0 0.0]
     models = [PWM("m1", w1, _NULL_BG), PWM("m2", w2, _NULL_BG)]
     relations = GroupRelations(
-        Dict("m1" => "A", "m2" => "B"),
-        Dict("m1" => Set(["m2"]), "m2" => Set(["m1"])),
+        Dict("m1" => "A", "m2" => "B"), Dict("m1" => Set(["m2"]), "m2" => Set(["m1"]))
     )
     sequences = EncodedSequenceBatch([
         encode_sequence("ACGTACGT"), encode_sequence("TGCATGCA")
@@ -27,4 +26,6 @@ end
     @test result.distribution.metric == "co"
     @test result.distribution.sequence_fingerprint == sequence_fingerprint(sequences)
     @test result.total_comparisons == 2
+    duplicate = [models[1], PWM("m1", w2, _NULL_BG)]
+    @test_throws ArgumentError build_null(duplicate, relations; sequences=sequences)
 end

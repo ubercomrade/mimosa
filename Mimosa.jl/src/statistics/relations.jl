@@ -64,9 +64,10 @@ function parse_group_relations(
     for row in rows
         name = String(strip(row[name_idx]))
         group = String(strip(row[group_idx]))
-        if isempty(name)
-            continue
-        end
+        isempty(name) && continue
+        isempty(group) && throw(ArgumentError("Relation group names must not be empty."))
+        haskey(groups, name) &&
+            throw(ArgumentError("Relation file contains duplicate motif '$name'."))
         groups[name] = group
     end
 
@@ -117,7 +118,15 @@ end
 # ---------------------------------------------------------------------------
 
 function _read_table(path::AbstractString)
-    content = read(path, String)
+    content = try
+        read(path, String)
+    catch error
+        throw(
+            ArgumentError(
+                "could not read relation file '$path': $(sprint(showerror, error))."
+            ),
+        )
+    end
     delimiter = _sniff_delimiter(content)
     lines = split(content, '\n')
 
@@ -126,19 +135,22 @@ function _read_table(path::AbstractString)
     isempty(data_lines) && throw(ArgumentError("Relation file is empty: $path"))
 
     # Parse header
-    headers = String.(strip.(split(data_lines[1], delimiter)))
-    # Remove empty trailing header
-    headers = filter(!isempty, headers)
+    headers = String.(strip.(split(data_lines[1], delimiter; keepempty=true)))
+    isempty(headers) && throw(ArgumentError("Relation file has no header: $path"))
+    any(isempty, headers) &&
+        throw(ArgumentError("Relation file contains an empty header: $path"))
+    length(unique(headers)) == length(headers) ||
+        throw(ArgumentError("Relation file contains duplicate headers: $path"))
 
     rows = Vector{Vector{String}}()
     for line in data_lines[2:end]
-        fields = split(line, delimiter)
-        # Strip and convert to String
+        fields = split(line, delimiter; keepempty=true)
+        length(fields) == length(headers) || throw(
+            ArgumentError(
+                "Relation row has $(length(fields)) fields; expected $(length(headers)).",
+            ),
+        )
         row = String.(strip.(fields))
-        # Pad if needed
-        while length(row) < length(headers)
-            push!(row, "")
-        end
         push!(rows, row)
     end
 

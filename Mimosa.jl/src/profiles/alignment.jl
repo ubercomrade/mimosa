@@ -780,7 +780,47 @@ struct PreparedProfile{T}
     min_logfpr::Float32
 end
 
-function PreparedProfile(name::String, bundle, anchors::Tuple{AnchorCSR,AnchorCSR})
+function PreparedProfile(
+    name::String,
+    bundle::StrandPair{<:RaggedArray{Float32}},
+    anchors::Tuple{AnchorCSR,AnchorCSR},
+    min_logfpr::Float32,
+)
+    threshold = min_logfpr
+    isfinite(threshold) || throw(ArgumentError("min_logfpr must be finite."))
+    n_rows = nrows(bundle.forward)
+    n_rows == nrows(bundle.reverse) ||
+        throw(ArgumentError("prepared strand bundles must have equal row counts."))
+    length(anchors[1].offsets) == n_rows + 1 ||
+        throw(ArgumentError("forward anchor rows do not match the profile bundle."))
+    length(anchors[2].offsets) == n_rows + 1 ||
+        throw(ArgumentError("reverse anchor rows do not match the profile bundle."))
+    for (csr, strand) in zip(anchors, (bundle.forward, bundle.reverse))
+        for row_index in 1:n_rows
+            for position in
+                csr.positions[csr.offsets[row_index]:(csr.offsets[row_index + 1] - 1)]
+                1 <= position <= rowlength(strand, row_index) ||
+                    throw(ArgumentError("anchor position is outside its profile row."))
+            end
+        end
+    end
+    return PreparedProfile{typeof(bundle)}(name, bundle, anchors, threshold)
+end
+
+function PreparedProfile(
+    name::String,
+    bundle::StrandPair{<:RaggedArray{Float32}},
+    anchors::Tuple{AnchorCSR,AnchorCSR},
+    min_logfpr::Real,
+)
+    return PreparedProfile(name, bundle, anchors, Float32(min_logfpr))
+end
+
+function PreparedProfile(
+    name::String,
+    bundle::StrandPair{<:RaggedArray{Float32}},
+    anchors::Tuple{AnchorCSR,AnchorCSR},
+)
     return PreparedProfile(name, bundle, anchors, 0.0f0)
 end
 
@@ -1016,21 +1056,24 @@ function compare(
     search_range::Int=10,
     window_radius::Int=10,
     realign_window::Int=3,
-    min_logfpr::Float32=Float32(0.0),
+    min_logfpr::Union{Nothing,Real}=nothing,
     background::Union{EncodedSequenceBatch,Nothing}=nothing,
     execution::ExecutionPolicy=SerialExecution(),
 )
     m = _resolve_profile_metric(metric)
+    threshold = min_logfpr === nothing ? query.min_logfpr : Float32(min_logfpr)
+    threshold == query.min_logfpr ||
+        throw(ArgumentError("min_logfpr differs from the prepared query threshold."))
     target_norm = _resolve_profile_bundle(
         target, sequences, background; execution=execution
     )
-    target_anchors = _collect_both_anchors(target_norm, min_logfpr)
+    target_anchors = _collect_both_anchors(target_norm, threshold)
     config = ProfileConfig(;
         metric=m,
         search_range=search_range,
         window_radius=window_radius,
         realign_window=realign_window,
-        min_logfpr=min_logfpr,
+        min_logfpr=threshold,
     )
     score, shift, orientation, n_sites, metric_str = profile_compare(
         query.bundle, query.anchors, target_norm, target_anchors, config
@@ -1057,19 +1100,22 @@ function compare(
     search_range::Int=10,
     window_radius::Int=10,
     realign_window::Int=3,
-    min_logfpr::Float32=Float32(0.0),
+    min_logfpr::Union{Nothing,Real}=nothing,
     background::Union{EncodedSequenceBatch,Nothing}=nothing,
     execution::ExecutionPolicy=SerialExecution(),
 )
     m = _resolve_profile_metric(metric)
+    threshold = min_logfpr === nothing ? target.min_logfpr : Float32(min_logfpr)
+    threshold == target.min_logfpr ||
+        throw(ArgumentError("min_logfpr differs from the prepared target threshold."))
     query_norm = _resolve_profile_bundle(query, sequences, background; execution=execution)
-    query_anchors = _collect_both_anchors(query_norm, min_logfpr)
+    query_anchors = _collect_both_anchors(query_norm, threshold)
     config = ProfileConfig(;
         metric=m,
         search_range=search_range,
         window_radius=window_radius,
         realign_window=realign_window,
-        min_logfpr=min_logfpr,
+        min_logfpr=threshold,
     )
     score, shift, orientation, n_sites, metric_str = profile_compare(
         query_norm, query_anchors, target.bundle, target.anchors, config

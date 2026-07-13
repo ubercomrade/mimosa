@@ -22,6 +22,9 @@ using Mimosa
 
     # Empty: returns empty
     @test isempty(adjusted_pvalues(Float64[]))
+    @test_throws ArgumentError adjusted_pvalues([NaN])
+    @test_throws ArgumentError adjusted_pvalues([-0.1])
+    @test_throws ArgumentError adjusted_pvalues([1.1])
 
     # All p-values = 0: adjusted = 0
     @test all(adjusted_pvalues([0.0, 0.0, 0.0]) .== 0.0)
@@ -44,6 +47,8 @@ end
     @test evalue(0.0, 100) ≈ 0.0
     @test evalue(1.0, 50) ≈ 50.0
     @test evalue(0.001, 1000) ≈ 1.0
+    @test_throws ArgumentError evalue(-0.1, 10)
+    @test_throws ArgumentError evalue(0.1, -1)
 end
 
 @testset "pvalue from GEV" begin

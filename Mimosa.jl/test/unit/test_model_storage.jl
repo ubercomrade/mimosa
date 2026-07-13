@@ -335,6 +335,7 @@ end
             symlink(outside, data_path)
             @test_throws ModelFormatError readmodel(bundle)
             rm(data_path)
+            rm(bundle; recursive=true)
             writemodel(bundle, _storage_test_pwm())
         end
 
