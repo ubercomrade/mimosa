@@ -48,7 +48,7 @@ def build_score_log_tail_table(scores: np.ndarray) -> np.ndarray:
     return np.column_stack([unique_scores, log_tail]).astype(np.float32, copy=False)
 
 
-@njit(cache=False, nogil=False)
+@njit(cache=False, nogil=True)
 def _lower_bound_desc(values, target):
     """Find the first descending-table index whose score is not greater than target."""
     size = values.shape[0]
@@ -68,7 +68,7 @@ def _lower_bound_desc(values, target):
     return lo
 
 
-@njit(cache=False, nogil=False)
+@njit(cache=False, nogil=True)
 def _apply_score_log_tail_table_numba(values, mask, scores_col, log_tail_col, padding_value: float):
     """Map one dense masked score matrix to empirical log-tail values."""
     rows, cols = values.shape
@@ -170,41 +170,53 @@ def apply_score_log_tail_table_to_profile_bundle(profile_bundle, table: np.ndarr
     return pack_profile_bundle(mapped, lengths, padding_value)
 
 
+@njit(cache=False, nogil=True)
+def _scatter_empirical_log_tail(flat: np.ndarray, order: np.ndarray) -> np.ndarray:
+    """Assign one empirical log-tail value to each equal-score group."""
+    size = flat.size
+    normalized = np.empty_like(flat)
+    group_start = 0
+
+    while group_start < size:
+        score = flat[order[group_start]]
+        group_end = group_start + 1
+        while group_end < size and flat[order[group_end]] == score:
+            group_end += 1
+
+        log_tail = np.float32(-np.log10(group_end / size))
+        for index in range(group_start, group_end):
+            normalized[order[index]] = log_tail
+        group_start = group_end
+
+    return normalized
+
+
 def scores_to_empirical_log_tail_bundle(profile_bundle):
     """Convert one 3D profile bundle to empirical log-tail values within the current sample."""
     values = np.asarray(profile_bundle["values"], dtype=np.float32)
     lengths = np.asarray(profile_bundle["lengths"], dtype=np.int64)
-    flat = flatten_profile_bundle(profile_bundle)
+    width = values.shape[2]
+    full_rows = bool(np.all(lengths == width))
+    flat = values.reshape(-1) if full_rows else flatten_profile_bundle(profile_bundle)
     if flat.size == 0:
         padding_value = profile_bundle["padding_value"]
         return pack_profile_bundle(np.full_like(values, padding_value), lengths, padding_value)
 
-    order = np.argsort(flat, kind="stable")[::-1]
-    sorted_scores = flat[order]
-    starts = np.empty(sorted_scores.size, dtype=np.bool_)
-    starts[0] = True
-    starts[1:] = sorted_scores[1:] != sorted_scores[:-1]
-    group_starts = np.flatnonzero(starts)
-    group_ends = np.empty_like(group_starts)
-    group_ends[:-1] = group_starts[1:]
-    group_ends[-1] = sorted_scores.size
-    counts = group_ends - group_starts
-    cumulative = np.cumsum(counts, dtype=np.int64)
-    log_tail = (-np.log10(cumulative / flat.size)).astype(np.float32)
+    # Equal scores receive one group rank, so their internal order is irrelevant.
+    order = np.argsort(flat, kind="quicksort")[::-1]
+    normalized_flat = _scatter_empirical_log_tail(flat, order)
 
-    normalized_flat = np.empty_like(flat)
-    normalized_flat[order] = np.repeat(log_tail, counts)
+    if full_rows:
+        return pack_profile_bundle(normalized_flat.reshape(values.shape), lengths, profile_bundle["padding_value"])
 
     mapped = np.full_like(values, profile_bundle["padding_value"])
     valid_per_profile = int(lengths.sum())
-    row_mask = np.arange(values.shape[2], dtype=np.int64)[None, :] < lengths[:, None]
+    row_mask = np.arange(width, dtype=np.int64)[None, :] < lengths[:, None]
     cursor = 0
     for profile_index in range(values.shape[0]):
         mapped[profile_index][row_mask] = normalized_flat[cursor : cursor + valid_per_profile]
         cursor += valid_per_profile
 
-    # The public result is unchanged, while calibration and scatter use one
-    # descending sort instead of sort + unique + per-value lookup.
     return pack_profile_bundle(mapped, lengths, profile_bundle["padding_value"])
 
 

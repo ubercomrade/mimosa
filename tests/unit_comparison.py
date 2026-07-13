@@ -1315,6 +1315,87 @@ def test_strategy_profile_uses_batched_orientation_scoring(monkeypatch):
     assert 4 in call_sizes
 
 
+def test_profile_candidates_reuse_one_alignment_workspace(monkeypatch):
+    """Four orientations should share one target-local alignment workspace."""
+    scores = make_score_batch(
+        [
+            np.array([0.1, 0.8, 0.2, 0.6], dtype=np.float32),
+            np.array([0.3, 0.4, 0.9, 0.2], dtype=np.float32),
+        ]
+    )
+    bundle = make_strand_bundle(scores, scores)
+    score_candidates = strategy_profile.__globals__["_score_profile_candidates"]
+    original_make_workspace = strategy_profile.__globals__["make_alignment_workspace"]
+    workspace_shapes = []
+
+    def recording_make_workspace(n_rows, profile_width):
+        workspace_shapes.append((n_rows, profile_width))
+        return original_make_workspace(n_rows, profile_width)
+
+    monkeypatch.setitem(strategy_profile.__globals__, "make_alignment_workspace", recording_make_workspace)
+
+    candidates = score_candidates(
+        bundle,
+        bundle,
+        strategy_profile.__globals__["PROFILE_ORIENTATION_PAIRS"],
+        create_comparator_config(metric="co", n_jobs=1, search_range=1, window_radius=1),
+    )
+
+    assert len(candidates) == 4
+    assert workspace_shapes == [(2, 4)]
+
+
+def test_profile_one_to_many_reuses_query_anchors(monkeypatch):
+    """One-to-many should prepare query anchors once and target anchors once each."""
+    query_scores = _score_batch_from_flat(
+        np.array([0.1, 0.8, 0.2, 0.6], dtype=np.float32),
+        np.array([0, 4], dtype=np.int64),
+    )
+    target_scores = [
+        _score_batch_from_flat(values, np.array([0, 4], dtype=np.int64))
+        for values in (
+            np.array([0.2, 0.7, 0.3, 0.5], dtype=np.float32),
+            np.array([0.6, 0.2, 0.9, 0.1], dtype=np.float32),
+        )
+    ]
+    query = GenericModel(
+        type_key="scores",
+        name="query",
+        representation=None,
+        length=0,
+        config={"scores_data": query_scores},
+    )
+    targets = [
+        GenericModel(
+            type_key="scores",
+            name=f"target-{index}",
+            representation=None,
+            length=0,
+            config={"scores_data": scores},
+        )
+        for index, scores in enumerate(target_scores)
+    ]
+    compare_many = strategy_profile.__globals__["_compare_profile_one_to_many"]
+    original_collect_cache = strategy_profile.__globals__["_collect_profile_anchor_cache"]
+    anchor_preparations = []
+
+    def recording_collect_cache(bundle, strand_indices, score_threshold):
+        anchor_preparations.append(id(bundle))
+        return original_collect_cache(bundle, strand_indices, score_threshold)
+
+    monkeypatch.setitem(strategy_profile.__globals__, "_collect_profile_anchor_cache", recording_collect_cache)
+
+    results = compare_many(
+        query,
+        targets,
+        None,
+        create_comparator_config(metric="co", n_jobs=1, search_range=1, window_radius=1),
+    )
+
+    assert [result["target"] for result in results] == ["target-0", "target-1"]
+    assert len(anchor_preparations) == 1 + len(targets)
+
+
 def test_clear_cache_removes_cached_profiles(tmp_path):
     """Cache cleanup helper should remove stored profile artifacts."""
     representation = np.array(

@@ -78,12 +78,12 @@ def metric_code(metric: str) -> int:
         raise ValueError(f"metric must be one of: {options}") from exc
 
 
-@njit(inline="always")
+@njit(cache=True, inline="always")
 def _window_fits(position: int, length: int, radius: int) -> bool:
     return position - radius >= 0 and position + radius < length
 
 
-@njit(inline="always")
+@njit(cache=True, inline="always")
 def _realign_query_position(scores, row: int, length: int, expected: int, radius: int) -> int:
     left = max(0, expected - radius)
     right = min(length - 1, expected + radius)
@@ -99,7 +99,7 @@ def _realign_query_position(scores, row: int, length: int, expected: int, radius
     return best_position
 
 
-@njit(inline="always")
+@njit(cache=True, inline="always")
 def _mark_candidate(marks, positions, row: int, position: int, generation: int, count: int) -> int:
     if marks[row, position] == generation:
         return count
@@ -108,7 +108,7 @@ def _mark_candidate(marks, positions, row: int, position: int, generation: int, 
     return count + 1
 
 
-@njit
+@njit(cache=True)
 def _collect_row_candidates(
     scores1,
     lengths1,
@@ -146,7 +146,7 @@ def _collect_row_candidates(
     return count
 
 
-@njit
+@njit(cache=True)
 def _accumulate_pooled_overlap(scores1, scores2, candidates, row: int, count: int, shift: int, radius: int):
     """Accumulate pooled overlap sums without materializing windows."""
     sum1 = 0.0
@@ -164,7 +164,7 @@ def _accumulate_pooled_overlap(scores1, scores2, candidates, row: int, count: in
     return sum1, sum2, intersection
 
 
-@njit
+@njit(cache=True)
 def _accumulate_rowwise_overlap(
     scores1, scores2, candidates, row: int, count: int, shift: int, radius: int, use_dice: bool
 ):
@@ -190,7 +190,7 @@ def _accumulate_rowwise_overlap(
     return score_sum, finite_count
 
 
-@njit
+@njit(cache=True)
 def _accumulate_cosine(scores1, scores2, candidates, row: int, count: int, shift: int, radius: int):
     """Accumulate finite per-window cosine values."""
     score_sum = 0.0
@@ -214,7 +214,7 @@ def _accumulate_cosine(scores1, scores2, candidates, row: int, count: int, shift
     return score_sum, finite_count
 
 
-@njit
+@njit(cache=True)
 def _score_alignment_row(
     scores1,
     lengths1,
@@ -276,7 +276,7 @@ def _score_alignment_row(
     return sum1, sum2, intersection, row_score_sum, finite_count, count
 
 
-@njit
+@njit(cache=True, nogil=True)
 def align_shift_serial(
     scores1,
     lengths1,
@@ -323,7 +323,7 @@ def align_shift_serial(
         partials[row, 5] = result[5]
 
 
-@njit(parallel=True)
+@njit(cache=True, parallel=True, nogil=True)
 def align_shift_parallel(
     scores1,
     lengths1,
