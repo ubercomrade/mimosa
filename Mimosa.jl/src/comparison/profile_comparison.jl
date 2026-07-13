@@ -102,6 +102,7 @@ function compare(
     execution::ExecutionPolicy=SerialExecution(),
 )
     m = _resolve_profile_metric(metric)
+    threshold = Float32(min_logfpr)
     query_norm = _resolve_profile_bundle(query, sequences, background; execution=execution)
     target_norm = _resolve_profile_bundle(
         target, sequences, background; execution=execution
@@ -111,10 +112,10 @@ function compare(
         search_range=search_range,
         window_radius=window_radius,
         realign_window=realign_window,
-        min_logfpr=min_logfpr,
+        min_logfpr=threshold,
     )
-    query_anchors = _collect_both_anchors(query_norm, min_logfpr)
-    target_anchors = _collect_both_anchors(target_norm, min_logfpr)
+    query_anchors = _collect_both_anchors(query_norm, threshold)
+    target_anchors = _collect_both_anchors(target_norm, threshold)
     score, shift, orientation, n_sites, metric_str = profile_compare(
         query_norm, query_anchors, target_norm, target_anchors, config
     )

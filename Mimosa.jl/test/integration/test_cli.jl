@@ -19,115 +19,8 @@ end
     @test Mimosa.main(["bogus"]) == 1
 end
 
-@testset "CLI motif: basic PWM comparison" begin
-    query = joinpath(EXAMPLES, "pif4.meme")
-    target = joinpath(EXAMPLES, "pif4.meme")
-    code = Mimosa.main([
-        "motif",
-        query,
-        target,
-        "--model1-type",
-        "pwm",
-        "--model2-type",
-        "pwm",
-        "--metric",
-        "pcc",
-    ])
-    @test code == 0
-end
-
-@testset "CLI motif: all metrics" begin
-    query = joinpath(EXAMPLES, "pif4.meme")
-    target = joinpath(EXAMPLES, "pif4.meme")
-    for metric in ("pcc", "ed", "cosine")
-        code = Mimosa.main([
-            "motif",
-            query,
-            target,
-            "--model1-type",
-            "pwm",
-            "--model2-type",
-            "pwm",
-            "--metric",
-            metric,
-        ])
-        @test code == 0
-    end
-end
-
-@testset "CLI motif: help" begin
-    @test Mimosa.main(["motif", "--help"]) == 0
-end
-
-@testset "CLI motif: missing required args" begin
-    # Missing --model1-type
-    code = Mimosa.main(["motif", "a.meme", "b.meme"])
-    @test code == 1
-
-    # Missing positional args
-    code = Mimosa.main(["motif", "--model1-type", "pwm", "--model2-type", "pwm"])
-    @test code == 1
-
-    # Invalid metric
-    query = joinpath(EXAMPLES, "pif4.meme")
-    code = Mimosa.main([
-        "motif",
-        query,
-        query,
-        "--model1-type",
-        "pwm",
-        "--model2-type",
-        "pwm",
-        "--metric",
-        "bogus",
-    ])
-    @test code == 1
-end
-
-@testset "CLI motif: nonexistent file" begin
-    code = Mimosa.main([
-        "motif", "/nope.meme", "/nope2.meme", "--model1-type", "pwm", "--model2-type", "pwm"
-    ])
-    @test code == 2
-end
-
-@testset "CLI motif: PFM mode (cross-type)" begin
-    query = joinpath(EXAMPLES, "pif4.meme")
-    target = joinpath(EXAMPLES, "pif4.pfm")
-    code = Mimosa.main([
-        "motif",
-        query,
-        target,
-        "--model1-type",
-        "pwm",
-        "--model2-type",
-        "pwm",
-        "--pfm-mode",
-        "--num-sequences",
-        "100",
-        "--seq-length",
-        "50",
-        "--seed",
-        "42",
-    ])
-    @test code == 0
-end
-
-@testset "CLI motif: PFM file comparison" begin
-    query = joinpath(EXAMPLES, "pif4.pfm")
-    target = joinpath(EXAMPLES, "pif4.pfm")
-    code = Mimosa.main([
-        "motif",
-        query,
-        target,
-        "--model1-type",
-        "pwm",
-        "--model2-type",
-        "pwm",
-        "--metric",
-        "pcc",
-    ])
-    @test code == 0
+@testset "CLI rejects removed motif command" begin
+    @test Mimosa.main(["motif", "--help"]) == 1
 end
 
 @testset "CLI profile: score profile comparison" begin
@@ -330,7 +223,7 @@ end
     @test code == 1
 end
 
-@testset "CLI build-null: PWM motif strategy" begin
+@testset "CLI build-null: profile strategy with random sequences" begin
     dir = mktempdir()
     # Use multiple MEME files as motif collection (directory)
     coll_dir = joinpath(dir, "motifs")
@@ -352,10 +245,12 @@ end
         "pwm",
         "--groups",
         groups_path,
-        "--strategy",
-        "motif",
         "--metric",
-        "pcc",
+        "co",
+        "--num-sequences",
+        "100",
+        "--seq-length",
+        "100",
         "--output",
         output_path,
     ])
@@ -365,7 +260,7 @@ end
 
     # Annotation accepts only a bundle built for the executed strategy and metric.
     code = Mimosa.main([
-        "motif",
+        "profile",
         joinpath(EXAMPLES, "foxa2.meme"),
         joinpath(EXAMPLES, "gata2.meme"),
         "--model1-type",
@@ -373,7 +268,11 @@ end
         "--model2-type",
         "pwm",
         "--metric",
-        "pcc",
+        "co",
+        "--num-sequences",
+        "100",
+        "--seq-length",
+        "100",
         "--pvalue",
         "--null-distribution",
         output_path,
@@ -383,7 +282,7 @@ end
     @test code == 0
 
     code = Mimosa.main([
-        "motif",
+        "profile",
         joinpath(EXAMPLES, "foxa2.meme"),
         joinpath(EXAMPLES, "gata2.meme"),
         "--model1-type",
@@ -391,7 +290,11 @@ end
         "--model2-type",
         "pwm",
         "--metric",
-        "ed",
+        "dice",
+        "--num-sequences",
+        "100",
+        "--seq-length",
+        "100",
         "--pvalue",
         "--null-distribution",
         output_path,
@@ -417,8 +320,6 @@ end
         "pwm",
         "--groups",
         groups_path,
-        "--strategy",
-        "profile",
         "--metric",
         "dice",
         "--fasta",
@@ -467,7 +368,7 @@ end
     @test code == 0
 end
 
-@testset "CLI build-null: invalid strategy" begin
+@testset "CLI build-null: removed strategy option" begin
     code = Mimosa.main([
         "build-null",
         "motifs.meme",
@@ -483,7 +384,7 @@ end
     @test code == 1
 end
 
-@testset "CLI build-null: invalid metric for strategy" begin
+@testset "CLI build-null: invalid profile metric" begin
     code = Mimosa.main([
         "build-null",
         "motifs.meme",
@@ -491,10 +392,8 @@ end
         "pwm",
         "--groups",
         "groups.tsv",
-        "--strategy",
-        "motif",
         "--metric",
-        "co",
+        "pcc",
         "--output",
         "out",
     ])
@@ -520,14 +419,12 @@ end
         "pwm",
         "--groups",
         groups_path,
-        "--strategy",
-        "motif",
         "--metric",
-        "pcc",
+        "co",
         "--output",
         output_path,
         "--jobs",
-        "2",
+        "1",
     ])
     @test code == 0
     @test isfile(joinpath(output_path, "manifest.toml"))
@@ -569,11 +466,15 @@ end
     relations = parse_group_relations(rel_path; known_names=Set(["m1", "m2", "m3"]))
 
     sequences = make_random_sequences(2, 30; seed=7)
-    serial_result = build_null(models, relations; sequences=sequences, execution=SerialExecution())
+    serial_result = build_null(
+        models, relations; sequences=sequences, execution=SerialExecution()
+    )
     serial_scores = serial_result.distribution.raw_scores
 
     for nt in (1, 2, 4)
-        threaded_result = build_null(models, relations; sequences=sequences, execution=ThreadedExecution(nt))
+        threaded_result = build_null(
+            models, relations; sequences=sequences, execution=ThreadedExecution(nt)
+        )
         threaded_scores = threaded_result.distribution.raw_scores
         @test threaded_scores == serial_scores
         @test threaded_result.total_comparisons == serial_result.total_comparisons

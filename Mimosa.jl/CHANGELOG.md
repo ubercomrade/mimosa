@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of allocating and copying one vector per sequence.
 - CLI and benchmarks now select `ThreadedExecution` explicitly and reject a
   requested CLI thread count that exceeds the Julia runtime thread count.
+- Tests and benchmark documentation now follow the profile-only API, CLI, and
+  null-storage contracts; the cross-language 1-vs-50 harness uses shared FASTA
+  and MEME inputs.
+
+### Fixed
+
+- Model-to-model profile comparison now converts the public `min_logfpr::Real`
+  value to `Float32` before anchor construction, so the documented default call
+  no longer raises a method error.
 
 ### Stage 10 — Release candidate preparation (PLAN_2.md remediation)
 

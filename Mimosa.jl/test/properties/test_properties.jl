@@ -16,15 +16,17 @@ end
     @test reverse_complement(rc) == pfm
 end
 
-@testset "identical motif comparison gives pcc 1.0" begin
+@testset "identical model-derived profile comparison gives 1.0" begin
     pwm = readmodel(joinpath(EXAMPLES, "pif4.meme"))
-    @test compare(pwm, pwm; metric="pcc").score ≈ 1.0f0
+    sequences = make_random_sequences(20, 100; seed=42)
+    @test compare(pwm, pwm, sequences; metric=:co).score ≈ 1.0f0
 end
 
 @testset "non-! functions do not mutate inputs" begin
     pwm = readmodel(joinpath(EXAMPLES, "pif4.meme"))
+    sequences = make_random_sequences(20, 100; seed=42)
     copy_w = copy(pwm.weights)
-    compare(pwm, pwm; metric="pcc")
+    compare(pwm, pwm, sequences; metric=:co)
     scorebounds(pwm)
     reverse_complement(pwm)
     @test pwm.weights == copy_w
@@ -32,8 +34,9 @@ end
 
 @testset "comparison is deterministic" begin
     pwm = readmodel(joinpath(EXAMPLES, "pif4.meme"))
-    r1 = compare(pwm, pwm; metric="pcc")
-    r2 = compare(pwm, pwm; metric="pcc")
+    sequences = make_random_sequences(20, 100; seed=42)
+    r1 = compare(pwm, pwm, sequences; metric=:co)
+    r2 = compare(pwm, pwm, sequences; metric=:co)
     @test r1.score == r2.score
     @test r1.offset == r2.offset
     @test r1.orientation == r2.orientation
@@ -49,8 +52,9 @@ end
 @testset "orientation labels are valid" begin
     pwm1 = readmodel(joinpath(EXAMPLES, "pif4.meme"))
     pwm2 = readmodel(joinpath(EXAMPLES, "gata2.meme"))
-    for m in ("pcc", "ed", "cosine")
-        r = compare(pwm1, pwm2; metric=m)
+    sequences = make_random_sequences(20, 100; seed=42)
+    for metric in (:co, :co_rowwise, :dice, :dice_rowwise, :cosine)
+        r = compare(pwm1, pwm2, sequences; metric=metric)
         @test r.orientation in ("++", "+-", "-+", "--")
     end
 end

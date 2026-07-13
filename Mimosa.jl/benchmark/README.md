@@ -1,7 +1,6 @@
 # Mimosa.jl Benchmark Suite
 
 Reproducible benchmark suite for Mimosa.jl, covering all representative workloads
-from `PLAN.md` and `PLAN_2.md` E1/E2.
 
 ## Quick start
 
@@ -20,6 +19,9 @@ julia --project=Mimosa.jl/benchmark Mimosa.jl/benchmark/runbenchmarks.jl --basel
 
 # Run the 1-vs-50 profile comparison benchmark
 julia --project=Mimosa.jl/benchmark Mimosa.jl/benchmark/bench_1v50.jl
+
+# Compare Julia and Python on shared 10,000 x 100 FASTA and 1-vs-50 PWMs
+uv run python Mimosa.jl/benchmark/cross_language_profile.py --threads 1 4 --reps 3
 ```
 
 ## Thread configuration
@@ -54,10 +56,6 @@ JULIA_NUM_THREADS=1 julia --project=Mimosa.jl/benchmark Mimosa.jl/benchmark/runb
 - Variable-length ragged batches (short-heavy, long-heavy)
 - Serial and threaded scaling at 1/2/4 threads
 
-### Motif comparison (direct matrix alignment)
-- All metrics: PCC, Euclidean distance, cosine similarity
-- Width combinations: 8×8, 8×15, 15×30, 8×30
-
 ### One-to-many profile comparison
 - Target counts: 10, 100, 1000 (full suite)
 - Dedicated 1-vs-50 benchmark (`bench_1v50.jl`): 10 000 × 100 bp sequences
@@ -78,8 +76,7 @@ JULIA_NUM_THREADS=1 julia --project=Mimosa.jl/benchmark Mimosa.jl/benchmark/runb
 - BH FDR correction (1000 p-values)
 
 ### Null distribution building
-- Motif strategy (PCC and ED metrics)
-- Profile strategy (CO metric)
+- Profile strategy with an explicit encoded sequence batch and CO metric
 - Serial and threaded execution
 
 ### Storage (bundle write/read)
@@ -128,6 +125,27 @@ The report includes:
 The `bench_1v50.jl` script measures end-to-end performance of the one-to-many
 profile comparison scenario: **1 query model vs 50 target models** on random
 DNA sequences.
+
+For a direct Julia/Python comparison, `cross_language_profile.py` generates one
+shared FASTA file and one shared 51-motif MEME file. It excludes input loading
+and JIT warm-up from timing, then measures query scan/preparation plus target
+scan, normalization, and alignment. The JSON report records serial and threaded
+median/minimum times and Julia speedup relative to Python.
+
+### Cross-language results (2026-07-13)
+
+Environment: Intel Core i7-11370H (4 cores/8 threads), Julia 1.12.6,
+Python 3.13.12, NumPy 2.3.5, Numba 0.65.0. Values are medians of three runs
+after one warm-up and are machine-specific, not release thresholds.
+
+| Runtime | 1 thread | 4 threads | 1-to-4 speedup |
+|---------|----------|-----------|----------------|
+| Python | 25.552 s | 21.704 s | 1.18x |
+| Julia | 18.594 s | 17.161 s | 1.08x |
+
+Julia was 1.37x faster in serial and 1.26x faster with four threads for this
+end-to-end compute scope. Limited thread scaling indicates that profile
+normalization and alignment dominate the parallel scan portion.
 
 ### Configuration
 

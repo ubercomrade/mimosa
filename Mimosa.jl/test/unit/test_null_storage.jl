@@ -6,8 +6,8 @@ using Mimosa
     gev = GEVFit(0.0, 0.5, 1.2, true, 42, -100.0)
     raw_scores = Float64[1.0, 2.0, 3.0, 4.0, 5.0, 1.5, 2.5, 3.5]
     dist = NullDistribution(
-        "motif",
-        "pcc",
+        "profile",
+        "co",
         gev,
         raw_scores,
         NullPair[],
@@ -30,8 +30,8 @@ using Mimosa
         # Load and verify
         loaded = loadnull(path)
 
-        @test loaded.strategy == "motif"
-        @test loaded.metric == "pcc"
+        @test loaded.strategy == "profile"
+        @test loaded.metric == "co"
         @test loaded.n_null == 8
         @test loaded.n_queries == 2
         @test loaded.raw_scores == raw_scores
@@ -100,8 +100,8 @@ end
 @testset "Null storage: hostile manifest validation" begin
     gev = GEVFit(0.0, 0.5, 1.2, true, 42, -100.0)
     dist = NullDistribution(
-        "motif",
-        "pcc",
+        "profile",
+        "co",
         gev,
         Float64[1.0, 2.0, 3.0],
         NullPair[],

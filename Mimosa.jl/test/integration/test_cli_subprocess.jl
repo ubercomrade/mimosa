@@ -48,11 +48,11 @@ end
     @test code == 1
 end
 
-@testset "CLI subprocess: motif comparison" begin
+@testset "CLI subprocess: profile comparison" begin
     query = joinpath(EXAMPLES, "pif4.meme")
     target = joinpath(EXAMPLES, "gata2.meme")
     code = _run_exitcode(
-        `$(Base.julia_cmd()) --project=$(joinpath(REPO_ROOT, "Mimosa.jl")) $(MIMOSA_APP) motif $(query) $(target) --model1-type pwm --model2-type pwm --metric pcc`,
+        `$(Base.julia_cmd()) --project=$(joinpath(REPO_ROOT, "Mimosa.jl")) $(MIMOSA_APP) profile $(query) $(target) --model1-type pwm --model2-type pwm --metric co --num-sequences 50 --seq-length 100 --seed 42`,
     )
     @test code == 0
 end
@@ -86,7 +86,7 @@ end
     @test code == 0
 end
 
-@testset "CLI subprocess: build-null motif strategy" begin
+@testset "CLI subprocess: build-null profile strategy" begin
     dir = mktempdir()
     coll_dir = joinpath(dir, "motifs")
     mkpath(coll_dir)
@@ -98,7 +98,7 @@ end
     output_path = joinpath(dir, "null")
 
     code = _run_exitcode(
-        `$(Base.julia_cmd()) --project=$(joinpath(REPO_ROOT, "Mimosa.jl")) $(MIMOSA_APP) build-null $(coll_dir) --model-type pwm --groups $(groups_path) --strategy motif --metric pcc --output $(output_path)`,
+        `$(Base.julia_cmd()) --project=$(joinpath(REPO_ROOT, "Mimosa.jl")) $(MIMOSA_APP) build-null $(coll_dir) --model-type pwm --groups $(groups_path) --metric co --num-sequences 50 --seq-length 100 --seed 42 --output $(output_path)`,
     )
     @test code == 0
     @test isfile(joinpath(output_path, "manifest.toml"))
@@ -113,7 +113,7 @@ end
 
 @testset "CLI subprocess: missing required file exits 2" begin
     code = _run_exitcode(
-        `$(Base.julia_cmd()) --project=$(joinpath(REPO_ROOT, "Mimosa.jl")) $(MIMOSA_APP) motif /nonexistent.meme /also-nonexistent.meme --model1-type pwm --model2-type pwm`,
+        `$(Base.julia_cmd()) --project=$(joinpath(REPO_ROOT, "Mimosa.jl")) $(MIMOSA_APP) profile /nonexistent.meme /also-nonexistent.meme --model1-type pwm --model2-type pwm`,
     )
     @test code == 2
 end

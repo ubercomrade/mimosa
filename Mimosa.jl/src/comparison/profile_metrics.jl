@@ -52,6 +52,7 @@ Row-wise cosine similarity: mean of per-window cosine values.
 """
 struct CosineSimilarityProfile <: AbstractProfileMetric end
 
+"""Return the stable CLI/storage name for a profile comparison metric."""
 metric_name(::OverlapCoefficient) = "co"
 metric_name(::OverlapCoefficientRowwise) = "co_rowwise"
 metric_name(::DiceSimilarity) = "dice"
