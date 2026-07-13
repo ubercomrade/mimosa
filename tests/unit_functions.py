@@ -290,6 +290,30 @@ def test_scores_to_empirical_log_tail_bundle_matches_table_apply_with_empty_rows
     np.testing.assert_array_equal(actual["lengths"], expected["lengths"])
 
 
+def test_scores_to_empirical_log_tail_bundle_preserves_tied_full_rows():
+    """Unstable sorting must preserve exact group ranks for tied dense scores."""
+    plus = make_score_batch(
+        [
+            np.array([2.0, 1.0, 2.0, -0.0], dtype=np.float32),
+            np.array([1.0, 3.0, 1.0, 0.0], dtype=np.float32),
+        ]
+    )
+    minus = make_score_batch(
+        [
+            np.array([1.0, 3.0, 2.0, 0.0], dtype=np.float32),
+            np.array([2.0, 1.0, 3.0, -0.0], dtype=np.float32),
+        ]
+    )
+    bundle = make_strand_bundle(plus, minus)
+    table = build_score_log_tail_table(flatten_profile_bundle(bundle))
+    expected = apply_score_log_tail_table_to_profile_bundle(bundle, table)
+
+    actual = scores_to_empirical_log_tail_bundle(bundle)
+
+    np.testing.assert_array_equal(actual["values"], expected["values"])
+    np.testing.assert_array_equal(actual["lengths"], expected["lengths"])
+
+
 def test_build_score_log_tail_table_returns_float32():
     """Score log-tail tables should use float32 for faster downstream lookup."""
     table = build_score_log_tail_table(np.array([0.1, 0.3, 0.2, 0.3], dtype=np.float64))

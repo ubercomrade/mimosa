@@ -276,7 +276,7 @@ def _score_alignment_row(
     return sum1, sum2, intersection, row_score_sum, finite_count, count
 
 
-@njit(cache=True)
+@njit(cache=True, nogil=True)
 def align_shift_serial(
     scores1,
     lengths1,
@@ -323,7 +323,7 @@ def align_shift_serial(
         partials[row, 5] = result[5]
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True, parallel=True, nogil=True)
 def align_shift_parallel(
     scores1,
     lengths1,

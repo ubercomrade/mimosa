@@ -67,7 +67,7 @@ def _iter_scan_buckets(lengths: np.ndarray, motif_len: int, bucket_step: int):
         yield sorted_indices[start:stop]
 
 
-@njit(cache=False, fastmath=True, nogil=False)
+@njit(cache=False, fastmath=True, nogil=True)
 def _score_window_forward(seq_row, length: int, model_rows, pos: int, kmer: int, context_len: int, n_terms: int):
     """Score one forward-aligned window."""
     total = np.float32(0.0)
@@ -84,7 +84,7 @@ def _score_window_forward(seq_row, length: int, model_rows, pos: int, kmer: int,
     return total
 
 
-@njit(cache=False, fastmath=True, nogil=False)
+@njit(cache=False, fastmath=True, nogil=True)
 def _score_window_reverse(seq_row, length: int, model_rows, pos: int, kmer: int, window_size: int, n_terms: int):
     """Score one reverse-complement-aligned window."""
     complement_offset = 3
@@ -103,7 +103,7 @@ def _score_window_reverse(seq_row, length: int, model_rows, pos: int, kmer: int,
     return total
 
 
-@njit(cache=False, fastmath=True, nogil=False)
+@njit(cache=False, fastmath=True, nogil=True)
 def _scan_dense_kernel_numba(values, lengths, model_rows, kmer: int, context_len: int, n_terms: int):
     """Score one dense encoded sequence batch for one strand."""
     n_rows, _ = values.shape
@@ -134,7 +134,7 @@ def _scan_dense_kernel_numba(values, lengths, model_rows, kmer: int, context_len
     return scores, mask
 
 
-@njit(cache=False, fastmath=True, nogil=False)
+@njit(cache=False, fastmath=True, nogil=True)
 def _scan_dense_reverse_kernel_numba(values, lengths, model_rows, kmer: int, window_size: int, n_terms: int):
     """Score one dense encoded sequence batch on the reverse-complement strand."""
     n_rows, _ = values.shape
@@ -157,7 +157,7 @@ def _scan_dense_reverse_kernel_numba(values, lengths, model_rows, kmer: int, win
     return scores, mask
 
 
-@njit(cache=False, fastmath=True, nogil=False)
+@njit(cache=False, fastmath=True, nogil=True)
 def _scan_dense_strands_kernel_numba(
     values, lengths, model_rows, kmer: int, context_len: int, window_size: int, n_terms: int
 ):

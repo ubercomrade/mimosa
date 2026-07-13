@@ -24,6 +24,7 @@ from mimosa.functions import (
     scores_to_empirical_log_tail_bundle,
 )
 from mimosa.functions.alignment import (
+    AlignmentWorkspace,
     build_anchor_csr,
     make_alignment_workspace,
     score_shift,
@@ -166,7 +167,7 @@ def _empty_positions() -> tuple[np.ndarray, np.ndarray]:
     return empty, empty
 
 
-@njit(cache=False, nogil=False)
+@njit(cache=False, nogil=True)
 def _collect_best_anchor_positions_numba(scores: np.ndarray, lengths: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Collect one best anchor per row."""
     n_rows = scores.shape[0]
@@ -194,7 +195,7 @@ def _collect_best_anchor_positions_numba(scores: np.ndarray, lengths: np.ndarray
     return rows[:out_index], positions[:out_index]
 
 
-@njit(cache=False, nogil=False)
+@njit(cache=False, nogil=True)
 def _count_threshold_anchor_positions_numba(scores: np.ndarray, lengths: np.ndarray, score_threshold: float) -> int:
     """Count threshold-selected anchors."""
     total = 0
@@ -206,7 +207,7 @@ def _count_threshold_anchor_positions_numba(scores: np.ndarray, lengths: np.ndar
     return total
 
 
-@njit(cache=False, nogil=False)
+@njit(cache=False, nogil=True)
 def _collect_threshold_anchor_positions_numba(
     scores: np.ndarray,
     lengths: np.ndarray,
@@ -244,7 +245,7 @@ def _collect_anchor_sites(
     return _collect_threshold_anchor_positions_numba(scores_array, lengths_array, float(score_threshold))
 
 
-@njit(cache=False, nogil=False)
+@njit(cache=False, nogil=True)
 def _collect_model2_window_candidates_numba(
     scores1: np.ndarray,
     lengths1: np.ndarray,
@@ -410,6 +411,33 @@ def _score_profile_orientation_pair(
     cfg: ComparatorConfig,
 ) -> dict:
     """Score one profile orientation across all tested shifts."""
+    workspace = make_alignment_workspace(
+        int(query_bundle["values"].shape[1]),
+        int(query_bundle["values"].shape[2]),
+    )
+    return _score_profile_orientation_pair_with_workspace(
+        query_bundle,
+        target_bundle,
+        query_strand,
+        target_strand,
+        query_anchors,
+        target_anchors,
+        cfg,
+        workspace,
+    )
+
+
+def _score_profile_orientation_pair_with_workspace(
+    query_bundle: dict,
+    target_bundle: dict,
+    query_strand: int,
+    target_strand: int,
+    query_anchors: tuple[np.ndarray, np.ndarray],
+    target_anchors: tuple[np.ndarray, np.ndarray],
+    cfg: ComparatorConfig,
+    workspace: AlignmentWorkspace,
+) -> dict:
+    """Score one orientation while reusing caller-owned alignment storage."""
     query_scores = query_bundle["values"][query_strand]
     target_scores = target_bundle["values"][target_strand]
     query_lengths = query_bundle["lengths"]
@@ -420,7 +448,7 @@ def _score_profile_orientation_pair(
 
     search_range = int(cfg["search_range"])
     window_radius = int(cfg["window_radius"])
-    workspace = make_alignment_workspace(int(query_scores.shape[0]), int(query_scores.shape[1]))
+    workspace.marks.fill(0)
     use_parallel = should_use_parallel(
         int(query_scores.shape[0]), int(query_scores.shape[1]), search_range, get_num_threads()
     )
@@ -462,30 +490,44 @@ def _score_profile_orientation_pair(
     }
 
 
-def _score_profile_candidates(query_bundle: dict, target_bundle: dict, pair_specs, cfg: ComparatorConfig) -> list[dict]:
-    """Score all requested orientation pairs with the window-based profile algorithm."""
+def _profile_anchor_threshold(cfg: ComparatorConfig) -> float | None:
+    """Resolve the configured threshold to best-anchor or threshold mode."""
     min_logfpr = cfg["min_logfpr"]
-    score_threshold = None if min_logfpr is None or float(min_logfpr) <= 0.0 else float(min_logfpr)
+    return None if min_logfpr is None or float(min_logfpr) <= 0.0 else float(min_logfpr)
+
+
+def _collect_profile_anchor_cache(
+    bundle: dict,
+    strand_indices,
+    score_threshold: float | None,
+) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+    """Build strand-specific anchor CSRs once for a prepared profile."""
+    n_rows = int(bundle["values"].shape[1])
+    return {
+        strand_index: build_anchor_csr(
+            *_collect_anchor_sites(bundle["values"][strand_index], bundle["lengths"], score_threshold),
+            n_rows,
+        )
+        for strand_index in strand_indices
+    }
+
+
+def _score_profile_candidates_with_query_anchors(
+    query_bundle: dict,
+    target_bundle: dict,
+    pair_specs,
+    cfg: ComparatorConfig,
+    query_anchor_cache: dict[int, tuple[np.ndarray, np.ndarray]],
+) -> list[dict]:
+    """Score orientations while reusing query anchors across target profiles."""
+    score_threshold = _profile_anchor_threshold(cfg)
     n_rows = int(query_bundle["values"].shape[1])
-    query_strands = {int(query_strand) for _, query_strand, _ in pair_specs}
     target_strands = {int(target_strand) for _, _, target_strand in pair_specs}
-    query_anchor_cache = {
-        strand_index: build_anchor_csr(
-            *_collect_anchor_sites(query_bundle["values"][strand_index], query_bundle["lengths"], score_threshold),
-            n_rows,
-        )
-        for strand_index in query_strands
-    }
-    target_anchor_cache = {
-        strand_index: build_anchor_csr(
-            *_collect_anchor_sites(target_bundle["values"][strand_index], target_bundle["lengths"], score_threshold),
-            n_rows,
-        )
-        for strand_index in target_strands
-    }
+    target_anchor_cache = _collect_profile_anchor_cache(target_bundle, target_strands, score_threshold)
+    workspace = make_alignment_workspace(n_rows, int(query_bundle["values"].shape[2]))
     candidates = []
     for orientation, query_strand, target_strand in pair_specs:
-        best = _score_profile_orientation_pair(
+        best = _score_profile_orientation_pair_with_workspace(
             query_bundle,
             target_bundle,
             int(query_strand),
@@ -493,10 +535,28 @@ def _score_profile_candidates(query_bundle: dict, target_bundle: dict, pair_spec
             query_anchor_cache[int(query_strand)],
             target_anchor_cache[int(target_strand)],
             cfg,
+            workspace,
         )
         best["orientation"] = orientation
         candidates.append(best)
     return candidates
+
+
+def _score_profile_candidates(query_bundle: dict, target_bundle: dict, pair_specs, cfg: ComparatorConfig) -> list[dict]:
+    """Score all requested orientation pairs with the window-based profile algorithm."""
+    query_strands = {int(query_strand) for _, query_strand, _ in pair_specs}
+    query_anchor_cache = _collect_profile_anchor_cache(
+        query_bundle,
+        query_strands,
+        _profile_anchor_threshold(cfg),
+    )
+    return _score_profile_candidates_with_query_anchors(
+        query_bundle,
+        target_bundle,
+        pair_specs,
+        cfg,
+        query_anchor_cache,
+    )
 
 
 def _build_profile_result(query_name: str, target_name: str, best: dict, metric: str) -> ComparisonResult:
@@ -548,6 +608,12 @@ def _compare_profile_one_to_many(
         cfg,
         query_cache,
     )
+    query_strands = {int(query_strand) for _, query_strand, _ in PROFILE_ORIENTATION_PAIRS}
+    query_anchor_cache = _collect_profile_anchor_cache(
+        query_bundle,
+        query_strands,
+        _profile_anchor_threshold(cfg),
+    )
 
     def _score_target(target_model: GenericModel) -> ComparisonResult:
         target_cache: dict[Any, Any] = {}
@@ -560,7 +626,13 @@ def _compare_profile_one_to_many(
                 target_cache,
             )
             best = _select_best_orientation(
-                _score_profile_candidates(query_bundle, target_bundle, PROFILE_ORIENTATION_PAIRS, cfg)
+                _score_profile_candidates_with_query_anchors(
+                    query_bundle,
+                    target_bundle,
+                    PROFILE_ORIENTATION_PAIRS,
+                    cfg,
+                    query_anchor_cache,
+                )
             )
             return _build_profile_result(query_model.name, target_model.name, best, cfg["metric"])
         finally:
