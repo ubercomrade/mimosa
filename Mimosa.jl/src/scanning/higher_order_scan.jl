@@ -365,6 +365,11 @@ function npositions_ho(seq_len::Int, model::AbstractHigherOrderMotif)
     return max(seq_len - window_size(model) + 1, 0)
 end
 
+motif_length(model::AbstractHigherOrderMotif) = model.motif_length
+npositions(model::AbstractHigherOrderMotif, seq_len::Int) = npositions_ho(seq_len, model)
+scorematrix(model::AbstractHigherOrderMotif) = model.representation
+scoretype(model::AbstractHigherOrderMotif) = eltype(scorematrix(model))
+
 # ── Generic single-sequence scan kernels ──────────────────────────────────
 
 """
@@ -379,6 +384,7 @@ function scan_forward!(
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
+    _validate_scan_input(seq, n_pos, window_size(model), dest)
     return _ho_scan_forward!(
         dest,
         model.representation,
@@ -402,6 +408,7 @@ function scan_reverse!(
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
+    _validate_scan_input(seq, n_pos, window_size(model), dest)
     return _ho_scan_reverse!(
         dest,
         model.representation,
@@ -425,6 +432,7 @@ function scan_best!(
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
+    _validate_scan_input(seq, n_pos, window_size(model), dest)
     return _ho_scan_best!(
         dest,
         model.representation,
@@ -450,6 +458,10 @@ function scan_both!(
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
+    Base.mightalias(fwd, rev) && throw(
+        ArgumentError("forward and reverse destinations must not alias."),
+    )
+    _validate_scan_input(seq, n_pos, window_size(model), fwd, rev)
     return _ho_scan_both!(
         fwd,
         rev,
@@ -589,7 +601,7 @@ function scan(
         return _ho_scan_batch_both(
             model,
             batch,
-            (sl, m) -> npositions_ho(sl, m),
+            (sl, m) -> npositions(m, sl),
             (fwd, rev, m, seq, npos) -> scan_both!(fwd, rev, m, seq, npos),
             execution,
         )
@@ -598,11 +610,13 @@ function scan(
         (dest, m, seq, npos) -> scan_forward!(dest, m, seq, npos)
     elseif strands isa ReverseOnly
         (dest, m, seq, npos) -> scan_reverse!(dest, m, seq, npos)
-    else # BestStrand
+    elseif strands isa BestStrand
         (dest, m, seq, npos) -> scan_best!(dest, m, seq, npos)
+    else
+        throw(ArgumentError("unsupported strand policy: $(typeof(strands))"))
     end
     return _ho_scan_batch(
-        strands, model, batch, (sl, m) -> npositions_ho(sl, m), scan_fn!, execution
+        strands, model, batch, (sl, m) -> npositions(m, sl), scan_fn!, execution
     )
 end
 

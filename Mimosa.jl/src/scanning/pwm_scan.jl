@@ -15,7 +15,32 @@
 Return the number of scanning positions: max(seq_len - motif_width + 1, 0).
 """
 function npositions(seq_len::Int, motif_width::Int)
+    seq_len < 0 && throw(ArgumentError("sequence length must be non-negative."))
+    motif_width < 1 && throw(ArgumentError("motif width must be positive."))
     return max(seq_len - motif_width + 1, 0)
+end
+
+npositions(model::PWM, seq_len::Int) = npositions(seq_len, motif_length(model))
+
+# Public scan entry points accept raw vectors, so validate once before entering
+# the @inbounds kernels. Batch containers are already validated at construction.
+function _validate_scan_input(seq::AbstractVector{UInt8}, n_pos::Int, width::Int, dests...)
+    Base.require_one_based_indexing(seq)
+    for dest in dests
+        Base.require_one_based_indexing(dest)
+    end
+    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
+    width < 1 && throw(ArgumentError("scan width must be positive."))
+    n_pos > npositions(length(seq), width) && throw(
+        ArgumentError("n_pos=$n_pos exceeds sequence geometry for width=$width."),
+    )
+    any(code -> code > N_CODE, seq) && throw(
+        ArgumentError("sequence contains an invalid encoded DNA code; valid codes are 0x00..0x04."),
+    )
+    any(length(dest) < n_pos for dest in dests) && throw(
+        ArgumentError("destination is shorter than n_pos=$n_pos."),
+    )
+    return nothing
 end
 
 # ── Forward scan kernel ──────────────────────────────────────────────────
@@ -34,10 +59,8 @@ function scan_forward!(
     n_pos::Int,
 ) where {T<:AbstractFloat}
     W = size(weights, 2)
-    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
-    length(dest) < n_pos && throw(
-        ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
-    )
+    size(weights, 1) == 5 || throw(ArgumentError("PWM weights must have 5 rows."))
+    _validate_scan_input(seq, n_pos, W, dest)
     # Invariant: seq codes ∈ 0..N_CODE (guaranteed by EncodedSequenceBatch).
     # weights has 5 rows, so Int(seq[i])+1 ∈ 1..5 is always in bounds.
     # @inbounds is safe: pos ranges 1..n_pos, p ranges 1..W, and
@@ -69,10 +92,8 @@ function scan_reverse!(
     n_pos::Int,
 ) where {T<:AbstractFloat}
     W = size(weights, 2)
-    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
-    length(dest) < n_pos && throw(
-        ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
-    )
+    size(weights, 1) == 5 || throw(ArgumentError("PWM weights must have 5 rows."))
+    _validate_scan_input(seq, n_pos, W, dest)
     # Invariant: seq codes ∈ 0..N_CODE; complement(b) = N_CODE or 0x03-b,
     # which is also ∈ 0..N_CODE.  @inbounds safe: pos+W-p ≥ pos+1-1 = pos ≥ 1,
     # and pos+W-p ≤ n_pos+W-1 ≤ length(seq).
@@ -104,10 +125,8 @@ function scan_best!(
     n_pos::Int,
 ) where {T<:AbstractFloat}
     W = size(weights, 2)
-    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
-    length(dest) < n_pos && throw(
-        ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
-    )
+    size(weights, 1) == 5 || throw(ArgumentError("PWM weights must have 5 rows."))
+    _validate_scan_input(seq, n_pos, W, dest)
     # Invariant: same as scan_forward! and scan_reverse! above.
     @inbounds for pos in 1:n_pos
         fwd = zero(T)
@@ -141,10 +160,11 @@ function scan_both!(
     n_pos::Int,
 ) where {T<:AbstractFloat}
     W = size(weights, 2)
-    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
-    (length(fwd) < n_pos || length(rev) < n_pos) && throw(
-        ArgumentError("fwd/rev destinations must each have at least $n_pos elements.")
+    size(weights, 1) == 5 || throw(ArgumentError("PWM weights must have 5 rows."))
+    Base.mightalias(fwd, rev) && throw(
+        ArgumentError("forward and reverse destinations must not alias."),
     )
+    _validate_scan_input(seq, n_pos, W, fwd, rev)
     # Invariant: same as scan_forward! and scan_reverse! above.
     @inbounds for pos in 1:n_pos
         fwd_total = zero(T)

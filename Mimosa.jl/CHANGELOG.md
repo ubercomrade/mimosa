@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Safe raw scan boundaries now validate encoded codes, one-based axes,
+  destination geometry, and both-strand output aliasing; model-level
+  `npositions`, `motif_length`, `window_size`, `scorematrix`, and `scoretype`
+  accessors expose the scanning contract.
 - Execution-aware `selectsites` and `reconstruct_pfm` workflows.
 - Bounded nested-parallelism protection and cost-weighted scan scheduling.
 - Fused empirical profile normalization and target-level one-to-many comparison

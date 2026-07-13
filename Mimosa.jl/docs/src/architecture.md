@@ -37,17 +37,15 @@ src/
 │   ├── encoding.jl     # EncodedSequenceBatch, reverse_complement
 │   ├── fasta.jl        # FASTA reader
 │   └── ragged.jl       # RaggedArray
-├── scanning/           # Scanning kernels
+├── scanning/           # Scanning interface, validation, and kernels
 │   ├── strands.jl       # Strand policies
-│   ├── pwm_scan.jl     # PWM scanning (forward/reverse/best/both)
+│   ├── pwm_scan.jl     # Checked PWM boundary and kernels
 │   ├── higher_order_scan.jl  # Shared HO kernel
 │   ├── bamm_scan.jl    # BaMM scanning (delegates to HO kernel)
 │   ├── sitega_scan.jl  # SiteGA scanning
 │   ├── dimont_scan.jl  # Dimont scanning
 │   └── slim_scan.jl    # Slim scanning
-├── comparison/         # Motif and profile comparison
-│   ├── metrics.jl      # Column metrics (PCC, ED, cosine)
-│   ├── alignment.jl    # Direct matrix alignment
+├── comparison/         # Profile comparison
 │   ├── results.jl      # ComparisonResult, compare()
 │   ├── profile_metrics.jl     # Profile metrics
 │   └── profile_comparison.jl  # Profile alignment

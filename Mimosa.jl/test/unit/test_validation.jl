@@ -113,6 +113,11 @@ end
         @test_throws ArgumentError scan_both!(fwd, short_fwd, pwm.weights, seq, n_pos)
     end
 
+    # Invalid raw codes and inconsistent geometry must not reach @inbounds kernels.
+    @test_throws ArgumentError scan_forward!(dest, pwm.weights, UInt8[0xff for _ in seq], n_pos)
+    @test_throws ArgumentError scan_forward!(dest, pwm.weights, seq, n_pos + 1)
+    @test_throws ArgumentError scan_both!(fwd, fwd, pwm.weights, seq, n_pos)
+
     # Negative n_pos should throw.
     @test_throws ArgumentError scan_forward!(dest, pwm.weights, seq, -1)
     @test_throws ArgumentError scan_reverse!(dest, pwm.weights, seq, -1)
@@ -143,6 +148,23 @@ end
     @test_throws ArgumentError Mimosa._ho_scan_forward!(
         dest, model.representation, 1, 0, 3, seq, -1
     )
+end
+
+@testset "scanning geometry and flat container interfaces" begin
+    pwm = readmodel(joinpath(EXAMPLES, "pif4.meme"))
+    @test motif_length(pwm) == length(pwm)
+    @test window_size(pwm) == length(pwm)
+    @test scorematrix(pwm) === pwm.weights
+    @test scoretype(pwm) == Float32
+    batch = EncodedSequenceBatch([UInt8[], UInt8[0, 1, 2]])
+    @test firstindex(batch) == 1
+    @test lastindex(batch) == 2
+    @test batch[1] == UInt8[]
+    rag = RaggedArray(Float32[1, 2], [1, 1, 3])
+    @test firstindex(rag) == 1
+    @test lastindex(rag) == 2
+    @test rag[1] == Float32[]
+    @test rag[2] == Float32[1, 2]
 end
 
 @testset "B2: empty and short sequences" begin

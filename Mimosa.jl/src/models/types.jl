@@ -139,6 +139,12 @@ end
 Base.length(model::PFM) = size(model.frequencies, 2)
 Base.length(model::PWM) = size(model.weights, 2)
 
+motif_length(model::AbstractMatrixMotif) = length(model)
+window_size(model::AbstractMatrixMotif) = motif_length(model)
+scorematrix(model::PFM) = model.frequencies
+scorematrix(model::PWM) = model.weights
+scoretype(model::AbstractMotifModel) = eltype(scorematrix(model))
+
 """
     site_start_offset(model::AbstractMatrixMotif)
 

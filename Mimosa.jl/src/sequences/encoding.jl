@@ -95,6 +95,7 @@ struct EncodedSequenceBatch{V<:AbstractVector{UInt8},I<:AbstractVector{Int}}
     function EncodedSequenceBatch{V,I}(
         data::V, offsets::I
     ) where {V<:AbstractVector{UInt8},I<:AbstractVector{Int}}
+        Base.require_one_based_indexing(data, offsets)
         _validate_ragged_offsets(offsets, length(data))
         _validate_encoded_data(data)
         return new{V,I}(data, offsets)
@@ -105,6 +106,7 @@ struct EncodedSequenceBatch{V<:AbstractVector{UInt8},I<:AbstractVector{Int}}
     function EncodedSequenceBatch{V,I}(
         data::V, offsets::I, ::Val{:unsafe}
     ) where {V<:AbstractVector{UInt8},I<:AbstractVector{Int}}
+        Base.require_one_based_indexing(data, offsets)
         _validate_ragged_offsets(offsets, length(data))
         return new{V,I}(data, offsets)
     end
@@ -151,6 +153,9 @@ function sequence(batch::EncodedSequenceBatch, i::Int)
 end
 
 Base.length(batch::EncodedSequenceBatch) = nsequences(batch)
+Base.firstindex(::EncodedSequenceBatch) = 1
+Base.lastindex(batch::EncodedSequenceBatch) = nsequences(batch)
+Base.getindex(batch::EncodedSequenceBatch, i::Int) = sequence(batch, i)
 Base.IteratorSize(::Type{<:EncodedSequenceBatch}) = Base.HasLength()
 Base.IteratorEltype(::Type{<:EncodedSequenceBatch}) = Base.EltypeUnknown()
 

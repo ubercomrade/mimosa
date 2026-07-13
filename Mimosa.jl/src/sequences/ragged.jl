@@ -23,6 +23,7 @@ struct RaggedArray{T,V<:AbstractVector{T},I<:AbstractVector{Int}}
     function RaggedArray{T,V,I}(
         data::V, offsets::I
     ) where {T,V<:AbstractVector{T},I<:AbstractVector{Int}}
+        Base.require_one_based_indexing(data, offsets)
         _validate_ragged_offsets(offsets, length(data))
         return new{T,V,I}(data, offsets)
     end
@@ -75,6 +76,9 @@ function row(rag::RaggedArray, i::Int)
 end
 
 Base.length(rag::RaggedArray) = nrows(rag)
+Base.firstindex(::RaggedArray) = 1
+Base.lastindex(rag::RaggedArray) = nrows(rag)
+Base.getindex(rag::RaggedArray, i::Int) = row(rag, i)
 Base.eltype(::Type{<:RaggedArray{T}}) where {T} = T
 Base.IteratorSize(::Type{<:RaggedArray}) = Base.HasLength()
 Base.IteratorEltype(::Type{<:RaggedArray}) = Base.EltypeUnknown()

@@ -6,6 +6,18 @@ guaranteed (and not required) where Float32 accumulation, different RNG
 algorithms, or different optimizer implementations produce equivalent
 statistical results.
 
+## Scan input and geometry contract
+
+All encoded DNA scan inputs use `UInt8` codes `0x00:0x04`; raw-vector
+`scan`/`scan!` entry points reject other codes, non-one-based axes, invalid
+window geometry, and undersized destinations before entering unchecked kernels.
+`scan_both!` also rejects full or partial aliasing of its forward and reverse
+outputs. `EncodedSequenceBatch` validates these invariants once at construction.
+
+`npositions(model, seq_len)` is the model-level geometry accessor. Matrix models
+use their motif width; higher-order models use their full `window_size`,
+including context. Integer geometry and ragged offsets are exact contracts.
+
 ## Tolerance classes
 
 ### `exact`
