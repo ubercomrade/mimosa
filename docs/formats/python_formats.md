@@ -1,8 +1,10 @@
 # Python Format Inventory
 
-> **Stage 0 audit artifact.** Detailed description of every file format read or written by the
-> Python implementation. Julia parsers must accept the same valid inputs and produce equivalent
-> in-memory representations. Malformed inputs must produce typed errors.
+> **Historical migration artifact.** This inventory records formats consumed by
+> the retired Python implementation. It remains useful as parser provenance,
+> but its persistence formats, paths, and Python-specific behavior are not a
+> current API contract. Current readers and validation rules are documented in
+> `Mimosa.jl/docs/src/models.md`, `storage.md`, and `security.md`.
 
 ## 1. MEME format
 

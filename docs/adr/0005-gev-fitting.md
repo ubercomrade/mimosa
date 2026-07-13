@@ -2,140 +2,39 @@
 
 ## Status
 
-Proposed (Stage 0)
+Accepted and implemented with a native Float64 fitter.
 
 ## Context
 
-The Python implementation fits a Generalized Extreme Value (GEV) distribution to pooled null comparison scores using `scipy.stats.genextreme.fit()` and computes survival probabilities (upper-tail p-values) using `scipy.stats.genextreme.sf()`. This is one of the highest-risk numerical components for the Julia port because:
-
-1. **Parameterization**: SciPy's `genextreme` uses a shape parameter `c` whose sign convention differs from the standard textbook `k` (or `ξ`) convention. A sign error produces completely wrong tail probabilities.
-
-2. **Fitting algorithm**: SciPy uses maximum likelihood estimation (MLE) with an internal optimizer. The initialization, constraints, convergence criteria, and optimizer choice all affect the fitted parameters.
-
-3. **Edge cases**: degenerate samples (constant values), very small samples, heavy-tailed distributions, and samples where the shape parameter indicates a bounded distribution can cause convergence failures or non-finite parameters.
-
-4. **Survival function**: `sf(score) = P(X > score)`. For distributions with a finite upper bound (positive shape in SciPy's convention), `sf` returns 0 for scores above the bound. Numerical stability of the survival function at extreme tails matters for E-value computation.
+Null comparison scores are modeled with a Generalized Extreme Value (GEV)
+distribution. The package must not require Python or SciPy at runtime, while
+remaining numerically comparable with historical SciPy-derived fixtures.
 
 ## Decision
 
-### 5.1 Parameterization audit
+Implement GEV maximum-likelihood fitting in Julia using a deterministic BFGS
+optimizer, numerical gradients, backtracking line search, method-of-moments
+initialization, and explicit support checks.
 
-SciPy's `genextreme` uses shape parameter `c` where:
-- `c < 0`: Type II (Fréchet), right-skewed, heavy upper tail.
-- `c = 0`: Type I (Gumbel), light tail.
-- `c > 0`: Type III (Weibull), bounded above.
+`GEVFit` stores textbook shape `k`, location, scale, convergence state,
+iteration count, and log likelihood. `GEVFitFailure` is returned for typed
+degenerate or unsuccessful fits. `survival` and `cdf` use Float64 and stable
+formulas near probability boundaries.
 
-The standard textbook convention uses `k` (or `ξ`):
-- `k > 0`: Type II (Fréchet).
-- `k = 0`: Type I (Gumbel).
-- `k < 0`: Type III (Weibull).
+Julia's shape convention is the sign inverse of SciPy's `genextreme` shape:
+`k = -c`. Native optimization is tolerance-compatible, not parameter
+bit-identical. Survival probabilities are the primary scientific comparison;
+parameter tolerances are maintained in focused tests.
 
-**The sign is flipped**: `c = -k`. Julia implementation MUST use the textbook convention (`k`) and document the sign flip from SciPy explicitly. The fit corpus stores SciPy parameters for comparison; the Julia fit function returns textbook-convention parameters.
-
-### 5.2 Native Julia implementation
-
-Implement GEV fitting in pure Julia without requiring PythonCall. The implementation:
-
-1. **MLE via negative log-likelihood minimization** using a robust optimizer (e.g., `Optim.jl` or a custom Newton-type solver).
-2. **Initialization**: method-of-moments estimates for location and scale; shape initialized to 0 (Gumbel).
-3. **Constraints**: scale > 0 enforced via parameter transformation (fit `log(scale)` internally).
-4. **Convergence diagnostics**: return fit status (converged, iterations, gradient norm).
-5. **Failure handling**: if fit does not converge, return a typed `GEVFitFailure` with diagnostics. Do NOT silently fall back to a different distribution. The caller decides whether to use empirical fallback or abort.
-
-### 5.3 Survival function
-
-Implement the upper-tail survival function directly from the GEV CDF:
-
-For GEV with shape `k`, location `μ`, scale `σ > 0`:
-
-```
-if k != 0:
-    z = (x - μ) / σ
-    CDF(x) = exp(-(1 + k*z)^(-1/k))     for 1 + k*z > 0
-           = 0                            for 1 + k*z <= 0 (if k > 0, bounded above)
-           = 1                            for 1 + k*z <= 0 (if k < 0, bounded below)
-    SF(x) = 1 - CDF(x)
-if k == 0 (Gumbel):
-    z = (x - μ) / σ
-    CDF(x) = exp(-exp(-z))
-    SF(x) = 1 - exp(-exp(-z))
-```
-
-Numerical stability considerations:
-- For large negative `z` (far left tail): `exp(-z)` overflows. Use `exp(-exp(-z))` → 0 with care.
-- For large positive `z` (far right tail, k=0): `exp(-z)` → 0, `CDF → 1`, `SF → 0`. Use `1 - CDF` carefully (catastrophic cancellation). Consider computing `SF = -expm1(-exp(-z))` for better precision.
-- For k > 0 (bounded above): `SF(x) = 0` when `x >= μ - σ/k`. Return exactly 0, not a tiny negative number.
-
-### 5.4 Compatibility corpus
-
-Create a corpus of null score samples with frozen SciPy results:
-
-| Sample | Size | Characteristics | SciPy params (c, loc, scale) | SciPy SF at 5 points |
-|---|---|---|---|---|
-| uniform_100 | 100 | Uniform [0, 1] | (frozen) | (frozen) |
-| normal_1000 | 1000 | Normal(0, 1) | (frozen) | (frozen) |
-| exponential_500 | 500 | Exp(1) | (frozen) | (frozen) |
-| gumbel_2000 | 2000 | Gumbel(0, 1) | (frozen) | (frozen) |
-| heavy_tail_500 | 500 | Frechet-like | (frozen) | (frozen) |
-| constant_10 | 10 | All same value | (expected failure) | — |
-| tiny_5 | 5 | 5 values | (frozen, may fail) | — |
-| extreme_tail_10000 | 10000 | With extreme values | (frozen) | (frozen) |
-| ... | ... | ... | ... | ... |
-
-The corpus is generated by a pinned Python script and stored as fixtures. Julia tests load the fixtures and compare:
-- Parameters: `atol=1e-4, rtol=1e-3` (different optimizers may converge to slightly different points).
-- Survival values: `atol=1e-8, rtol=1e-5` (SF should agree more closely than parameters).
-- Failure cases: Julia must detect the same degeneracy and fail with a typed error.
-
-### 5.5 Empirical fallback
-
-If GEV fitting fails (non-convergence, degenerate sample, non-finite parameters), the caller may choose an empirical fallback:
-- Sort raw null scores.
-- Use empirical rank-based p-value: `p = (n_rank + 1) / (n_total + 1)`.
-
-This fallback is **explicitly selected** by passing `NullEstimator=EmpiricalRank()` or similar. It is NOT silently substituted for a failed GEV fit. The Python implementation does not have this fallback; it is a Julia improvement.
-
-### 5.6 PythonCall compatibility extension
-
-If exact SciPy parameter reproduction is needed for validation, an optional `PythonCall.jl` extension can be provided that calls SciPy directly. This extension:
-- Is NOT a core dependency.
-- Is NOT loaded by default.
-- Requires Python + SciPy installed.
-- Is used only for research/validation, not production.
-- Lives in `ext/SciPyCompat.jl` or a separate test-only package.
-
-## Alternatives considered
-
-### A. Call SciPy via PythonCall as primary
-
-Rejected: makes Python a runtime dependency, contradicting the core goal. The package must run without Python.
-
-### B. Use an existing Julia statistics package
-
-Considered: `ExtremeValueTheory.jl`, `Distributions.jl` (has `GeneralizedExtremeValue`).
-Issues:
-- `Distributions.jl`'s GEV provides `cdf`/`sf` but not a fitting function.
-- No established Julia package for GEV MLE fitting with the same parameterization as SciPy.
-- Any external package must be audited for parameterization anyway.
-
-Decision: implement native fitting, using `Distributions.jl`'s `GeneralizedExtremeValue` type for the distribution/CDF/SF if its parameterization matches, or implement from scratch if not. The fitting (MLE) code is MIMOSA-specific and must be written regardless.
-
-### C. Use method of moments only (no MLE)
-
-Rejected: method of moments is less efficient than MLE for GEV and does not match SciPy's results. MLE is the standard for null distribution fitting.
+There is no automatic empirical fallback and no PythonCall runtime extension.
+Callers must handle `GEVFitFailure` explicitly.
 
 ## Consequences
 
-- Julia GEV parameters use textbook `k` convention (sign flipped from SciPy's `c`).
-- Parameter tolerances are corpus-specific (see `numerical_compatibility.md`).
-- Fit failures produce typed errors, not silent fallbacks.
-- The compatibility corpus is the ground truth for validation, not the SciPy function call at test time.
-- `PythonCall` is never required for normal operation.
-
-## Migration impact
-
-- Python `scipy.stats.genextreme.fit(scores)` → Julia `fit_gev(scores; method=NativeGEVFit())`.
-- Python `scipy.stats.genextreme.sf(score, *params)` → Julia `survival(gev, score)`.
-- Parameter sign: SciPy `c` → Julia `k = -c`.
-- Null distribution storage: SciPy params stored in manifest as `[k, μ, σ]` (textbook order), not `[c, loc, scale]` (SciPy order). A migration note explains the sign flip.
-- `adjusted_pvalues` (BH FDR) is implemented natively in Julia. `scipy.stats.false_discovery_control` uses the Benjamini-Hochberg procedure, which is a simple sorting + cumulative minimum. Julia implementation is straightforward and should match exactly.
+- GEV fitting and survival calculations remain Float64 even though scan and
+  alignment values are Float32.
+- Non-finite samples, degenerate inputs, invalid support, and non-positive scale
+  fail through typed results rather than silent substitution.
+- Stored null metadata records textbook `(shape, location, scale)` values.
+- Compatibility fixtures may not be regenerated solely to hide an optimizer
+  regression.

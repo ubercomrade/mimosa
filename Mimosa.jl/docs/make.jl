@@ -24,7 +24,7 @@ makedocs(;
         "Reproducibility" => "reproducibility.md",
         "Storage Format" => "storage.md",
         "Security" => "security.md",
-        "Python Migration" => "migration.md",
+        "Historical Python Migration" => "migration.md",
         "Extending Mimosa" => "extending.md",
         "MotifHORDE Contract" => "downstream_contract.md",
         "Architecture" => "architecture.md",

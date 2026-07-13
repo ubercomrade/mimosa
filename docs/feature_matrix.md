@@ -1,166 +1,40 @@
 # Feature Matrix
 
-> **Stage 0 audit artifact.** Records every user-facing capability of the Python implementation
-> and its planned status in `Mimosa.jl`. Updated at each gate.
+This matrix describes the active Julia package in `Mimosa.jl`. Historical
+Python behavior is not a supported runtime surface.
 
-## Legend
-
-| Status | Meaning |
-|---|---|
-| planned | Julia will support this |
-| in-progress | Julia implementation underway |
-| done | Julia implementation complete and compatibility-verified |
-| deferred | Post-1.0 or downstream (`MotifHORDE.jl`) |
-| not-porting | Deliberately not carried to Julia |
-
-## Model families
-
-| Model | Python type_key | Parser | Writer | Scanning | Sites | Reconstruction | Julia status |
-|---|---|---|---|---|---|---|---|
-| PWM | `pwm` | MEME, PFM, pickle | PFM | forward/reverse/best/both | yes | PFM | MEME/PFM parser done (Stage 1); scanning planned |
-| BaMM | `bamm` | `.ihbcp`, pickle | joblib | forward/reverse/best/both + context | yes | PFM | planned |
-| SiteGA | `sitega` | `.mat`, pickle | `.mat` | forward/reverse/best/both | yes | PFM | planned |
-| Dimont | `dimont` | XML, pickle | joblib | forward/reverse/best/both + context | yes | PFM | planned |
-| Slim | `slim` | XML, pickle | joblib | forward/reverse/best/both + context | yes | PFM | XML parser + scanning done (Stage 5d) |
-| Score profiles | `scores` | FASTA-like | — (not writable) | identity (no scan) | — | — | planned |
-
-## Comparison strategies
-
-| Strategy | Python entry | Metrics | Julia status |
+| Area | Current support | Public entry points | Notes |
 |---|---|---|---|
-| Motif (direct matrix alignment) | `strategy_motif` | `pcc`, `ed`, `cosine` | done (Stage 1) |
-| Profile (window-based) | `strategy_profile` | `co`, `co_rowwise`, `dice`, `dice_rowwise`, `cosine` | planned |
-| One-to-one | `compare_one_to_one` | all of the above | planned |
-| One-to-many | `compare_one_to_many` | all of the above | planned |
+| Model families | PWM, PFM, BaMM, SiteGA, Dimont, Slim | `readmodel`, concrete model constructors | `ScoreProfile` is a comparison input, not a scannable motif model |
+| Scientific formats | MEME, PFM, BaMM `.ihbcp`, SiteGA `.mat`, Dimont/Slim XML | `read_meme`, `read_pfm`, `read_bamm`, `read_sitega`, `read_dimont`, `read_slim` | Format is auto-detected by `readmodel` where possible |
+| Sequences | FASTA and generated DNA | `readsequences`, `make_random_sequences`, `EncodedSequenceBatch` | Flat validated `UInt8` storage with `A=0`, `C=1`, `G=2`, `T=3`, ambiguous=`4` |
+| Scanning | Forward, reverse, best, both strands | `scan`, `scan!`, `StrandPolicy` | Float32 output in flat `RaggedArray` storage |
+| Comparison | Profile-only scalar and one-to-many | `compare`, `prepare_profile`, `PreparedProfile` | Model comparison requires an `EncodedSequenceBatch` |
+| Metrics | CO, row-wise CO, Dice, row-wise Dice, cosine | `OverlapCoefficient`, `DiceSimilarity`, `CosineSimilarityProfile` | Stable names: `co`, `co_rowwise`, `dice`, `dice_rowwise`, `cosine` |
+| Site extraction | Best, threshold, top fraction | `selectsites`, `BestPerSequence`, `ThresholdHits`, `TopFractionHits` | One-based inclusive site ranges internally |
+| PFM reconstruction | Orientation-aware reconstruction | `reconstruct_pfm`, `build_pcm` | Supports explicit execution policy |
+| Statistics | Native GEV, p-values, BH FDR, E-values | `fit_gev`, `pvalue`, `adjusted_pvalues`, `evalue` | GEV calculations use Float64 |
+| Null distributions | Profile nulls | `build_null`, `savenull`, `loadnull`, `annotate_results` | Null format version 2; strategy is always `"profile"` |
+| Parallel execution | Bounded deterministic task parallelism | `SerialExecution`, `ThreadedExecution` | Runtime threads and API policy are both required |
+| Model storage | Portable directory bundles | `writemodel`, `readmodel` | Format version 1, TOML + checksum-verified NPY |
+| Cache | Explicit content-addressed cache | `Cache`, `cache_get`, `cache_set`, `clearcache` | Format version 1; no global cache singleton |
+| CLI | Five command workflows | `main`, `Mimosa.jl/app/mimosa.jl` | `profile`, `build-null`, `cache clear`, `inspect-model`, `convert-model` |
+| Security | Bounded parsing and atomic writes | model/null readers and writers | Rejects traversal, symlink escape, malformed NPY, non-finite data, and oversized declarations |
 
-## Strand policies
+## Removed Interfaces
 
-| Policy | Python `StrandMode` | Behavior | Julia status |
-|---|---|---|---|
-| Forward only | `"+"` | Scan forward strand only | planned |
-| Reverse only | `"-"` | Scan reverse complement only | planned |
-| Best | `"best"` | Per-position max of forward/reverse | planned (default) |
-| Both | `"both"` | Return both strand tracks separately | planned |
+The following are deliberately unsupported and must not be restored from old
+documentation:
 
-## Orientations
+- direct motif matrix/tensor comparison;
+- PCC and Euclidean motif metrics;
+- the `motif` CLI command;
+- the `"motif"` null strategy and null bundles older than version 2;
+- unsafe Python pickle/joblib or Julia `Serialization` input.
 
-| Orientation | Python label | Meaning | Tie-break rank |
-|---|---|---|---|
-| Forward-Forward | `++` | Query forward, target forward | 0 (highest priority) |
-| Forward-Reverse | `+-` | Query forward, target reverse | 1 |
-| Reverse-Forward | `-+` | Query reverse, target forward | 2 |
-| Reverse-Reverse | `--` | Query reverse, target reverse | 3 |
+## Deferred Work
 
-Tie-breaking: when scores are equal, the lower rank wins. Within the same orientation, offset ties are broken by traversal order (negative to positive). Profile shift ties: more sites wins, then smaller `|shift|`.
-
-## Normalization
-
-| Method | Python name | Description | Julia status |
-|---|---|---|---|
-| Empirical log-tail | `empirical_log_tail` | Sort scores, compute cumulative tail probability, `-log10(tail)`, descending lookup table | planned (sole method) |
-
-## Site selection
-
-| Mode | Python `mode` | Description | Julia status |
-|---|---|---|---|
-| Best per sequence | `best` | One highest-scoring hit per sequence | planned |
-| Threshold | `threshold` | All hits at or above FPR-derived score threshold | planned |
-| Top fraction | (via `top_fraction` param) | Keep top-scoring fraction of hits for PFM reconstruction | planned |
-
-## Null distributions
-
-| Feature | Python implementation | Julia status |
-|---|---|---|
-| Group relations | `parse_group_relations` (pandas CSV/TSV) | planned (CSV.jl) |
-| Eligible pair scheduling | sorted by name, cross-group only | planned |
-| Score collection | `compare_one_to_many` per query | planned |
-| GEV fitting | `scipy.stats.genextreme.fit` | planned (native, ADR 0005) |
-| P-value (upper tail) | `scipy.stats.genextreme.sf` | done (`pvalue`, `annotate_results`) |
-| E-value | `pvalue * effective_number_of_targets` | done (`annotate_results`; CLI override) |
-| BH FDR | `scipy.stats.false_discovery_control(method="bh")` | done (native Benjamini-Hochberg) |
-| Storage | `joblib.dump` (pickle) | done (hardened TOML + NPY bundle; bounded, checksummed, staged writes) |
-| Compatibility check | metadata fingerprint comparison | done for CLI annotation (strategy, metric, sequence/background fingerprints) |
-| Auto-search | `~/.cache/mimosa/nulls/*.joblib` | deferred (explicit bundle path only; no hidden global search) |
-
-## Cache
-
-| Feature | Python implementation | Julia status |
-|---|---|---|
-| Profile cache | `.npz` files, `CACHE_VERSION="v8"` | planned (versioned, checksummed) |
-| Model fingerprint | blake2b of type_key + name + length + kmer + representation | planned (content-based) |
-| Batch fingerprint | blake2b of values + mask + lengths | planned |
-| Atomic write | tempfile → replace | planned |
-| Clear | `shutil.rmtree` | planned |
-| Global cache dir | `~/.cache/mimosa/nulls/` | not-porting (explicit object only) |
-
-## CLI commands
-
-| Command | Python subcommand | Key arguments | Julia status |
-|---|---|---|---|
-| Profile comparison | `mimosa profile` | model1, model2, --model1-type, --model2-type, --metric, --fasta, --background, --search-range, --window-radius, --realign-window, --min-logfpr, --pvalue, --null-distribution, --effective-number-of-targets | partial (workflow cache deferred) |
-| Motif comparison | `mimosa motif` | model1, model2, --model1-type, --model2-type, --metric, --pfm-mode, --pfm-top-fraction, --pvalue, --null-distribution, --effective-number-of-targets | done |
-| Build null | `mimosa build-null` | motifs, --model-type, --groups, --strategy, --metric, --output, --fasta, --background | done |
-| Cache clear | `mimosa cache clear` | --cache-dir | done |
-| (new) Inspect model | — | — | planned |
-| (new) Convert model | — | — | planned |
-| (new) Convert null | — | — | planned |
-
-## I/O formats
-
-| Format | Read | Write | Julia status |
-|---|---|---|---|
-| MEME | yes (single + multi) | — | done (Stage 1) |
-| PFM | yes | yes | reader done (Stage 1); writer planned |
-| BaMM `.ihbcp` | yes | joblib only | planned (new writer) |
-| SiteGA `.mat` | yes | yes | planned |
-| Dimont XML | yes | joblib only | planned (new writer) |
-| Slim XML | yes | joblib only | parser done (Stage 5d); writer planned |
-| Score FASTA | yes | — | planned |
-| DNA FASTA | yes | — | planned |
-| DIST | — | yes | deferred (not in main pipeline) |
-| joblib/pickle | yes (trusted) | yes | not-porting (converter only) |
-
-## Python patterns NOT ported
-
-| Pattern | Why not | Julia replacement |
-|---|---|---|
-| `GenericModel` with `Any` representation | No type stability | Concrete immutable structs per model family |
-| `registry: dict[str, ModelHandler]` | String dispatch | Multiple dispatch |
-| `TypedDict` batches with dict shape | Runtime validation only | Concrete parametric structs |
-| Numba `@njit(fastmath=True)` | Unsafe without benchmark proof | Ordinary loops; unsafe annotations only after profiling |
-| Numba `prange` inside kernels | Non-composable parallelism | Top-level thread scheduling |
-| `pd.DataFrame` as core return type | Heavy dependency | Typed structs; DataFrame via extension |
-| `joblib`/pickle storage | Unsafe deserialization | Versioned JSON+binary schema |
-| Encoded sequence validation | N/A (Python uses numpy directly) | `EncodedSequenceBatch` validates `0<=code<=N_CODE` at construction; scan kernels validate dest sizes before `@inbounds` | done (B2) |
-| Model constructor invariants | Implicit | PFM/PWM/BaMM/SiteGA/Dimont/Slim validate dimensions, finite values, non-negativity, background sum, order/span limits | done (B3) |
-| `scipy.stats` direct calls | Parameterization risk | Native GEV with audit |
-| Global mutable cache directory | Hidden side effects | Explicit `Cache` object |
-| `id(batch)` in runtime cache keys | Session-dependent | Preallocation and explicit reuse |
-| `os.makedirs` on import | Import-time side effect | No I/O on import |
-| `set_num_threads` scope | Numba-specific | `ThreadedExecution` policy |
-
-## Test coverage (Python baseline)
-
-| Test file | Tests | Coverage area |
-|---|---|---|
-| `tests/unit_io_models.py` | — | Parsers, model loading, registry |
-| `tests/unit_comparison.py` | — | Motif and profile comparison, metrics |
-| `tests/unit_functions.py` | — | Scanning, tails, matrices, curves |
-| `tests/unit_collections_nulls.py` | — | Null distributions, relations, GEV |
-| `tests/test_integration.py` | ~30 | CLI subprocess tests for all commands |
-| **Total declared** | **146** | |
-
-## Public API surface (Python `__init__.py`)
-
-```
-ComparatorConfig, ComparisonResult, NullBuildRequest, NullBuildSummary,
-OneToManyConfig, OneToOneConfig, GenericModel, StrandMode,
-clear_cache, compare, compare_one_to_one, compare_one_to_many,
-create_comparator_config, create_null_distribution, create_null_distribution_config,
-create_one_to_many_config, create_one_to_one_config,
-get_frequencies, get_pfm, get_scores, get_sites,
-build_null_distributions, load_null_distribution_file, parse_group_relations,
-read_model, read_models, register_model_handler,
-run_null_distribution, run_one_to_one, run_one_to_many,
-scan_model, save_null_distribution_file, validate_metric
-```
+GPU/distributed execution, ZIP bundles, empirical fallback for failed GEV fits,
+and automatic cache integration into scientific workflows are not current
+public contracts. Any addition requires tests, documentation, and benchmark or
+security evidence appropriate to the change.

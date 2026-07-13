@@ -70,7 +70,8 @@ Offset is the displacement of the query relative to the target:
 - **Positive** = query shifted right
 - **Negative** = query shifted left
 - Iteration goes from **negative to positive** offsets
-- **First offset wins** on equal score (deterministic tie-breaking)
+- Ties use score, contributing site count, smaller absolute shift, then
+  orientation priority; a complete tie keeps the first visited shift
 
 ## Orientation convention
 

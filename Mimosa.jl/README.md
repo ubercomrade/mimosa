@@ -1,131 +1,97 @@
 # Mimosa.jl
 
-A Julia package for motif scanning, comparison, and statistical evaluation.
-Independent Julia implementation of the [MIMOSA](https://github.com/mimosa/mimosa)
-motif comparison toolkit, redesigned for Julia's multiple dispatch, parametric
-types, and column-major layout.
+Mimosa.jl is a Julia 1.10+ package for DNA motif scanning, profile-based
+comparison, site extraction, PFM reconstruction, and statistical evaluation.
+It supports PWM/PFM, BaMM, SiteGA, Dimont, Slim, and precomputed score profiles.
 
-## Features
-
-- **Six model families:** PWM, PFM, BaMM, SiteGA, Dimont, Slim
-- **Multiple file formats:** MEME, PFM, BaMM `.ihbcp`, SiteGA `.mat`, Dimont/Slim XML,
-  score profiles (FASTA-like)
-- **Motif comparison:** Direct matrix/tensor alignment with PCC, Euclidean distance,
-  cosine similarity
-- **Profile comparison:** Score-profile-based comparison with overlap coefficient,
-  dice, and cosine metrics
-- **Site extraction:** Best-per-sequence, threshold, and top-fraction selection
-- **PFM reconstruction:** From selected sites with pseudocount and orientation correction
-- **Null distributions:** Native GEV fitting, BH FDR, E-values, p-value annotation
-- **Parallelism:** Serial and threaded execution with deterministic results
-- **Portable storage:** Versioned TOML manifest + NPY binary blobs with checksum validation
-- **Content-based cache:** Atomic writes, checksum validation, corruption recovery
-- **CLI:** Thin adapter over public API, JSON output, stable exit codes
-- **Security:** Bounded parsing, path traversal protection, strict NPY validation
+Comparison is profile-only. Motif models are scanned against an explicit
+`EncodedSequenceBatch`, normalized by empirical score tails, anchored, and
+aligned across strands. Available metrics are `co`, `co_rowwise`, `dice`,
+`dice_rowwise`, and `cosine`.
 
 ## Installation
 
-The package is not yet registered in the General registry. Install from a local
+The package is not currently registered in General. Install it from a local
 clone:
 
 ```julia
 using Pkg
-Pkg.develop(path="/path/to/Mimosa.jl")
+Pkg.develop(path="/path/to/mimosa/Mimosa.jl")
 ```
 
-Or from the repository (once published):
+## Quick Start
 
-```julia
-using Pkg
-Pkg.add(url="https://github.com/mimosa-jl/Mimosa.jl.git")
-```
-
-## Quick start
+From the repository root:
 
 ```julia
 using Mimosa
 
-# Read a motif from MEME or PFM format (auto-detected by extension).
 query = readmodel("examples/pif4.meme")
 target = readmodel("examples/gata2.meme")
+sequences, _ = readsequences("examples/foreground.fa")
 
-# Compare models through explicit strand-aware score profiles.
-batch, names = readsequences("examples/foreground.fa")
-result = compare(query, target, batch; metric=:co)
-
-# Serialize to JSON matching the Python CLI schema.
+result = compare(query, target, sequences; metric=:co)
 println(to_json(result))
 
-# Scan sequences with strand policies.
-scores = scan(query, batch; strands=BestStrand())
-
-# Threaded batch scan (deterministic results).
-scores_t = scan(query, batch; strands=BestStrand(), execution=ThreadedExecution(4))
-
-# Build a null distribution from a collection of models.
-models = [query, target]
-relations = parse_group_relations("groups.tsv")
-null_result = build_null(models, relations; sequences=batch, metric=:co)
-dist = null_result.distribution  # NullDistribution
-
-# Save and load null distributions (portable bundle format).
-savenull("null_dist", dist)
-loaded_dist = loadnull("null_dist")
-
-# Annotate comparison results with p-values.
-annotated = annotate_results([result], dist; effective_number_of_targets=1)
-
-# Write and read models in portable bundle format.
-writemodel("output/model_bundle", query)
-loaded_model = readmodel("output/model_bundle")
+scores = scan(query, sequences; strands=BestStrand())
+sites = selectsites(query, sequences, BestPerSequence())
+pfm = reconstruct_pfm(query, sequences, BestPerSequence())
 ```
+
+Threaded execution must be enabled both in the Julia runtime and in the API:
+
+```julia
+scores = scan(
+    query,
+    sequences;
+    strands=BestStrand(),
+    execution=ThreadedExecution(4),
+)
+```
+
+Start that process with `julia --threads=4` or `JULIA_NUM_THREADS=4`.
 
 ## CLI
 
 ```bash
-# Profile-based comparison with random sequences
-julia --project=Mimosa.jl app/mimosa.jl profile examples/pif4.meme examples/gata2.meme \
-  --model1-type pwm --model2-type pwm --metric co --num-sequences 50 --seq-length 100
-
-# Build a null distribution
-julia --project=Mimosa.jl app/mimosa.jl build-null examples/ \
-  --model-type pwm --groups groups.tsv --output null_dist
-
-# Inspect a model
-julia --project=Mimosa.jl app/mimosa.jl inspect-model examples/foxa2.ihbcp --type bamm
-
-# Convert a legacy model to portable bundle format
-julia --project=Mimosa.jl app/mimosa.jl convert-model examples/pif4.meme output/pif4_bundle
+JULIA_NUM_THREADS=4 julia --project=Mimosa.jl Mimosa.jl/app/mimosa.jl \
+  profile examples/pif4.meme examples/gata2.meme \
+  --model1-type pwm --model2-type pwm --fasta examples/foreground.fa \
+  --metric co --threads 4
 ```
 
-See [CLI documentation](docs/src/cli.md) for all commands and options.
+Current commands are `profile`, `build-null`, `cache clear`, `inspect-model`,
+and `convert-model`. The removed direct matrix API and `motif` command are not
+available.
 
-## Architecture
+## Design
 
-- **Library-first:** the public API is the Julia module; the CLI is a thin
-  adapter that parses arguments, calls the API, and serializes output.
-- **Concrete domain types:** `PWM`, `PFM`, `BaMM`, `SiteGA`, `Dimont`, `Slim`
-  are parametric immutable structs. No `Any` fields, no string dispatch in hot
-  paths.
-- **Multiple dispatch:** metrics are small types; `compare` dispatches on model
-  types and metric types.
-- **Type-stable kernels:** all scanning and comparison kernels return concrete
-  types with zero per-position allocations.
-- **One-based internal indexing:** coordinate conversion to zero-based
-  half-open CLI output happens at the serialization boundary.
+- Concrete immutable model and execution-policy types drive multiple dispatch.
+- Sequence and score batches use flat offset-based storage.
+- Serial execution is the default; threaded work is bounded and preserves
+  input order.
+- User-facing storage uses bounded TOML manifests plus checksum-verified NPY
+  blobs. Bundle writes are atomic.
+- The CLI writes JSON only to stdout and diagnostics only to stderr.
 
 ## Development
 
+Run commands from the repository root:
+
 ```bash
-# Run tests
-julia --project=Mimosa.jl -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
+julia --project=Mimosa.jl -e 'using Pkg; Pkg.test()'
 
-# Format check
-julia --project=Mimosa.jl -e 'using JuliaFormatter; @assert format("Mimosa.jl/src"; overwrite=false); @assert format("Mimosa.jl/test"; overwrite=false)'
+julia --project=Mimosa.jl/test -e \
+  'using JuliaFormatter; @assert format("Mimosa.jl/src"; overwrite=false); @assert format("Mimosa.jl/test"; overwrite=false)'
 
-# Downstream contract test (separate environment)
-julia --project=Mimosa.jl/test/downstream Mimosa.jl/test/downstream/runtests.jl
+julia --project=Mimosa.jl/docs Mimosa.jl/docs/make.jl
+
+JULIA_NUM_THREADS=4 julia --project=Mimosa.jl/benchmark \
+  Mimosa.jl/benchmark/runbenchmarks.jl
 ```
+
+See the [quick start](docs/src/quickstart.md), [CLI guide](docs/src/cli.md),
+[API reference](docs/src/api.md), and [architecture](docs/src/architecture.md).
 
 ## License
 

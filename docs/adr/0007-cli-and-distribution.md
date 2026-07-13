@@ -1,73 +1,45 @@
-# ADR 0007: CLI and distribution
+# ADR 0007: CLI and Distribution
 
-## Context
+## Status
 
-Stage 8 requires a CLI that is a thin adapter over the public API, with stable
-exit codes, JSON output in stdout, diagnostics in stderr, and legacy migration
-tools. The PLAN specifies commands: `motif`, `profile`, `build-null`,
-`cache clear`, `inspect-model`, `convert-model`, `convert-null`.
+Accepted and implemented. Amended for the profile-only public contract.
 
 ## Decision
 
-### CLI parser
+Use a dependency-free custom parser in `Mimosa.jl/src/cli.jl` with the
+standalone entry point `Mimosa.jl/app/mimosa.jl`. The CLI remains a thin adapter
+over public library workflows and contains no independent scientific logic.
 
-Use a custom minimal parser (stdlib only, 0 external dependencies) instead of
-ArgParse.jl or Comonicon.jl. Rationale:
-- Current project has 0 external runtime dependencies (besides stdlib)
-- Adding ArgParse/Comonicon would increase latency, install size, and maintenance
-- The custom parser covers all needed cases: subcommands, flags, key-value args,
-  help text, and error messages
+Current commands are:
 
-### CLI structure
+- `profile`;
+- `build-null`;
+- `cache clear`;
+- `inspect-model`;
+- `convert-model`.
 
-```
-app/mimosa.jl — standalone entry point
-src/cli.jl    — parser + command dispatch
-```
+The direct `motif` command and a `convert-null` command are not available.
 
-Six commands: `motif`, `profile`, `build-null`, `cache clear`, `inspect-model`,
-`convert-model`.
+## Process Contract
 
-### Exit codes
+| Exit code | Meaning |
+|---|---|
+| 0 | success |
+| 1 | usage or argument error |
+| 2 | runtime, input, or scientific error |
 
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | Usage error (missing/invalid arguments) |
-| 2 | Runtime error (file not found, parse error, etc.) |
+Successful machine-readable results are written only to stdout as JSON.
+Diagnostics and errors are written only to stderr. Batch mode has no prompts,
+and stack traces are hidden unless verbose diagnostics are requested.
 
-### Output conventions
-
-- JSON results → stdout only
-- Errors, progress, diagnostics → stderr only
-- No stack traces by default
-- No interactive prompts in batch mode
-
-### Legacy conversion
-
-- `scripts/convert_legacy_model.py` — trusted legacy model converter
-- `scripts/convert_legacy_null.py` — trusted legacy null converter
-- Both require explicit `--trusted-input` flag (security guard)
-- Julia package never reads pickle/joblib directly
-
-## Alternatives considered
-
-1. **ArgParse.jl**: Mature, well-tested, but adds dependency weight and latency
-2. **Comonicon.jl**: Feature-rich with app generation, but heavy for this use case
-3. **Package app with PackageCompiler**: Considered for distribution, but adds
-   complexity for initial release. Evaluated separately in Stage 10.
+`profile` accepts model or score-profile inputs and supports only `co`,
+`co_rowwise`, `dice`, `dice_rowwise`, and `cosine`. `build-null` always builds a
+profile null distribution. `--threads` selects an explicit execution policy but
+does not alter Julia's runtime thread count.
 
 ## Consequences
 
-- CLI is simple, maintainable, and has 0 external dependencies
-- JSON output is stable and machine-readable
-- Exit codes are documented and tested
-- Legacy conversion is a separate concern, not part of core package
-- `--progress` interactive mode deferred (batch-safe behavior sufficient for CI)
-- `--debug` stacktrace mode deferred (use `--verbose` for now)
-
-## Migration impact
-
-- Python CLI commands have compatible Julia equivalents
-- JSON output schema matches Python where possible
-- `--threads` replaces `--jobs` (alias kept for compatibility)
+- CLI behavior is covered through direct and subprocess tests.
+- JSON schemas, exit codes, and stdout/stderr separation are public contracts.
+- Legacy unsafe serialization is never read by the CLI; `convert-model`
+  converts supported scientific model files into portable Mimosa bundles.

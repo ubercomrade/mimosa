@@ -1,8 +1,10 @@
 # Python Reference Architecture
 
-> **Stage 0 audit artifact.** Frozen at Python commit `95e8dbb` (2026-07-10).
-> This document maps the existing Python implementation to guide the Julia port.
-> It is not a specification of Julia behavior; it records what exists, what must be preserved, and what must not be copied literally.
+> **Historical migration artifact.** Frozen at Python commit `95e8dbb`
+> (2026-07-10). The Python package described below has been removed from the
+> active source tree. Paths, commands, metrics, and architecture in this file
+> are preserved for provenance only and do not describe the current Mimosa.jl
+> API. See [Documentation Map](README.md) for current documentation.
 
 ## 1. Module map
 

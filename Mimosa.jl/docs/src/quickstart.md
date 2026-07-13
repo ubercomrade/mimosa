@@ -2,359 +2,131 @@
 
 ## Installation
 
-The package is not yet registered in the General registry. Install from a local
-clone:
+Mimosa.jl requires Julia 1.10 or newer and is not currently registered in
+General. Install it from a local clone:
 
 ```julia
 using Pkg
-Pkg.develop(path="/path/to/Mimosa.jl")
+Pkg.develop(path="/path/to/mimosa/Mimosa.jl")
 ```
 
-Or from the repository (once published):
+The examples below assume the repository root is the working directory.
+
+## Read and Scan a Model
 
 ```julia
-using Pkg
-Pkg.add(url="https://github.com/mimosa-jl/Mimosa.jl.git")
+using Mimosa
+
+model = readmodel("examples/pif4.meme")
+sequences, names = readsequences("examples/foreground.fa")
+
+scores = scan(model, sequences; strands=BestStrand())
 ```
 
-## Reading models
+`EncodedSequenceBatch` and `RaggedArray` use flat offset-based storage. Scan
+policies are `ForwardOnly()`, `ReverseOnly()`, `BestStrand()`, and
+`BothStrands()`.
 
-`readmodel` auto-detects format by file extension:
+## Compare Models
 
-```jldoctest
-julia> using Mimosa
+Model comparison requires sequences and follows scan, normalization, anchor,
+and profile alignment:
 
-julia> pwm = readmodel(joinpath(dirname(pwd()), "..", "examples", "pif4.meme"));
+```julia
+query = readmodel("examples/pif4.meme")
+target = readmodel("examples/gata2.meme")
+sequences, _ = readsequences("examples/foreground.fa")
 
-julia> typeof(pwm)
-PWM{Float32, Matrix{Float32}, NTuple{4, Float32}}
+comparison = compare(
+    query,
+    target,
+    sequences;
+    metric=:co,
+    search_range=10,
+    window_radius=10,
+    realign_window=3,
+)
 
-julia> pwm.name
-"pwm_model"
+println(to_json(comparison))
 ```
 
-For explicit control, use `read_meme`, `read_pfm`, `read_bamm`, `read_sitega`,
-`read_dimont`, `read_slim`, or `read_scores`.
+Available metrics are `:co`, `:co_rowwise`, `:dice`, `:dice_rowwise`, and
+`:cosine`.
 
-## Scanning sequences
+## Reuse Prepared Profiles
 
-`readsequences` returns a `(batch, names)` tuple:
+Prepare profiles once when the same query is compared repeatedly:
 
-```jldoctest
-julia> using Mimosa
+```julia
+query_scores = ScoreProfile("query", scores)
+target_scores = ScoreProfile("target", scores)
 
-julia> batch, names = readsequences(joinpath(dirname(pwd()), "..", "examples", "foreground.fa"));
+prepared_query = prepare_profile(query_scores; min_logfpr=0.0f0)
+prepared_target = prepare_profile(target_scores; min_logfpr=0.0f0)
 
-julia> typeof(batch)
-EncodedSequenceBatch{Vector{UInt8}, Vector{Int64}}
-
-julia> nsequences(batch)
-100
+prepared_comparison = compare(prepared_query, prepared_target; metric=:cosine)
+prepared_results = compare(prepared_query, [prepared_target]; metric=:cosine)
 ```
 
-Scan with different strand policies:
+Prepared profiles compared together must use the same `min_logfpr` threshold.
 
-```jldoctest
-julia> using Mimosa
+## Sites and PFM Reconstruction
 
-julia> pwm = readmodel(joinpath(dirname(pwd()), "..", "examples", "pif4.meme"));
+```julia
+sites = selectsites(model, sequences, BestPerSequence(); strands=BestStrand())
 
-julia> batch, _ = readsequences(joinpath(dirname(pwd()), "..", "examples", "foreground.fa"));
-
-julia> scores = scan(pwm, batch; strands=ForwardOnly());
-
-julia> typeof(scores)
-RaggedArray{Float32, Vector{Float32}, Vector{Int64}}
-
-julia> nrows(scores)
-100
+pfm = reconstruct_pfm(
+    model,
+    sequences,
+    TopFractionHits(0.1);
+    strands=BestStrand(),
+    pseudocount=1.0f-4,
+)
 ```
 
-Threaded scan produces identical results to serial:
+Site ranges are one-based and inclusive in the Julia API. JSON serialization
+converts them to zero-based half-open coordinates.
 
-```jldoctest
-julia> using Mimosa
+## Null Distributions
 
-julia> pwm = readmodel(joinpath(dirname(pwd()), "..", "examples", "pif4.meme"));
+```julia
+models = [query, target, readmodel("examples/foxa2.meme")]
+relations = parse_group_relations(
+    "groups.tsv";
+    known_names=Set(model.name for model in models),
+)
 
-julia> batch, _ = readsequences(joinpath(dirname(pwd()), "..", "examples", "foreground.fa"));
+null_result = build_null(
+    models,
+    relations;
+    sequences=sequences,
+    metric=:co,
+)
 
-julia> scan(pwm, batch; execution=SerialExecution()) == scan(pwm, batch; execution=ThreadedExecution(4))
-true
+dist = null_result.distribution
+savenull("output/null_bundle", dist)
+loaded = loadnull("output/null_bundle")
+annotated = annotate_results([comparison], loaded; effective_number_of_targets=1)
 ```
 
-Generate random sequences for testing:
+Null bundles use format version 2 and strategy `"profile"` only.
 
-```jldoctest
-julia> using Mimosa
+## Threaded Execution
 
-julia> rb = make_random_sequences(10, 20; seed=42);
+Threading is opt-in in both the runtime and the API:
 
-julia> typeof(rb)
-EncodedSequenceBatch{Vector{UInt8}, Vector{Int64}}
-
-julia> nsequences(rb)
-10
+```bash
+JULIA_NUM_THREADS=4 julia --project=Mimosa.jl
 ```
 
-## Comparing motifs
-
-Direct matrix alignment with PCC, Euclidean distance, or cosine similarity:
-
-```jldoctest
-julia> using Mimosa
-
-julia> pwm1 = readmodel(joinpath(dirname(pwd()), "..", "examples", "pif4.meme"));
-
-julia> pwm2 = readmodel(joinpath(dirname(pwd()), "..", "examples", "gata2.meme"));
-
-julia> result = compare(pwm1, pwm2, sequences; metric=:co);
-
-julia> typeof(result)
-ComparisonResult
-
-julia> result.metric
-"pcc"
+```julia
+scores = scan(
+    model,
+    sequences;
+    strands=BestStrand(),
+    execution=ThreadedExecution(4),
+)
 ```
 
-Serialize results to JSON:
-
-```jldoctest
-julia> using Mimosa
-
-julia> pwm1 = readmodel(joinpath(dirname(pwd()), "..", "examples", "pif4.meme"));
-
-julia> pwm2 = readmodel(joinpath(dirname(pwd()), "..", "examples", "gata2.meme"));
-
-julia> result = compare(pwm1, pwm2, sequences; metric=:co);
-
-julia> startswith(to_json(result), "{")
-true
-```
-
-## Profile comparison
-
-Profile-based comparison scans sequences with each model, normalizes,
-and compares the resulting score profiles:
-
-```jldoctest
-julia> using Mimosa
-
-julia> pwm1 = readmodel(joinpath(dirname(pwd()), "..", "examples", "pif4.meme"));
-
-julia> pwm2 = readmodel(joinpath(dirname(pwd()), "..", "examples", "gata2.meme"));
-
-julia> batch, _ = readsequences(joinpath(dirname(pwd()), "..", "examples", "foreground.fa"));
-
-julia> result = compare(pwm1, pwm2, batch; metric=:co, search_range=10, window_radius=10);
-
-julia> typeof(result)
-ComparisonResult
-```
-
-One-to-many comparison with score profiles:
-
-```jldoctest
-julia> using Mimosa
-
-julia> sp1 = ScoreProfile("q", build_ragged([Float32[0.1, 0.5, 0.3, 0.8]]));
-
-julia> sp2 = ScoreProfile("t1", build_ragged([Float32[0.2, 0.4, 0.3, 0.7]]));
-
-julia> sp3 = ScoreProfile("t2", build_ragged([Float32[0.3, 0.1, 0.9, 0.2]]));
-
-julia> prepared = prepare_profile(sp1);
-
-julia> results = compare(prepared, [sp2, sp3]; metric=:co, search_range=3, window_radius=2);
-
-julia> length(results)
-2
-```
-
-Available profile metrics: `:co`, `:co_rowwise`, `:dice`, `:dice_rowwise`, `:cosine`.
-
-## Site extraction and PFM reconstruction
-
-```jldoctest
-julia> using Mimosa
-
-julia> pwm = readmodel(joinpath(dirname(pwd()), "..", "examples", "pif4.meme"));
-
-julia> batch, _ = readsequences(joinpath(dirname(pwd()), "..", "examples", "foreground.fa"));
-
-julia> sites = selectsites(pwm, batch, BestPerSequence(); strands=BestStrand());
-
-julia> typeof(sites)
-SiteCollection
-
-julia> length(sites)
-100
-```
-
-Reconstruct a PFM from selected sites:
-
-```jldoctest
-julia> using Mimosa
-
-julia> pwm = readmodel(joinpath(dirname(pwd()), "..", "examples", "pif4.meme"));
-
-julia> batch, _ = readsequences(joinpath(dirname(pwd()), "..", "examples", "foreground.fa"));
-
-julia> pfm = reconstruct_pfm(pwm, batch, BestPerSequence(); pseudocount=Float32(1e-4));
-
-julia> eltype(pfm)
-Float32
-
-julia> size(pfm)
-(4, 12)
-```
-
-## Null distributions
-
-Build a null distribution from a collection of models:
-
-```jldoctest
-julia> using Mimosa
-
-julia> bg = (Float32(0.25), Float32(0.25), Float32(0.25), Float32(0.25));
-
-julia> w1 = Float32[0.5 -0.5 0.3; -0.3 0.7 -0.2; 0.1 0.1 0.8; -0.2 0.3 -0.1; -0.3 -0.3 -0.3];
-
-julia> w2 = Float32[0.3 0.2 0.5; 0.1 0.8 0.1; 0.2 0.3 0.4; 0.1 0.1 0.2; -0.1 -0.1 -0.1];
-
-julia> w3 = Float32[0.4 -0.4 0.2; -0.2 0.6 -0.1; 0.2 0.2 0.7; -0.1 0.4 0.0; -0.2 -0.2 -0.2];
-
-julia> models = [PWM("m1", w1, bg), PWM("m2", w2, bg), PWM("m3", w3, bg)];
-
-julia> mkpath("/tmp/mimosa_quickstart");
-
-julia> write("/tmp/mimosa_quickstart/rel.tsv", "motif\tgroup\nm1\tA\nm2\tB\nm3\tC\n");
-
-julia> relations = parse_group_relations("/tmp/mimosa_quickstart/rel.tsv"; known_names=Set(["m1", "m2", "m3"]));
-
-julia> null_result = build_null(models, relations; sequences=sequences, metric=:co);
-
-julia> typeof(null_result.distribution)
-NullDistribution
-
-julia> null_result.distribution.strategy
-"motif"
-
-julia> null_result.distribution.metric
-"pcc"
-```
-
-Compute p-values from the fitted GEV:
-
-```jldoctest
-julia> using Mimosa
-
-julia> scores = [0.1, 0.5, 0.3, 0.8, 0.2, 0.6, 0.4, 0.7, 0.1, 0.9];
-
-julia> fit = fit_gev(scores);
-
-julia> typeof(fit)
-GEVFit
-
-julia> typeof(pvalue(fit, 0.5))
-Float64
-```
-
-Save and load null distributions (portable bundle format):
-
-```jldoctest
-julia> using Mimosa
-
-julia> bg = (Float32(0.25), Float32(0.25), Float32(0.25), Float32(0.25));
-
-julia> w1 = Float32[0.5 -0.5 0.3; -0.3 0.7 -0.2; 0.1 0.1 0.8; -0.2 0.3 -0.1; -0.3 -0.3 -0.3];
-
-julia> w2 = Float32[0.3 0.2 0.5; 0.1 0.8 0.1; 0.2 0.3 0.4; 0.1 0.1 0.2; -0.1 -0.1 -0.1];
-
-julia> w3 = Float32[0.4 -0.4 0.2; -0.2 0.6 -0.1; 0.2 0.2 0.7; -0.1 0.4 0.0; -0.2 -0.2 -0.2];
-
-julia> models = [PWM("m1", w1, bg), PWM("m2", w2, bg), PWM("m3", w3, bg)];
-
-julia> write("/tmp/mimosa_quickstart/rel.tsv", "motif\tgroup\nm1\tA\nm2\tB\nm3\tC\n");
-
-julia> relations = parse_group_relations("/tmp/mimosa_quickstart/rel.tsv"; known_names=Set(["m1", "m2", "m3"]));
-
-julia> null_result = build_null(models, relations; sequences=sequences, metric=:co);
-
-julia> savenull("/tmp/mimosa_quickstart/null_dist", null_result.distribution);
-
-julia> loaded = loadnull("/tmp/mimosa_quickstart/null_dist");
-
-julia> loaded.strategy
-"motif"
-```
-
-## Result annotation
-
-Annotate comparison results with p-values from a null distribution:
-
-```jldoctest
-julia> using Mimosa
-
-julia> bg = (Float32(0.25), Float32(0.25), Float32(0.25), Float32(0.25));
-
-julia> w1 = Float32[0.5 -0.5 0.3; -0.3 0.7 -0.2; 0.1 0.1 0.8; -0.2 0.3 -0.1; -0.3 -0.3 -0.3];
-
-julia> w2 = Float32[0.3 0.2 0.5; 0.1 0.8 0.1; 0.2 0.3 0.4; 0.1 0.1 0.2; -0.1 -0.1 -0.1];
-
-julia> w3 = Float32[0.4 -0.4 0.2; -0.2 0.6 -0.1; 0.2 0.2 0.7; -0.1 0.4 0.0; -0.2 -0.2 -0.2];
-
-julia> models = [PWM("m1", w1, bg), PWM("m2", w2, bg), PWM("m3", w3, bg)];
-
-julia> write("/tmp/mimosa_quickstart/rel.tsv", "motif\tgroup\nm1\tA\nm2\tB\nm3\tC\n");
-
-julia> relations = parse_group_relations("/tmp/mimosa_quickstart/rel.tsv"; known_names=Set(["m1", "m2", "m3"]));
-
-julia> null_result = build_null(models, relations; sequences=sequences, metric=:co);
-
-julia> result = compare(models[1], models[2], sequences; metric=:co);
-
-julia> annotated = annotate_results([result], null_result.distribution; effective_number_of_targets=2);
-
-julia> typeof(annotated[1])
-AnnotatedResult
-```
-
-## Writing models
-
-Write to portable Mimosa bundle (TOML manifest + NPY blobs):
-
-```jldoctest
-julia> using Mimosa
-
-julia> pwm = readmodel(joinpath(dirname(pwd()), "..", "examples", "pif4.meme"));
-
-julia> mkpath("/tmp/mimosa_quickstart");
-
-julia> writemodel("/tmp/mimosa_quickstart/pwm_bundle", pwm);
-
-julia> loaded = readmodel("/tmp/mimosa_quickstart/pwm_bundle");
-
-julia> typeof(loaded)
-PWM{Float32, Matrix{Float32}, NTuple{4, Float32}}
-
-julia> loaded.name
-"pwm_model"
-```
-
-## Parallelism
-
-```jldoctest
-julia> using Mimosa
-
-julia> pwm = readmodel(joinpath(dirname(pwd()), "..", "examples", "pif4.meme"));
-
-julia> batch, _ = readsequences(joinpath(dirname(pwd()), "..", "examples", "foreground.fa"));
-
-julia> r1 = scan(pwm, batch; execution=SerialExecution());
-
-julia> r2 = scan(pwm, batch; execution=ThreadedExecution(4));
-
-julia> r1 == r2
-true
-```
+`SerialExecution()` is the default. Threaded and serial workflows preserve
+result ordering and exact discrete fields.

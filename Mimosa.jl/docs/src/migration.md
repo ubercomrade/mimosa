@@ -1,80 +1,39 @@
-# Python Migration
+# Historical Python Migration
 
-## Overview
+The repository now has one active implementation: Mimosa.jl. The former Python
+package has been removed from the source tree. This page records the remaining
+migration boundary for legacy data; it is not a dual-support policy.
 
-Mimosa.jl is an independent Julia implementation of the Python MIMOSA
-project. It preserves scientific semantics and user-facing capabilities while
-using idiomatic Julia architecture.
+## Architectural Changes
 
-## What changed
+| Retired Python design | Current Julia design |
+|---|---|
+| generic models and string registries | concrete immutable model types and multiple dispatch |
+| padded/masked batches | flat `EncodedSequenceBatch` and `RaggedArray` storage |
+| Numba/global thread control | explicit `ExecutionPolicy` and bounded top-level tasks |
+| direct matrix and profile strategies | profile-only comparison |
+| pickle/joblib persistence | bounded TOML + checksum-verified NPY bundles |
+| SciPy GEV fitting | native Float64 BFGS fitting |
 
-### Architecture
+Direct matrix alignment, PCC/Euclidean metrics, the `motif` CLI command, and
+the `"motif"` null strategy were deliberately removed.
 
-| Python | Julia |
-|--------|------|
-| `GenericModel(type_key, representation, config)` | Concrete immutable structs per family |
-| `registry: Dict[str, ModelHandler]` | Multiple dispatch on concrete types |
-| `TypedDict` batches with `values`/`mask`/`lengths` | `RaggedArray` and `EncodedSequenceBatch` |
-| `pandas.DataFrame` for sites/relations | Typed `SiteCollection`, `GroupRelations` |
-| Numba bucketing, `fastmath=True`, thread-mask scope | Serial kernels + top-level execution policy |
-| `joblib`/`pickle` storage | TOML manifest + NPY blobs |
-| `scipy.stats.genextreme.fit` | Native BFGS MLE fit |
-| String type keys in hot paths | Concrete parametric types, no string dispatch |
+## Legacy Serialized Data
 
-### What was not ported
+Mimosa.jl never reads pickle/joblib. Historical conversion helpers remain under
+`Mimosa.jl/scripts/` and must be used only with explicitly trusted input because
+Python deserialization can execute arbitrary code. Convert outside the Julia
+trust boundary, then validate the resulting portable bundle with `readmodel` or
+`loadnull`.
 
-- Python-specific Numba `fastmath=True` and bucketing patterns
-- pandas/DataFrames in internal kernels (typed structs instead)
-- joblib/pickle as user-facing storage format
-- Global mutable state of any kind
+Null bundles from the removed strategy or versions older than 2 are not accepted
+by the current reader and must not be relabeled without recomputing a compatible
+profile null distribution.
 
-## Converting legacy models
+## Historical Fixtures
 
-### Step 1: Convert models
-
-```bash
-# Trust the input explicitly (pickle may contain arbitrary objects)
-python scripts/convert_legacy_model.py \
-    --trusted-input old_model.pkl \
-    --output new_model_bundle
-```
-
-### Step 2: Convert null distributions
-
-```bash
-python scripts/convert_legacy_null.py \
-    --trusted-input old_null.joblib \
-    --output new_null_dir
-```
-
-### Step 3: Verify in Julia
-
-```julia
-using Mimosa
-
-# Load converted model
-model = readmodel("new_model_bundle")
-println("Type: ", typeof(model))
-println("Width: ", length(model))
-println("Score bounds: ", scorebounds(model))
-
-# Verify scan works
-batch = readsequences("sequences.fa")
-scores = scan(model, batch; strands=BestStrand())
-```
-
-## Compatibility fixtures
-
-The `tests/fixtures/compatibility/` directory contains frozen Python oracle
-outputs for 89+ fixtures across all model families. These verify that Julia
-produces results within documented tolerances.
-
-## Known numerical differences
-
-See [Numerical Compatibility](@ref) for the full tolerance classes and known
-divergences. Summary:
-
-- Raw scan scores: Float32 with Float64 cross-column accumulation, `atol ≤ 1e-5`
-- GEV parameters: different optimizer, `atol=0.01`, `rtol=0.05`
-- Random sequences: different RNG, not bit-compatible
-- Integer values (offsets, indices, counts): exact match
+Package-local parser/model inputs remain under `Mimosa.jl/test/fixtures/`. The
+former root Python oracle corpus has been removed from the current source tree;
+it is not evidence that retired Python APIs remain supported. Any replacement
+corpus requires documented generators, dependency versions, commands,
+checksums, and scientific review.

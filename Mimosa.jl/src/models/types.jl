@@ -139,10 +139,29 @@ end
 Base.length(model::PFM) = size(model.frequencies, 2)
 Base.length(model::PWM) = size(model.weights, 2)
 
+"""
+    motif_length(model::AbstractMotifModel)
+
+Return the number of motif positions represented by `model`.
+"""
 motif_length(model::AbstractMatrixMotif) = length(model)
 window_size(model::AbstractMatrixMotif) = motif_length(model)
+
+"""
+    scorematrix(model::AbstractMotifModel)
+
+Return the matrix used by the scanning kernels. Matrix motifs expose their
+frequency or weight matrix; higher-order motifs expose their flattened
+context-by-position representation.
+"""
 scorematrix(model::PFM) = model.frequencies
 scorematrix(model::PWM) = model.weights
+
+"""
+    scoretype(model::AbstractMotifModel)
+
+Return the element type of [`scorematrix`](@ref) for `model`.
+"""
 scoretype(model::AbstractMotifModel) = eltype(scorematrix(model))
 
 """

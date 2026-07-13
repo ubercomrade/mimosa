@@ -1,168 +1,90 @@
 # CLI
 
-Mimosa.jl provides a thin command-line interface over the public API. The CLI
-is a simple adapter: it parses arguments, calls the API, and serializes results
-as JSON to stdout. Diagnostics go to stderr only.
+The CLI is a thin adapter over the public API. Successful results are JSON on
+stdout; diagnostics and errors go to stderr.
 
-## Usage
+Run commands from the repository root:
 
 ```bash
-julia --project=Mimosa.jl app/mimosa.jl <command> [options]
+julia --project=Mimosa.jl Mimosa.jl/app/mimosa.jl <command> [options]
 ```
-
-Global options:
-- `--help`, `-h` — Show help message
-- `--version`, `-V` — Show version
-- `--quiet` — Suppress informational stderr output
-- `--verbose` — Enable verbose stderr diagnostics
 
 ## Commands
 
-- `--pfm-mode` — Force PFM reconstruction before comparison
-- `--pfm-top-fraction <f>` — Fraction of top sites for PFM (default: 0.05)
-- `--fasta <path>` — FASTA sequences for PFM reconstruction
-- `--num-sequences <n>` — Random sequences if no FASTA (default: 20000)
-- `--seq-length <n>` — Random sequence length (default: 100)
-- `--seed <n>` — Random seed (default: 127)
-- `--background <f>` — Background frequency for PWM (default: 0.25)
-- `--query-index <n>` — MEME motif index for model1 (default: 0)
-- `--target-index <n>` — MEME motif index for model2 (default: 0)
-- `--threads <n>` — Worker threads to use (default: 1). Start Julia with at
-  least that many threads, for example `julia --threads=4 ... --threads 4`.
-- `--pvalue` — Annotate result using an explicit `--null-distribution` bundle
-- `--null-distribution <path>` — Portable null-distribution bundle for `--pvalue`
-- `--effective-number-of-targets <n>` — E-value target-count override
-- `--quiet` — Suppress informational output
-- `--verbose` — Verbose diagnostics to stderr
+### `profile`
 
-### `profile` — Profile-based comparison
+Compare model-derived or precomputed score profiles:
 
 ```bash
-julia --project=Mimosa.jl app/mimosa.jl profile examples/pif4.meme examples/gata2.meme \
-  --model1-type pwm --model2-type pwm --metric co --num-sequences 50 --seq-length 100
+JULIA_NUM_THREADS=4 julia --project=Mimosa.jl Mimosa.jl/app/mimosa.jl \
+  profile examples/pif4.meme examples/gata2.meme \
+  --model1-type pwm --model2-type pwm \
+  --fasta examples/foreground.fa --metric co --threads 4
 ```
 
-Required arguments:
-- `model1` — Path to first model or score-profile file (positional)
-- `model2` — Path to second model or score-profile file (positional)
-- `--model1-type <type>` — Type: `scores`, `pwm`, `bamm`, `sitega`, `dimont`, `slim`
-- `--model2-type <type>` — Type: `scores`, `pwm`, `bamm`, `sitega`, `dimont`, `slim`
+Required inputs are two positional model paths and `--model1-type` /
+`--model2-type`. Types are `scores`, `pwm`, `bamm`, `sitega`, `dimont`, and
+`slim`.
 
-Profile comparison options:
-- `--metric <name>` — Metric: `co`, `co_rowwise`, `dice`, `dice_rowwise`, `cosine` (default: `co`)
-- `--search-range <n>` — Max site-center shift (default: 10)
-- `--window-radius <n>` — Window radius in profile positions (default: 10)
-- `--realign-window <n>` — Local realignment half-width (default: 3)
-- `--min-logfpr <f>` — Threshold logFPR (0 = best site per sequence)
+Comparison options include `--metric`, `--search-range`, `--window-radius`,
+`--realign-window`, and `--min-logfpr`. Metric names are `co`, `co_rowwise`,
+`dice`, `dice_rowwise`, and `cosine`.
 
-Sequence options:
-- `--fasta <path>` — FASTA for motif scanning
-- `--background <path>` — FASTA for normalization calibration
-- `--num-sequences <n>` — Random sequences if no FASTA (default: 1000)
-- `--seq-length <n>` — Random sequence length (default: 200)
-- `--seed <n>` — Random seed (default: 127)
-- `--background-freq <f>` — Background frequency for PWM (default: 0.25)
+Use `--fasta` for explicit scientific input or `--num-sequences`,
+`--seq-length`, and `--seed` for generated sequences. `--background` accepts a
+separate normalization FASTA. `--pvalue` requires a compatible explicit
+`--null-distribution` bundle.
 
-Annotation options:
-- `--pvalue` — Annotate result using an explicit `--null-distribution` bundle
-- `--null-distribution <path>` — Portable null-distribution bundle for `--pvalue`
-- `--effective-number-of-targets <n>` — E-value target-count override
-
-Technical options:
-- `--threads <n>` — Worker threads to use (default: 1). The Julia runtime must
-  already provide at least this many threads.
-- `--quiet` — Suppress informational output
-- `--verbose` — Verbose diagnostics to stderr
-
-### `build-null` — Build null distribution
+### `build-null`
 
 ```bash
-julia --project=Mimosa.jl app/mimosa.jl build-null examples/ \
-  --model-type pwm --groups groups.tsv --output null_dist
+julia --project=Mimosa.jl Mimosa.jl/app/mimosa.jl build-null motifs/ \
+  --model-type pwm --groups groups.tsv --output output/null_bundle \
+  --fasta examples/foreground.fa --metric co
 ```
 
-Required arguments:
-- `motifs` — Motif collection: directory or multi-motif MEME file (positional)
-- `--model-type <type>` — Motif format: `pwm`, `bamm`, `sitega`, `dimont`, `slim`
-- `--groups <path>` — TSV/CSV with motif and group columns
-- `--output <path>` — Output path for null distribution
+The relation file is TSV/CSV with configurable motif-name and group columns.
+Only cross-group eligible pairs are compared. `--strict` and
+`--min-null-targets` control insufficient-target handling. The output is always
+a version-2 profile null bundle. `--jobs` is a deprecated alias for `--threads`.
 
-Relation options:
-- `--name-column <s>` — Motif-name column (default: `motif`)
-- `--group-column <s>` — Group column (default: `group`)
-- `--ignore-missing` — Ignore relation names not loaded
-
-Comparison options:
-- `--metric <name>` — Profile metric (default: `co`)
-- `--fasta <path>` — FASTA for profile scanning
-- `--num-sequences <n>` — Random sequences (default: 1000)
-- `--seq-length <n>` — Random sequence length (default: 200)
-- `--seed <n>` — Random seed (default: 127)
-- `--search-range <n>` — Max shift (default: 10)
-- `--window-radius <n>` — Window radius (default: 10)
-- `--realign-window <n>` — Realignment window (default: 3)
-- `--min-logfpr <f>` — Threshold logFPR
-
-Output options:
-- `--strict` — Fail when a query lacks enough null targets
-- `--min-null-targets <n>` — Minimum null targets (default: 1)
-
-Technical options:
-- `--threads <n>` — Worker threads to use (default: 1). The Julia runtime must
-  already provide at least this many threads.
-- `--jobs <n>` — Alias for `--threads` (deprecated)
-- `--quiet` — Suppress informational output
-- `--verbose` — Verbose diagnostics to stderr
-
-### `cache clear` — Clear disk cache
+### `cache clear`
 
 ```bash
-julia --project=Mimosa.jl app/mimosa.jl cache clear --cache-dir /tmp/mimosa_cache
+julia --project=Mimosa.jl Mimosa.jl/app/mimosa.jl \
+  cache clear --cache-dir .mimosa-cache
 ```
 
-Options:
-- `--cache-dir <dir>` — Cache directory (default: `.mimosa-cache`)
-
-### `inspect-model` — Display model metadata
+### `inspect-model`
 
 ```bash
-julia --project=Mimosa.jl app/mimosa.jl inspect-model examples/foxa2.ihbcp --type bamm
+julia --project=Mimosa.jl Mimosa.jl/app/mimosa.jl \
+  inspect-model examples/foxa2.ihbcp --type bamm
 ```
 
-Required arguments:
-- `path` — Path to model file (positional)
-
-Options:
-- `--type <type>` — Model type (default: auto-detect)
-- `--index <n>` — MEME motif index (default: 0)
-- `--background <f>` — Background frequency for PWM (default: 0.25)
-
-### `convert-model` — Convert legacy model to portable format
+### `convert-model`
 
 ```bash
-julia --project=Mimosa.jl app/mimosa.jl convert-model examples/pif4.meme output/pif4_bundle
+julia --project=Mimosa.jl Mimosa.jl/app/mimosa.jl \
+  convert-model examples/pif4.meme output/pif4_bundle --type pwm
 ```
 
-Required arguments:
-- `input` — Path to input model file (positional)
-- `output` — Path to output bundle directory (positional)
+This converts a supported scientific model file into a portable Mimosa model
+bundle. It does not deserialize pickle/joblib data.
 
-Options:
-- `--type <type>` — Model type (default: auto-detect)
-- `--index <n>` — MEME motif index (default: 0)
-- `--background <f>` — Background frequency for PWM (default: 0.25)
+## Threading
 
-## Exit codes
+`--threads=N` selects `ThreadedExecution(N)` but cannot create Julia runtime
+threads. Start Julia with `--threads=N` or `JULIA_NUM_THREADS=N`. The CLI rejects
+a request larger than `Threads.nthreads()`.
 
-| Code | Meaning |
-|------|---------|
-| 0 | Success |
-| 1 | Usage error (missing/invalid arguments) |
-| 2 | Runtime error (file not found, parse error, etc.) |
+## Process Contract
 
-## Output conventions
+| Exit code | Meaning |
+|---|---|
+| 0 | success |
+| 1 | usage or argument error |
+| 2 | runtime, input, or scientific error |
 
-- JSON results are written **only** to stdout
-- Diagnostics, progress, and errors are written **only** to stderr
-- No stack traces by default (use `--verbose` for debug output)
-- No interactive prompts in batch mode
+Global flags are `--help`/`-h`, `--version`/`-V`, `--quiet`, and `--verbose`.
+There are no interactive prompts.

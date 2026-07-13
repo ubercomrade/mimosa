@@ -7,8 +7,9 @@
 All Mimosa.jl operations are deterministic:
 - Serial and threaded scanning produce **identical** results regardless of
   thread count (results written to pre-allocated slots indexed by position)
-- Tie-breaking is deterministic per ADR 0006 (orientation priority `++ > +- > -+ > --`,
-  first offset wins on equal score)
+- Tie-breaking is deterministic: score, contributing site count, smaller
+  absolute shift, then orientation priority `++ > +- > -+ > --`; complete
+  ties retain the first visited shift
 - `build_null` uses a fixed eligible-pair schedule independent of RNG
 - No `push!` to shared arrays from multiple threads
 

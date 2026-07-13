@@ -28,6 +28,10 @@ read_fasta
 scan
 scan!
 scorebounds
+motif_length
+window_size
+scorematrix
+scoretype
 npositions
 StrandPair
 ```
@@ -105,20 +109,6 @@ parse_group_relations
 GroupRelations
 savenull
 loadnull
-```
-
-## Profile comparison
-
-```@docs
-AbstractProfileMetric
-OverlapCoefficient
-OverlapCoefficientRowwise
-DiceSimilarity
-DiceSimilarityRowwise
-CosineSimilarityProfile
-PreparedProfile
-prepare_profile
-ProfileConfig
 ```
 
 ## Execution policies

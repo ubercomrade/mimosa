@@ -16,7 +16,8 @@ and accidental propagation of parser exceptions such as `KeyError` or
 
 Use one shared bundle boundary for model and null storage:
 
-- manifest versions must be positive integer v1 values;
+- manifest versions must be positive integers matching the supported schema:
+  model v1 or null v2;
 - referenced files must use relative forward-slash paths with no `.`/`..`,
   drive prefixes or backslashes, and their resolved targets must remain under
   the bundle root;
@@ -41,7 +42,8 @@ model constructors.
 
 ## Consequences
 
-The existing v1 TOML schema and canonical `data/*.npy` names remain compatible.
+The existing model-v1 and null-v2 TOML schemas and canonical `data/*.npy` names
+remain compatible.
 The reader intentionally supports only the little-endian Float32/Float64 NPY
 types used by the v1 writers. A future schema or dtype extension requires a
 new reviewed format version rather than permissive fallback parsing.

@@ -1,5 +1,10 @@
 # Stage 1 Report: Package Foundation and First PWM Vertical Slice
 
+> **Historical migration artifact.** This report records a completed early
+> implementation stage. Planned work, package layout, test counts, and API
+> examples below are not current status. See [Documentation Map](README.md) and
+> the active `Mimosa.jl` documentation.
+>
 > **Gate:** Gate 1 (Stage 1). See `PLAN.md` §5, Stage 1.
 
 ## 1. Architectural decision summary

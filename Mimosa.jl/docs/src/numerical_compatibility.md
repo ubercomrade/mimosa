@@ -1,122 +1,59 @@
 # Numerical Compatibility
 
-Mimosa.jl is designed to be numerically compatible with the Python MIMOSA
-implementation within documented tolerances. Bit-identical results are not
-guaranteed (and not required) where Float32 accumulation, different RNG
-algorithms, or different optimizer implementations produce equivalent
-statistical results.
+Mimosa.jl preserves scientific semantics through exact discrete contracts and
+documented floating-point tolerances. Frozen fixtures must not be regenerated
+only to make a regression pass.
 
-## Scan input and geometry contract
+## Exact Contracts
 
-All encoded DNA scan inputs use `UInt8` codes `0x00:0x04`; raw-vector
-`scan`/`scan!` entry points reject other codes, non-one-based axes, invalid
-window geometry, and undersized destinations before entering unchecked kernels.
-`scan_both!` also rejects full or partial aliasing of its forward and reverse
-outputs. `EncodedSequenceBatch` validates these invariants once at construction.
+Encoded bytes, offsets, lengths, shapes, indices, counts, result order, pair
+order, site coordinates, comparison offsets/orientations, and schema fields are
+exact. Current schema versions are model 1, null 2, cache 1, and annotated
+result 1.
 
-`npositions(model, seq_len)` is the model-level geometry accessor. Matrix models
-use their motif width; higher-order models use their full `window_size`,
-including context. Integer geometry and ragged offsets are exact contracts.
+## Floating-Point Contracts
 
-## Tolerance classes
+Scan, normalization, anchor, and profile-alignment values are Float32. Metric
+accumulators use Float64 where specified by the implementation and convert the
+final score to Float32. Preserve operation order; do not use `@fastmath`,
+reassociation, or parallel inner reductions.
 
-### `exact`
+Default cross-platform checks use `atol=1e-5`, `rtol=1e-4` for scan,
+normalization, and profile scores unless a focused fixture documents a stricter
+bound. Threshold, tie, index, and branch behavior remains exact.
 
-Integer values, indices, counts, offsets, orientations, and schema fields.
-These must match exactly between Python and Julia.
+GEV fitting and survival calculations use Float64. The native BFGS fit is
+tolerance-compatible with historical SciPy-derived fixtures, not bit-identical.
+Julia shape `k` is the sign inverse of SciPy `genextreme` shape `c`.
 
-Examples: encoded sequence bytes, sequence offsets, anchor indices, orientation
-labels, site coordinates, n_sites counts.
+## Profile Comparison
 
-### `float32_kernel`
+The only model comparison pipeline is:
 
-Raw scan and alignment score values computed in Float32. Tolerance:
-`abs(a - b) ≤ 1e-5` or `rel ≤ 1e-4`, after documented accumulation strategy.
+```text
+scan -> empirical normalization -> anchors -> strand/shift alignment -> score
+```
 
-Accumulation strategy:
-- Per-column PCC, cosine, and Euclidean metrics are computed in Float32
-- Cross-column sum uses **Float64 accumulation** to match NumPy's `np.sum`
-  for Float32 arrays
-- Final result is `T(Float32(Float64_sum)) / T(overlap)`
+Metrics are `co`, `co_rowwise`, `dice`, `dice_rowwise`, and `cosine`.
+`PreparedProfile` instances must have compatible `min_logfpr` thresholds.
 
-### `statistical_fit`
+Shifts run from negative to positive. Ties are resolved by score, contributing
+site count, smaller absolute shift, then orientation priority `++`, `+-`, `-+`,
+`--`; a complete tie retains the first visited shift.
 
-GEV parameters and survival function values. Tolerance is corpus-specific
-and documented per fixture:
+## Geometry and Coordinates
 
-- GEV parameters: `atol=0.01`, `rtol=0.05`
-- Survival function: `atol=1e-4`, `rtol=1e-3`
+Raw scan inputs use codes `0x00:0x04`. Public boundaries reject invalid codes,
+unsupported axes, invalid geometry, undersized outputs, and aliased two-strand
+destinations before unchecked kernels.
 
-The GEV fit uses a native BFGS optimizer (not SciPy's `genextreme.fit`).
-The shape parameter uses the **textbook convention** `k` (sign flipped from
-SciPy's `c`): `k = -c`. See ADR 0005 for the full parameterization audit.
+Julia site coordinates are one-based inclusive. CLI coordinates are zero-based
+half-open. Forward and reverse scores at one position refer to the same physical
+window.
 
-### `documented_divergence`
+## Reproducibility
 
-Any intentional deviation from Python behavior. Must be documented in an ADR
-and covered by a regression test that asserts the Julia-specific behavior.
-
-Currently: none.
-
-## Known divergences
-
-### Random sequence generation
-
-`make_random_sequences(n, len; seed)` uses Julia's `MersenneTwister`, which
-is **not bit-compatible** with Python's `np.random.default_rng`. This is
-acceptable for CLI fallback sequences. Users should provide explicit FASTA
-files for scientific reproducibility across languages.
-
-### Float32 accumulation
-
-Python uses NumPy's vectorized operations which may use different
-accumulation order (pairwise summation). Julia uses explicit loops with
-Float64 accumulation for cross-column sums, matching NumPy's `np.sum` for
-Float32 arrays. Per-element computation is Float32, matching Python's
-`_vectorized_pcc`, `_vectorized_cosine`, etc.
-
-**Detailed accumulation policy:**
-
-| Operation | Element type | Accumulation type | Rationale |
-|-----------|-------------|-----------------|----------|
-| PWM scan (per-position sum) | Float32 | Float32 | Single column, no cross-type sum |
-| Higher-order scan (per-term sum) | Float32 | Float32 | Within-kmer terms are Float32 additions |
-| PCC metric (per-column dot product) | Float32 | Float64 | Cross-column sum needs Float64 to match `np.sum(Float32)` |
-| Cosine metric | Float32 | Float64 | Same as PCC — cross-column Float64 accumulation |
-| Euclidean distance | Float32 | Float64 | Same — cross-column sum of squared differences |
-| GEV log-likelihood | Float64 | Float64 | Statistical fitting requires full precision |
-| GEV survival function | Float64 | Float64 | Full precision for p-value computation |
-| Null distribution raw scores | Float64 | Float64 | Scores are promoted from Float32 scan results to Float64 for GEV fitting |
-| Serialization (to_json/to_dict) | Float64 | N/A | JSON output uses Float64 for all numeric values |
-
-The Float32 → Float64 promotion for null distribution raw scores is intentional:
-GEV fitting requires Float64 precision, and the promotion happens once per
-comparison result, not in any inner loop. The scan kernels themselves operate
-entirely in Float32 for performance, matching the Python implementation's
-`_vectorized_*` functions which also use Float32 element computation.
-
-### GEV fitting
-
-The native BFGS optimizer uses numerical gradients (central differences) and
-backtracking line search, not SciPy's L-BFGS-B. Results match within
-documented tolerances on all fixture distributions. Convergence may differ
-for pathological samples — the `GEVFitFailure` type captures these cases
-explicitly.
-
-## Compatibility fixtures
-
-Frozen oracle fixtures are stored in `tests/fixtures/compatibility/` with a
-versioned `manifest.json` containing checksums. Fixtures were generated by
-`scripts/generate_oracle_fixtures.py` using pinned Python 3.13, NumPy 2.3.5,
-and SciPy 1.17.0.
-
-Fixture categories:
-- Parsers (valid + malformed per format)
-- Sequence I/O (mixed case, N/IUPAC, empty, short)
-- Scanning (each model family, both strands)
-- Normalization (ties, empty sample, repeated scores)
-- Motif alignment (unequal widths, all orientations, ties)
-- Profile alignment (all metrics, anchor types)
-- Sites/PFM (best, threshold, top-fraction, reverse)
-- Nulls (group graphs, seeds)
-- CLI (success, malformed, missing)
+Serial and threaded execution preserve ordering and exact discrete fields.
+Julia and NumPy RNG streams are intentionally different; cross-language
+historical comparisons use explicit FASTA or frozen encoded data. Stable
+fingerprints use SHA-256 rather than Julia's `hash()`.
