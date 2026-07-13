@@ -60,7 +60,6 @@ Fields:
 - `min_null_targets::Int`: minimum eligible targets required per query.
 - `strict::Bool`: if `true`, raise an error when a query has too few targets.
 """
-"""Typed profile-only configuration for null-distribution construction."""
 struct NullBuildConfig{M<:AbstractProfileMetric}
     metric::M
     min_null_targets::Int

@@ -17,6 +17,9 @@ julia --project=Mimosa.jl/benchmark Mimosa.jl/benchmark/runbenchmarks.jl --repor
 
 # Compare against stored baseline
 julia --project=Mimosa.jl/benchmark Mimosa.jl/benchmark/runbenchmarks.jl --baseline baseline.json
+
+# Run the 1-vs-50 profile comparison benchmark
+julia --project=Mimosa.jl/benchmark Mimosa.jl/benchmark/bench_1v50.jl
 ```
 
 ## Thread configuration
@@ -56,7 +59,8 @@ JULIA_NUM_THREADS=1 julia --project=Mimosa.jl/benchmark Mimosa.jl/benchmark/runb
 - Width combinations: 8×8, 8×15, 15×30, 8×30
 
 ### One-to-many profile comparison
-- Target counts: 10, 100, 1000
+- Target counts: 10, 100, 1000 (full suite)
+- Dedicated 1-vs-50 benchmark (`bench_1v50.jl`): 10 000 × 100 bp sequences
 - CO metric with search range and window radius
 
 ### Higher-order scanning (BaMM)
@@ -119,6 +123,104 @@ The report includes:
 - Warm-up policy
 - Sample count and seconds budget
 
+## 1-vs-50 Profile Comparison Benchmark
+
+The `bench_1v50.jl` script measures end-to-end performance of the one-to-many
+profile comparison scenario: **1 query model vs 50 target models** on random
+DNA sequences.
+
+### Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Sequence length | 100 bp |
+| Number of sequences | 10 000 |
+| Number of targets | 50 |
+| PWM width | 15 |
+| Metric | CO (overlap coefficient) |
+| Search range | 10 |
+| Window radius | 5 |
+| Repetitions per measurement | 5 |
+
+### Running
+
+```bash
+# Serial (1 thread)
+JULIA_NUM_THREADS=1 julia --project=Mimosa.jl/benchmark Mimosa.jl/benchmark/bench_1v50.jl
+
+# Threaded (4 threads)
+JULIA_NUM_THREADS=4 julia --project=Mimosa.jl/benchmark Mimosa.jl/benchmark/bench_1v50.jl
+```
+
+### Results
+
+**Environment:** Julia 1.12.6, x86_64 Linux, 8 logical cores.
+
+#### Component timings (median, 1 thread)
+
+| Stage | Time |
+|-------|------|
+| Sequence generation (10 000 × 100 bp) | 3.8 ms |
+| Query scan (BestStrand, 10 000 × 100, w=15) | 14.3 ms |
+| Query profile preparation (normalization + anchors) | 275.0 ms |
+| Single target scan | 13.6 ms |
+| Target precompute (50 models, scan + profile) | 919.5 ms (18.4 ms/model) |
+
+#### Comparison timings (median)
+
+| Mode | 1 thread | 4 threads |
+|------|-----------|-----------|
+| 1-vs-1 (profiles precomputed) | 372 ms | 344 ms |
+| **1-vs-50 (profiles precomputed)** | **19 301 ms** | **17 584 ms** |
+| 1-vs-50 end-to-end (scan + compare) | 25 117 ms | 22 792 ms |
+
+#### Throughput and per-target cost
+
+| Metric | 1 thread | 4 threads |
+|--------|-----------|-----------|
+| Per-target (pure comparison) | 386 ms/target | 352 ms/target |
+| Per-target (end-to-end) | 502 ms/target | 456 ms/target |
+| Throughput (pure comparison) | 3 comparisons/sec | 3 comparisons/sec |
+| Throughput (end-to-end) | 2 comparisons/sec | 2 comparisons/sec |
+| Speedup (50 vs 50×1-vs-1, pure) | 1.0× | 1.0× |
+
+### Conclusions
+
+1. **1-vs-50 comparison takes ~19 seconds** (pure comparison with precomputed
+   profiles) and **~25 seconds** end-to-end (including target scanning). The
+   throughput is **2–3 comparisons per second**.
+
+2. **The bottleneck is profile preparation, not scanning or comparison.**
+   Fitting the `EmpiricalLogTail` normalization over ~1.72 million scores
+   (10 000 sequences × 86 positions × 2 strands) costs ~275 ms per profile —
+   roughly **20× slower** than the PWM scan itself (~14 ms). The actual
+   `profile_compare` call is negligible relative to preparation.
+
+3. **Scanning is very fast.** A PWM scan over 10 000 × 100 bp sequences
+   completes in ~14 ms. Precomputing all 50 target profiles (scan + profile
+   build) takes ~920 ms total (~18 ms/model).
+
+4. **Threading provides minimal benefit (~1.1×).** The current
+   `compare(PreparedProfile, Vector{ScoreProfile})` implementation is a
+   **sequential comprehension** (`[compare(query, t) for t in targets]`).
+   Multi-threading does not accelerate the one-to-many comparison loop.
+   There is significant headroom for a `ThreadedExecution` variant that
+   parallelises target preparation and comparison.
+
+5. **No scaling advantage from batching.** The 1-vs-50 time is exactly 50× the
+   1-vs-1 time (speedup = 1.0×), confirming that each target is processed
+   independently with no shared work reuse beyond the query profile.
+
+### Sample comparison output
+
+```
+pwm_w15_s12446: score=0.4932 offset= 9 orient=++ n_sites=14952
+pwm_w15_s12447: score=0.4977 offset=-1 orient=++ n_sites=16619
+pwm_w15_s12448: score=0.4922 offset=-5 orient=++ n_sites=15654
+pwm_w15_s12449: score=0.5381 offset= 0 orient=++ n_sites=16738
+pwm_w15_s12450: score=0.5126 offset=-2 orient=++ n_sites=16720
+```
+
 ## Regression baseline (E2)
 
 The `baseline.json` file stores per-benchmark median timings for regression
@@ -155,3 +257,9 @@ The older `benchmarks.jl` file (Stage 9) is kept for backwards compatibility
 but `runbenchmarks.jl` supersedes it with full PLAN_2.md E1/E2 coverage
 including machine-readable JSON output, environment metadata, and baseline
 comparison.
+
+The `bench_1v50.jl` script is a standalone targeted benchmark for the
+1-vs-50 profile comparison scenario. It is not part of the full
+`runbenchmarks.jl` suite but can be run independently as described in the
+[1-vs-50 Profile Comparison Benchmark](#1-vs-50-profile-comparison-benchmark)
+section above.
