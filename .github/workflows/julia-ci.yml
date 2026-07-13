@@ -1,0 +1,234 @@
+name: Julia CI
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "Mimosa.jl/**"
+      - ".github/workflows/julia-ci.yml"
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "Mimosa.jl/**"
+      - ".github/workflows/julia-ci.yml"
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+env:
+  JULIA_PKG_UNPACK_REGISTRY: "true"
+
+jobs:
+  # ── Core test matrix: min/stable Julia × serial/threaded × Linux/macOS ──────
+  julia-test:
+    name: Julia ${{ matrix.julia-version }} · ${{ matrix.os }} · ${{ matrix.threads }} threads
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Minimum supported Julia — serial
+          - julia-version: "1.10"
+            os: ubuntu-latest
+            threads: "1"
+          # Minimum supported Julia — multithreaded
+          - julia-version: "1.10"
+            os: ubuntu-latest
+            threads: "4"
+          # Latest stable — serial
+          - julia-version: "1.12.6"
+            os: ubuntu-latest
+            threads: "1"
+          # Latest stable — multithreaded
+          - julia-version: "1.12.6"
+            os: ubuntu-latest
+            threads: "4"
+          # macOS arm64 — latest stable, multithreaded
+          - julia-version: "1.12.6"
+            os: macos-latest
+            threads: "4"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.julia-version }}
+      - uses: julia-actions/cache@v2
+        env:
+          JULIA_NUM_THREADS: ${{ matrix.threads }}
+      - name: Instantiate
+        run: julia --project=Mimosa.jl -e 'using Pkg; Pkg.instantiate()'
+      - name: Precompile
+        run: julia --project=Mimosa.jl -e 'using Pkg; Pkg.precompile()'
+      - name: Smoke test
+        run: julia --project=Mimosa.jl -e 'using Mimosa; println("Mimosa loaded")'
+      - name: Run tests
+        env:
+          JULIA_NUM_THREADS: ${{ matrix.threads }}
+        run: julia --project=Mimosa.jl -e 'using Pkg; Pkg.test()'
+
+  # ── Nightly Julia (allowed failure) ────────────────────────────────────────
+  julia-nightly:
+    name: Julia nightly · ubuntu-latest
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: nightly
+      - uses: julia-actions/cache@v2
+        env:
+          JULIA_NUM_THREADS: "4"
+      - name: Instantiate
+        run: julia --project=Mimosa.jl -e 'using Pkg; Pkg.instantiate()'
+      - name: Precompile
+        run: julia --project=Mimosa.jl -e 'using Pkg; Pkg.precompile()'
+      - name: Run tests
+        env:
+          JULIA_NUM_THREADS: "4"
+        run: julia --project=Mimosa.jl -e 'using Pkg; Pkg.test()'
+
+  # ── Code formatter check ────────────────────────────────────────────────────
+  julia-format:
+    name: JuliaFormatter check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12.6"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate
+        run: julia --project=Mimosa.jl -e 'using Pkg; Pkg.instantiate()'
+      - name: Check formatting
+        run: |
+          julia --project=Mimosa.jl -e '
+            using JuliaFormatter
+            @assert format("Mimosa.jl/src"; overwrite=false)
+            @assert format("Mimosa.jl/test"; overwrite=false)
+            println("Formatting check passed")
+          '
+
+  # ── Documentation and doctests ─────────────────────────────────────────────
+  julia-docs:
+    name: Documentation build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12.6"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate docs environment
+        run: julia --project=Mimosa.jl/docs -e 'using Pkg; Pkg.instantiate()'
+      - name: Build docs
+        run: julia --project=Mimosa.jl/docs Mimosa.jl/docs/make.jl
+      - name: Upload docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mimosa-docs
+          path: Mimosa.jl/docs/build/
+          retention-days: 7
+
+  # ── JET static analysis (fail-closed) ──────────────────────────────────────
+  julia-jet:
+    name: JET analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12.6"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate
+        run: julia --project=Mimosa.jl -e 'using Pkg; Pkg.instantiate()'
+      - name: Run JET checks
+        env:
+          JULIA_NUM_THREADS: "1"
+        run: |
+          julia --project=Mimosa.jl -e 'using Pkg; Pkg.test()'
+
+  # ── Subprocess CLI integration ─────────────────────────────────────────────
+  julia-cli:
+    name: CLI subprocess
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12.6"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate
+        run: julia --project=Mimosa.jl -e 'using Pkg; Pkg.instantiate()'
+      - name: CLI help and version
+        run: |
+          julia --project=Mimosa.jl Mimosa.jl/app/mimosa.jl --help
+          julia --project=Mimosa.jl Mimosa.jl/app/mimosa.jl --version
+      - name: CLI motif comparison
+        run: |
+          julia --project=Mimosa.jl Mimosa.jl/app/mimosa.jl motif examples/pif4.meme examples/pif4.meme --model1-type pwm --model2-type pwm
+      - name: CLI inspect-model
+        run: |
+          julia --project=Mimosa.jl Mimosa.jl/app/mimosa.jl inspect-model examples/pif4.meme
+      - name: CLI convert-model
+        run: |
+          tmpdir=$(mktemp -d)
+          julia --project=Mimosa.jl Mimosa.jl/app/mimosa.jl convert-model examples/pif4.meme "$tmpdir/pif4_bundle"
+          test -f "$tmpdir/pif4_bundle/manifest.toml"
+          rm -rf "$tmpdir"
+
+  # ── Security corpus (storage and validation hostile tests) ──────────────────
+  julia-security:
+    name: Security corpus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12.6"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate
+        run: julia --project=Mimosa.jl -e 'using Pkg; Pkg.instantiate()'
+      - name: Run security tests
+        env:
+          JULIA_NUM_THREADS: "1"
+        run: |
+          julia --project=Mimosa.jl -e '
+            using Pkg; Pkg.test()
+          ' 2>&1 | tail -20
+      - name: Run validation tests specifically
+        env:
+          JULIA_NUM_THREADS: "1"
+        run: |
+          julia --project=Mimosa.jl -e '
+            using Test, Mimosa
+            include("Mimosa.jl/test/unit/test_validation.jl")
+            include("Mimosa.jl/test/unit/test_model_storage.jl")
+            include("Mimosa.jl/test/unit/test_null_storage.jl")
+          '
+
+  # ── Benchmark (scheduled/manual only, with artifacts) ──────────────────────
+  julia-benchmark:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: "1.12.6"
+      - uses: julia-actions/cache@v2
+      - name: Instantiate benchmark environment
+        run: julia --project=Mimosa.jl/benchmark -e 'using Pkg; Pkg.instantiate()'
+      - name: Run benchmarks
+        env:
+          JULIA_NUM_THREADS: "4"
+        run: julia --project=Mimosa.jl/benchmark Mimosa.jl/benchmark/benchmarks.jl
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            Mimosa.jl/benchmark/*.json
+            Mimosa.jl/benchmark/*.txt
+          retention-days: 30

@@ -294,7 +294,16 @@ function _build_null(
         by_name[model.name] = model
     end
 
-    # Build the work schedule: list of (query, target) pairs to compare
+    # Build the work schedule: list of (query, target) pairs to compare.
+    #
+    # Type note: work_pairs uses Tuple{AbstractMotifModel,AbstractMotifModel}
+    # because the model collection may be heterogeneous (e.g., PWM + BaMM).
+    # This abstract element type is unavoidable without requiring homogeneous
+    # model collections or a separate build_null method per concrete model type.
+    # The inner comparison loop dispatches through the compare_pair closure,
+    # which is type-stable per individual call. This is NOT a hot path — the
+    # expensive work is inside compare_pair, not in the work_pairs iteration.
+    # See PLAN_2.md E3 for the type/allocation audit rationale.
     work_pairs = Tuple{AbstractMotifModel,AbstractMotifModel}[]
     skipped = NamedTuple{(:query, :reason),Tuple{String,String}}[]
     n_queries = 0

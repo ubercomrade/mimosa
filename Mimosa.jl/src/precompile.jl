@@ -111,11 +111,5 @@ function _precompile_workload()
 end
 
 @compile_workload begin
-    try
-        _precompile_workload()
-    catch err
-        # Precompilation failures should not block package loading.
-        # They indicate a bug in the workload, not in the package itself.
-        @warn "Precompile workload failed (non-fatal): $err"
-    end
+    _precompile_workload()
 end

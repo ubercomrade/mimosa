@@ -10,6 +10,12 @@
 #   └── data/
 #       └── raw_null_scores.npy
 
+"""
+    NULL_FORMAT_VERSION
+
+Current version of the portable null-distribution bundle format.
+Value is `1`. Bundles with a different version are rejected on load.
+"""
 const NULL_FORMAT_VERSION = 1
 
 """

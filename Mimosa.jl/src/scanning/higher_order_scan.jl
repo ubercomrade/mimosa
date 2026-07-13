@@ -352,3 +352,279 @@ function _ho_scan_batch_both(
     end
     return StrandPair(build_ragged(fwd_rows), build_ragged(rev_rows))
 end
+
+# ── Generic AbstractHigherOrderMotif adapter ─────────────────────────────────
+#
+# The following methods provide a single generic implementation of the scan
+# adapter layer for all AbstractHigherOrderMotif subtypes (BaMM, SiteGA, Dimont,
+# Slim). They replace the per-model boilerplate that previously existed in
+# bamm_scan.jl, dimont_scan.jl, slim_scan.jl, and sitega_scan.jl.
+#
+# Each model provides the geometry via the trait functions:
+#   kmer(model), context_length(model), window_size(model), scan_width(model)
+# and stores its scoring matrix in the `representation` field.
+# The inner kernels (_ho_scan_forward!, _ho_scan_reverse!, etc.) remain shared
+# and type-stable because the `representation` matrix is passed as an argument.
+
+"""
+    npositions_ho(seq_len::Int, model::AbstractHigherOrderMotif)
+
+Return the number of scanning positions for a higher-order model.
+This is the generic version of the per-model `npositions_*` functions.
+"""
+function npositions_ho(seq_len::Int, model::AbstractHigherOrderMotif)
+    return max(seq_len - window_size(model) + 1, 0)
+end
+
+# ── Generic single-sequence scan kernels ──────────────────────────────────
+
+"""
+    scan_forward!(dest, model::AbstractHigherOrderMotif, seq, n_pos)
+
+Fill `dest[1:n_pos]` with forward-strand scores for one sequence.
+Generic method for all higher-order models.
+"""
+function scan_forward!(
+    dest::AbstractVector{T},
+    model::AbstractHigherOrderMotif,
+    seq::AbstractVector{UInt8},
+    n_pos::Int,
+) where {T<:AbstractFloat}
+    return _ho_scan_forward!(
+        dest,
+        model.representation,
+        kmer(model),
+        context_length(model),
+        scan_width(model),
+        seq,
+        n_pos,
+    )
+end
+
+"""
+    scan_reverse!(dest, model::AbstractHigherOrderMotif, seq, n_pos)
+
+Fill `dest[1:n_pos]` with reverse-strand scores for one sequence.
+Generic method for all higher-order models.
+"""
+function scan_reverse!(
+    dest::AbstractVector{T},
+    model::AbstractHigherOrderMotif,
+    seq::AbstractVector{UInt8},
+    n_pos::Int,
+) where {T<:AbstractFloat}
+    return _ho_scan_reverse!(
+        dest,
+        model.representation,
+        kmer(model),
+        window_size(model),
+        scan_width(model),
+        seq,
+        n_pos,
+    )
+end
+
+"""
+    scan_best!(dest, model::AbstractHigherOrderMotif, seq, n_pos)
+
+Fill `dest[1:n_pos]` with the per-position maximum of forward and reverse scores.
+Generic method for all higher-order models.
+"""
+function scan_best!(
+    dest::AbstractVector{T},
+    model::AbstractHigherOrderMotif,
+    seq::AbstractVector{UInt8},
+    n_pos::Int,
+) where {T<:AbstractFloat}
+    return _ho_scan_best!(
+        dest,
+        model.representation,
+        kmer(model),
+        context_length(model),
+        window_size(model),
+        scan_width(model),
+        seq,
+        n_pos,
+    )
+end
+
+"""
+    scan_both!(fwd, rev, model::AbstractHigherOrderMotif, seq, n_pos)
+
+Fill `fwd` and `rev` with forward and reverse strand scores respectively.
+Generic method for all higher-order models.
+"""
+function scan_both!(
+    fwd::AbstractVector{T},
+    rev::AbstractVector{T},
+    model::AbstractHigherOrderMotif,
+    seq::AbstractVector{UInt8},
+    n_pos::Int,
+) where {T<:AbstractFloat}
+    return _ho_scan_both!(
+        fwd,
+        rev,
+        model.representation,
+        kmer(model),
+        context_length(model),
+        window_size(model),
+        scan_width(model),
+        seq,
+        n_pos,
+    )
+end
+
+# ── Generic single-sequence allocating scan ──────────────────────────────
+
+"""
+    scan(model::AbstractHigherOrderMotif, seq; strands)
+
+Scan a single encoded sequence with a higher-order model.
+Generic method for all AbstractHigherOrderMotif subtypes.
+
+Returns:
+- `Vector{Float32}` for `ForwardOnly`, `ReverseOnly`, `BestStrand`.
+- [`StrandPair{Vector{Float32}}`](@ref) for `BothStrands`.
+"""
+function scan(
+    model::AbstractHigherOrderMotif,
+    seq::AbstractVector{UInt8};
+    strands::StrandPolicy=ForwardOnly(),
+)
+    n_pos = npositions_ho(length(seq), model)
+    return _scan_single_ho(strands, model, seq, n_pos)
+end
+
+function _scan_single_ho(
+    ::ForwardOnly, model::AbstractHigherOrderMotif, seq::AbstractVector{UInt8}, n_pos::Int
+)
+    dest = Vector{Float32}(undef, n_pos)
+    return scan_forward!(dest, model, seq, n_pos)
+end
+
+function _scan_single_ho(
+    ::ReverseOnly, model::AbstractHigherOrderMotif, seq::AbstractVector{UInt8}, n_pos::Int
+)
+    dest = Vector{Float32}(undef, n_pos)
+    return scan_reverse!(dest, model, seq, n_pos)
+end
+
+function _scan_single_ho(
+    ::BestStrand, model::AbstractHigherOrderMotif, seq::AbstractVector{UInt8}, n_pos::Int
+)
+    dest = Vector{Float32}(undef, n_pos)
+    return scan_best!(dest, model, seq, n_pos)
+end
+
+function _scan_single_ho(
+    ::BothStrands, model::AbstractHigherOrderMotif, seq::AbstractVector{UInt8}, n_pos::Int
+)
+    fwd = Vector{Float32}(undef, n_pos)
+    rev = Vector{Float32}(undef, n_pos)
+    scan_both!(fwd, rev, model, seq, n_pos)
+    return StrandPair(fwd, rev)
+end
+
+# ── Generic single-sequence in-place scan ──────────────────────────────────
+
+"""
+    scan!(dest, model::AbstractHigherOrderMotif, seq; strands)
+
+Fill `dest` with scan scores for one sequence.
+Generic method for all AbstractHigherOrderMotif subtypes.
+"""
+function scan!(
+    dest::AbstractVector{T},
+    model::AbstractHigherOrderMotif,
+    seq::AbstractVector{UInt8};
+    strands::StrandPolicy=ForwardOnly(),
+) where {T<:AbstractFloat}
+    n_pos = npositions_ho(length(seq), model)
+    if length(dest) < n_pos
+        throw(
+            ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
+        )
+    end
+    return _scan_inplace_ho!(strands, dest, model, seq, n_pos)
+end
+
+function _scan_inplace_ho!(
+    ::ForwardOnly, dest::AbstractVector{T}, model::AbstractHigherOrderMotif, seq, n_pos
+) where {T<:AbstractFloat}
+    return scan_forward!(dest, model, seq, n_pos)
+end
+
+function _scan_inplace_ho!(
+    ::ReverseOnly, dest::AbstractVector{T}, model::AbstractHigherOrderMotif, seq, n_pos
+) where {T<:AbstractFloat}
+    return scan_reverse!(dest, model, seq, n_pos)
+end
+
+function _scan_inplace_ho!(
+    ::BestStrand, dest::AbstractVector{T}, model::AbstractHigherOrderMotif, seq, n_pos
+) where {T<:AbstractFloat}
+    return scan_best!(dest, model, seq, n_pos)
+end
+
+function _scan_inplace_ho!(
+    ::BothStrands, dest::AbstractVector{T}, model::AbstractHigherOrderMotif, seq, n_pos
+) where {T<:AbstractFloat}
+    return throw(
+        ArgumentError(
+            "scan! with BothStrands is not supported; use scan(model, seq; strands=BothStrands()).",
+        ),
+    )
+end
+
+# ── Generic batch scanning (EncodedSequenceBatch) ─────────────────────────
+
+"""
+    scan(model::AbstractHigherOrderMotif, batch; strands, execution)
+
+Scan all sequences in a batch with a higher-order model, returning a
+[`RaggedArray{Float32}`](@ref) of scores.
+
+For `BothStrands`, returns a [`StrandPair{RaggedArray{Float32}}`](@ref).
+
+Under `ThreadedExecution`, sequences are processed in parallel at the
+ top level. Inner scanning kernels remain serial.
+Generic method for all AbstractHigherOrderMotif subtypes.
+"""
+function scan(
+    model::AbstractHigherOrderMotif,
+    batch::EncodedSequenceBatch;
+    strands::StrandPolicy=ForwardOnly(),
+    execution::ExecutionPolicy=SerialExecution(),
+)
+    if strands isa BothStrands
+        return _ho_scan_batch_both(
+            model,
+            batch,
+            (sl, m) -> npositions_ho(sl, m),
+            (fwd, rev, m, seq, npos) -> scan_both!(fwd, rev, m, seq, npos),
+            execution,
+        )
+    end
+    scan_fn! = if strands isa ForwardOnly
+        (dest, m, seq, npos) -> scan_forward!(dest, m, seq, npos)
+    elseif strands isa ReverseOnly
+        (dest, m, seq, npos) -> scan_reverse!(dest, m, seq, npos)
+    else # BestStrand
+        (dest, m, seq, npos) -> scan_best!(dest, m, seq, npos)
+    end
+    return _ho_scan_batch(
+        strands, model, batch, (sl, m) -> npositions_ho(sl, m), scan_fn!, execution
+    )
+end
+
+# ── Generic scan result lengths ─────────────────────────────────────────
+
+"""
+    scan_result_lengths(model::AbstractHigherOrderMotif, batch)
+
+Return a `Vector{Int}` with the number of scan positions for each sequence.
+Generic method for all AbstractHigherOrderMotif subtypes.
+"""
+function scan_result_lengths(model::AbstractHigherOrderMotif, batch::EncodedSequenceBatch)
+    return [npositions_ho(seqlength(batch, i), model) for i in 1:nsequences(batch)]
+end

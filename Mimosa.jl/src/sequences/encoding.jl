@@ -1,6 +1,12 @@
 # Encoded sequence batch: flat UInt8 buffer with offsets for ragged DNA sequences.
 # Per ADR 0002: A=0x00, C=0x01, G=0x02, T=0x03, N/ambiguous/padding=0x04.
 
+"""
+    N_CODE
+
+The `UInt8` code used for N (any base) and padding in encoded sequences.
+Value is `0x04`. Valid codes are `0x00`–`0x04` (A, C, G, T, N/padding).
+"""
 const N_CODE = 0x04
 
 # 256-entry lookup table: maps ASCII byte to 5-ary nucleotide code.

@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use Mimosa.jl in your research, please cite:"
+title: "Mimosa.jl: Motif scanning, comparison, and statistical evaluation in Julia"
+authors:
+  - family-names: "Tsukanov"
+    given-names: "Anton"
+  - family-names: "Mimosa contributors"
+type: software
+keywords:
+  - motif
+  - bioinformatics
+  - position-weight-matrix
+  - PWM
+  - BaMM
+  - SiteGA
+  - Dimont
+  - Slim
+  - null-distribution
+  - GEV
+  - Julia
+license: MIT
+repository-code: "https://github.com/mimosa-jl/Mimosa.jl"
+version: 0.1.0
+date-released: 2026-07-13
+preferred-citation:
+  type: software
+  title: "Mimosa.jl: Motif scanning, comparison, and statistical evaluation in Julia"
+  authors:
+    - family-names: "Tsukanov"
+      given-names: "Anton"
+    - family-names: "Mimosa contributors"
+  version: 0.1.0
+  date-released: 2026-07-13
+  license: MIT
+  url: "https://github.com/mimosa-jl/Mimosa.jl"

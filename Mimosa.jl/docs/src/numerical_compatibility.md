@@ -63,6 +63,26 @@ Float64 accumulation for cross-column sums, matching NumPy's `np.sum` for
 Float32 arrays. Per-element computation is Float32, matching Python's
 `_vectorized_pcc`, `_vectorized_cosine`, etc.
 
+**Detailed accumulation policy:**
+
+| Operation | Element type | Accumulation type | Rationale |
+|-----------|-------------|-----------------|----------|
+| PWM scan (per-position sum) | Float32 | Float32 | Single column, no cross-type sum |
+| Higher-order scan (per-term sum) | Float32 | Float32 | Within-kmer terms are Float32 additions |
+| PCC metric (per-column dot product) | Float32 | Float64 | Cross-column sum needs Float64 to match `np.sum(Float32)` |
+| Cosine metric | Float32 | Float64 | Same as PCC — cross-column Float64 accumulation |
+| Euclidean distance | Float32 | Float64 | Same — cross-column sum of squared differences |
+| GEV log-likelihood | Float64 | Float64 | Statistical fitting requires full precision |
+| GEV survival function | Float64 | Float64 | Full precision for p-value computation |
+| Null distribution raw scores | Float64 | Float64 | Scores are promoted from Float32 scan results to Float64 for GEV fitting |
+| Serialization (to_json/to_dict) | Float64 | N/A | JSON output uses Float64 for all numeric values |
+
+The Float32 → Float64 promotion for null distribution raw scores is intentional:
+GEV fitting requires Float64 precision, and the promotion happens once per
+comparison result, not in any inner loop. The scan kernels themselves operate
+entirely in Float32 for performance, matching the Python implementation's
+`_vectorized_*` functions which also use Float32 element computation.
+
 ### GEV fitting
 
 The native BFGS optimizer uses numerical gradients (central differences) and

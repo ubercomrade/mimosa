@@ -1,4 +1,18 @@
 # Shared validation and NPY primitives for portable model/null bundles.
+#
+# This module is the single source of truth for bundle I/O:
+#   - Manifest parsing and validation (TOML schema, format version, checksums)
+#   - Path safety (traversal, symlink, absolute path prevention)
+#   - NPY header parsing and payload reading/writing
+#   - Atomic staged-write protocol
+#
+# `model_storage.jl` (model bundles) and `null_storage.jl` (null distribution
+# bundles) both use these shared helpers. The model/null-specific files contain
+# only the code that differs between bundle kinds (model-specific shape
+# invariants, GEV parameters, compatibility metadata, etc.).
+#
+# No Dict{String,Any} domain layer is introduced — each reader accesses the
+# TOML manifest directly through the typed validation helpers below.
 
 using SHA
 using TOML

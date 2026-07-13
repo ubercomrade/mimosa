@@ -1,5 +1,12 @@
 # Column metrics for motif matrix comparison.
 
+"""
+    AbstractColumnMetric
+
+Abstract supertype for column-wise motif comparison metrics.
+Concrete subtypes include [`PearsonCorrelation`](@ref), [`EuclideanDistance`](@ref),
+and [`CosineSimilarity`](@ref).
+"""
 abstract type AbstractColumnMetric end
 
 """

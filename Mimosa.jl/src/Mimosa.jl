@@ -3,11 +3,12 @@
 
 A Julia package for motif scanning, comparison, and statistical evaluation.
 
-Stage 1: PWM/PFM parsing, matrix metrics, motif alignment, and typed results.
-Stage 2: Encoded sequence batches, FASTA reader, PWM scanning with strand
-policies.
+Supports six model families (PWM, PFM, BaMM, SiteGA, Dimont, Slim) with direct
+motif comparison, profile-based comparison, site extraction, PFM reconstruction,
+native GEV null distributions, BH FDR, E-values, portable storage bundles,
+content-based cache, serial and threaded parallelism, and a thin CLI adapter.
 
-See `REFACTORING.md` and `PLAN.md` for the migration roadmap.
+See `REFACTORING.md` and `PLAN.md` for design requirements and migration roadmap.
 """
 module Mimosa
 

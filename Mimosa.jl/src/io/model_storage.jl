@@ -21,6 +21,12 @@
 #
 # Julia `Serialization` is never used as a user-facing format.
 
+"""
+    MODEL_FORMAT_VERSION
+
+Current version of the portable model bundle format.
+Value is `1`. Bundles with a different version are rejected on load.
+"""
 const MODEL_FORMAT_VERSION = 1
 
 const MODEL_KINDS = Set(["pwm", "pfm", "bamm", "sitega", "dimont", "slim"])

@@ -18,7 +18,106 @@ const PROFILE_MODEL_TYPES = ["scores", "pwm", "bamm", "sitega", "dimont", "slim"
 const MOTIF_METRICS = ["pcc", "ed", "cosine"]
 const PROFILE_METRICS = ["co", "co_rowwise", "dice", "dice_rowwise", "cosine"]
 
+# ── Typed command option specifications ─────────────────────────────────────
+#
+# Each command has a static option spec (which --options take values) and a
+# set of flag names (boolean --flags). These are defined as constants here,
+# separate from both the parser and the runners, so that adding a new option
+# requires only updating the spec, not the main() dispatch.
+
+const MOTIF_OPTIONS = Dict{String,Bool}(
+    "model1-type" => true,
+    "model2-type" => true,
+    "metric" => true,
+    "fasta" => true,
+    "num-sequences" => true,
+    "seq-length" => true,
+    "seed" => true,
+    "background" => true,
+    "query-index" => true,
+    "target-index" => true,
+    "threads" => true,
+    "jobs" => true,
+    "pfm-top-fraction" => true,
+    "null-distribution" => true,
+    "effective-number-of-targets" => true,
+)
+const MOTIF_FLAGS = Set(["pfm-mode", "pvalue", "quiet", "verbose"])
+
+const PROFILE_OPTIONS = Dict{String,Bool}(
+    "model1-type" => true,
+    "model2-type" => true,
+    "metric" => true,
+    "search-range" => true,
+    "window-radius" => true,
+    "realign-window" => true,
+    "min-logfpr" => true,
+    "fasta" => true,
+    "background" => true,
+    "num-sequences" => true,
+    "seq-length" => true,
+    "seed" => true,
+    "background-freq" => true,
+    "threads" => true,
+    "jobs" => true,
+    "null-distribution" => true,
+    "effective-number-of-targets" => true,
+)
+const PROFILE_FLAGS = Set(["pvalue", "quiet", "verbose"])
+
+const BUILD_NULL_OPTIONS = Dict{String,Bool}(
+    "model-type" => true,
+    "groups" => true,
+    "strategy" => true,
+    "output" => true,
+    "name-column" => true,
+    "group-column" => true,
+    "metric" => true,
+    "fasta" => true,
+    "num-sequences" => true,
+    "seq-length" => true,
+    "seed" => true,
+    "search-range" => true,
+    "window-radius" => true,
+    "realign-window" => true,
+    "min-logfpr" => true,
+    "min-null-targets" => true,
+    "threads" => true,
+    "jobs" => true,
+    "cache-dir" => true,
+)
+const BUILD_NULL_FLAGS = Set(["ignore-missing", "strict", "quiet", "verbose"])
+
+const CACHE_OPTIONS = Dict{String,Bool}("cache-dir" => true, "threads" => true)
+const CACHE_FLAGS = Set(["quiet", "verbose"])
+
+const INSPECT_OPTIONS = Dict{String,Bool}(
+    "type" => true, "index" => true, "background" => true
+)
+const INSPECT_FLAGS = Set(["quiet", "verbose"])
+
+const CONVERT_OPTIONS = Dict{String,Bool}(
+    "type" => true, "index" => true, "background" => true
+)
+const CONVERT_FLAGS = Set(["quiet", "verbose"])
+
+# Map command name to (option_spec, flag_spec) for dispatch.
+const COMMAND_SPECS = Dict{
+    String,NamedTuple{(:options, :flags),Tuple{Dict{String,Bool},Set{String}}}
+}(
+    "motif" => (options=MOTIF_OPTIONS, flags=MOTIF_FLAGS),
+    "profile" => (options=PROFILE_OPTIONS, flags=PROFILE_FLAGS),
+    "build-null" => (options=BUILD_NULL_OPTIONS, flags=BUILD_NULL_FLAGS),
+    "cache" => (options=CACHE_OPTIONS, flags=CACHE_FLAGS),
+    "inspect-model" => (options=INSPECT_OPTIONS, flags=INSPECT_FLAGS),
+    "convert-model" => (options=CONVERT_OPTIONS, flags=CONVERT_FLAGS),
+)
+
 # ── CLI argument parsing ────────────────────────────────────────────────────
+#
+# Layer 1: Parser. Parses raw command-line arguments into a CLIParsed struct
+# (command name, positional args, option dict, flag set). Does NOT perform
+# scientific validation or call the Mimosa API. Validation is done by runners.
 
 struct CLIError <: Exception
     message::String
@@ -145,6 +244,9 @@ function _parse_command_args(
 end
 
 # ── Type and model resolution ────────────────────────────────────────────────
+#
+# Shared helpers used by command runners to read models and resolve sequences.
+# These bridge the parsed CLI strings to typed Mimosa API objects.
 
 """
     _read_typed_model(path, model_type; kwargs...)
@@ -300,6 +402,12 @@ function _annotate_cli_result(
     end
     return only(annotate_results([result], dist; effective_number_of_targets=effective))
 end
+
+# ── Command runners (Layer 3) ──────────────────────────────────────────────
+#
+# Each runner takes a parsed CLIParsed, validates scientific options,
+# calls the Mimosa public API, and serializes results as JSON to stdout.
+# Runners do NOT re-parse arguments; they consume the typed CLIParsed struct.
 
 # ── Command: motif ──────────────────────────────────────────────────────────
 
@@ -945,6 +1053,12 @@ function _run_convert_model(parsed::CLIParsed)
 end
 
 # ── Main entry point ─────────────────────────────────────────────────────────
+#
+# The main() function is the orchestration layer: it dispatches to the
+# appropriate command runner based on the command name. Option specs are
+# looked up from COMMAND_SPECS (defined above). The parser (_parse_command_args)
+# does not perform scientific validation; the runner (_run_*) validates and
+# calls the public API.
 
 """
     main(args=ARGS)
@@ -958,120 +1072,23 @@ function main(args::Vector{String}=ARGS)::Int
         parsed === nothing && return 0  # --help or --version
         command, cmd_args = parsed
 
-        # Define option specs and flags for each command
-        if command == "motif"
-            option_specs = Dict{String,Bool}(
-                "model1-type" => true,
-                "model2-type" => true,
-                "metric" => true,
-                "fasta" => true,
-                "num-sequences" => true,
-                "seq-length" => true,
-                "seed" => true,
-                "background" => true,
-                "query-index" => true,
-                "target-index" => true,
-                "threads" => true,
-                "jobs" => true,
-                "pfm-top-fraction" => true,
-                "null-distribution" => true,
-                "effective-number-of-targets" => true,
-            )
-            flag_names = Set(["pfm-mode", "pvalue", "quiet", "verbose"])
-            cp = _parse_command_args(command, cmd_args, nothing, option_specs, flag_names)
-            cp === :help && (_print_motif_help(stdout); return 0)
-            return _run_motif(cp)
-
-        elseif command == "profile"
-            option_specs = Dict{String,Bool}(
-                "model1-type" => true,
-                "model2-type" => true,
-                "metric" => true,
-                "search-range" => true,
-                "window-radius" => true,
-                "realign-window" => true,
-                "min-logfpr" => true,
-                "fasta" => true,
-                "background" => true,
-                "num-sequences" => true,
-                "seq-length" => true,
-                "seed" => true,
-                "background-freq" => true,
-                "threads" => true,
-                "jobs" => true,
-                "null-distribution" => true,
-                "effective-number-of-targets" => true,
-            )
-            flag_names = Set(["pvalue", "quiet", "verbose"])
-            cp = _parse_command_args(command, cmd_args, nothing, option_specs, flag_names)
-            cp === :help && (_print_profile_help(stdout); return 0)
-            return _run_profile(cp)
-
-        elseif command == "build-null"
-            option_specs = Dict{String,Bool}(
-                "model-type" => true,
-                "groups" => true,
-                "strategy" => true,
-                "output" => true,
-                "name-column" => true,
-                "group-column" => true,
-                "metric" => true,
-                "fasta" => true,
-                "num-sequences" => true,
-                "seq-length" => true,
-                "seed" => true,
-                "search-range" => true,
-                "window-radius" => true,
-                "realign-window" => true,
-                "min-logfpr" => true,
-                "min-null-targets" => true,
-                "threads" => true,
-                "jobs" => true,
-                "cache-dir" => true,
-            )
-            flag_names = Set(["ignore-missing", "strict", "quiet", "verbose"])
-            cp = _parse_command_args(command, cmd_args, nothing, option_specs, flag_names)
-            cp === :help && (_print_build_null_help(stdout); return 0)
-            return _run_build_null(cp)
-
-        elseif command == "cache"
-            option_specs = Dict{String,Bool}("cache-dir" => true, "threads" => true)
-            flag_names = Set(["quiet", "verbose"])
-            cp = _parse_command_args(command, cmd_args, nothing, option_specs, flag_names)
-            cp === :help && (_print_cache_help(stdout); return 0)
-            return _run_cache(cp)
-
-        elseif command == "inspect-model"
-            option_specs = Dict{String,Bool}(
-                "type" => true, "index" => true, "background" => true
-            )
-            flag_names = Set(["quiet", "verbose"])
-            cp = _parse_command_args(command, cmd_args, nothing, option_specs, flag_names)
-            cp === :help && (_print_inspect_help(stdout); return 0)
-            return _run_inspect_model(cp)
-
-        elseif command == "convert-model"
-            option_specs = Dict{String,Bool}(
-                "type" => true, "index" => true, "background" => true
-            )
-            flag_names = Set(["quiet", "verbose"])
-            cp = _parse_command_args(command, cmd_args, nothing, option_specs, flag_names)
-            cp === :help && (_print_convert_help(stdout); return 0)
-            return _run_convert_model(cp)
-
-        elseif command in ("--help", "-h")
-            _print_global_help(stdout)
-            return 0
-
-        elseif command in ("--version", "-V")
-            println(stdout, "mimosa $(CLI_VERSION)")
-            return 0
-
-        else
-            _print_global_help(stderr)
-            throw(CLIError("unknown command: $(command)"))
+        spec = get(COMMAND_SPECS, command, nothing)
+        if spec === nothing
+            if command in ("--help", "-h")
+                _print_global_help(stdout)
+                return 0
+            elseif command in ("--version", "-V")
+                println(stdout, "mimosa $(CLI_VERSION)")
+                return 0
+            else
+                _print_global_help(stderr)
+                throw(CLIError("unknown command: $(command)"))
+            end
         end
 
+        cp = _parse_command_args(command, cmd_args, nothing, spec.options, spec.flags)
+        cp === :help && return _dispatch_help(command)
+        return _dispatch_runner(command, cp)
     catch e
         if e isa CLIError
             println(stderr, "error: $(e.message)")
@@ -1080,5 +1097,40 @@ function main(args::Vector{String}=ARGS)::Int
             println(stderr, "error: $(typeof(e).name.name): $(e)")
             return 2
         end
+    end
+end
+
+function _dispatch_help(command::AbstractString)
+    if command == "motif"
+        _print_motif_help(stdout)
+    elseif command == "profile"
+        _print_profile_help(stdout)
+    elseif command == "build-null"
+        _print_build_null_help(stdout)
+    elseif command == "cache"
+        _print_cache_help(stdout)
+    elseif command == "inspect-model"
+        _print_inspect_help(stdout)
+    elseif command == "convert-model"
+        _print_convert_help(stdout)
+    end
+    return 0
+end
+
+function _dispatch_runner(command::AbstractString, parsed::CLIParsed)
+    if command == "motif"
+        return _run_motif(parsed)
+    elseif command == "profile"
+        return _run_profile(parsed)
+    elseif command == "build-null"
+        return _run_build_null(parsed)
+    elseif command == "cache"
+        return _run_cache(parsed)
+    elseif command == "inspect-model"
+        return _run_inspect_model(parsed)
+    elseif command == "convert-model"
+        return _run_convert_model(parsed)
+    else
+        throw(CLIError("unknown command: $(command)"))
     end
 end

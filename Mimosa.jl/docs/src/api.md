@@ -19,6 +19,7 @@ ScoreProfile
 readmodel
 writemodel
 readsequences
+read_fasta
 ```
 
 ## Scanning
@@ -28,6 +29,7 @@ scan
 scan!
 scorebounds
 npositions
+StrandPair
 ```
 
 ## Sequence representation
@@ -38,6 +40,7 @@ encode_sequence
 reverse_complement
 reverse_complement!
 make_random_sequences
+RaggedArray
 ```
 
 ## Strand policies
@@ -53,6 +56,7 @@ BothStrands
 ## Motif comparison
 
 ```@docs
+AbstractColumnMetric
 compare
 ComparisonResult
 PearsonCorrelation
@@ -78,6 +82,7 @@ reconstruct_pfm
 ```@docs
 GEVFit
 GEVFitFailure
+GEVFitResult
 fit_gev
 survival
 cdf
@@ -86,9 +91,29 @@ BenjaminiHochberg
 adjusted_pvalues
 evalue
 NullDistribution
+NullBuildConfig
+NullBuildResult
 build_null
+annotate_results
+AnnotatedResult
+parse_group_relations
+GroupRelations
 savenull
 loadnull
+```
+
+## Profile comparison
+
+```@docs
+AbstractProfileMetric
+OverlapCoefficient
+OverlapCoefficientRowwise
+DiceSimilarity
+DiceSimilarityRowwise
+CosineSimilarityProfile
+PreparedProfile
+prepare_profile
+ProfileConfig
 ```
 
 ## Execution policies

@@ -15,6 +15,12 @@ struct Orientation
     rank::Int
 end
 
+"""
+    ORIENTATIONS
+
+Tuple of the four [`Orientation`](@ref) candidates for motif alignment,
+in tie-break priority order: `++`, `+-`, `-+`, `--`.
+"""
 const ORIENTATIONS = (
     Orientation("++", 0), Orientation("+-", 1), Orientation("-+", 2), Orientation("--", 3)
 )

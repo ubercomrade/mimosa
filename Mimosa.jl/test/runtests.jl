@@ -19,19 +19,11 @@ function fixture_metadata(id::AbstractString)
     return error("fixture $id not found in manifest.")
 end
 
-# Aqua quality checks (optional, skip if Aqua not installed).
-try
-    using Aqua
-    Aqua.test_all(
-        Mimosa;
-        ambiguities=false,
-        unbound_args=false,
-        stale_deps=false,
-        project_extras=false,
-    )
-catch
-    @info "Aqua not available, skipping quality checks."
-end
+# Aqua quality checks — fail-closed (Aqua is a required test dependency).
+using Aqua
+Aqua.test_all(
+    Mimosa; ambiguities=false, unbound_args=false, stale_deps=false, project_extras=false
+)
 
 @testset "Mimosa.jl Stage 1-7" begin
     # Unit tests
@@ -56,6 +48,8 @@ end
     include("unit/test_cache.jl")
     include("unit/test_model_storage.jl")
     include("unit/test_validation.jl")
+    include("unit/test_exports.jl")
+    include("unit/test_type_stability.jl")
 
     # Property tests
     include("properties/test_properties.jl")
@@ -73,7 +67,11 @@ end
 
     # Integration tests (CLI path)
     include("integration/test_cli.jl")
+    include("integration/test_cli_subprocess.jl")
 
-    # Downstream contract test
-    include("downstream/runtests.jl")
+    # JET static analysis (fail-closed for type instability in hot paths)
+    include("jet/test_jet.jl")
 end
+
+# Downstream contract test — runs in a separate consumer environment:
+#   julia --project=test/downstream test/downstream/runtests.jl
