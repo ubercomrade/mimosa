@@ -27,10 +27,7 @@ end
 
 @testset "Sequence layout and model capability contracts" begin
     pwm = PWM("p", ones(Float32, 5, 2), (0.25f0, 0.25f0, 0.25f0, 0.25f0))
-    pfm = PFM("p", fill(0.25f0, 4, 2))
     @test is_scannable(pwm)
-    @test !is_scannable(pfm)
-    @test_throws ArgumentError scan(pfm, UInt8[0, 1])
     @test_throws ArgumentError from_padded(UInt8[0 1; 2 3], Int[1])
     float_pwm = PWM("float", ones(Float64, 5, 2), (0.25, 0.25, 0.25, 0.25))
     @test scan(float_pwm, UInt8[0, 1, 2]) isa Vector{Float32}

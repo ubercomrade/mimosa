@@ -26,7 +26,8 @@ src/
 ├── serialization.jl    # JSON serialization (to_json, to_dict)
 ├── cli.jl              # Thin CLI adapter
 ├── models/             # Model types and constructors
-│   ├── types.jl        # AbstractMotifModel, PFM, PWM
+│   ├── types.jl        # Shared model hierarchy, PFM, PWM
+│   ├── pwm.jl          # PWM scanning geometry traits
 │   ├── matrices.jl     # pfm_to_pwm, pcm_to_pfm, reverse_complement
 │   ├── bamm.jl         # BaMM type
 │   ├── sitega.jl       # SiteGA type

@@ -39,7 +39,7 @@ function _read_meme_io(io::IO, path::AbstractString, target_index::Int)
                 matrix = _read_meme_matrix_rows(io, path, name, motif_length)
                 _validate_meme_matrix(matrix, path, name, motif_length)
                 pfm = _orient_meme_matrix(matrix, motif_length)
-                return PFM(name, pfm)
+                return (name=String(name), frequencies=pfm)
             else
                 motif_length <= 0 &&
                     throw(ModelFormatError(path, "motif $(name) has invalid length."))
@@ -220,7 +220,7 @@ function read_pfm(path::AbstractString)
         throw(ModelFormatError(path, "matrix contains non-finite values."))
     end
     name = _basename_without_extension(path)
-    return PFM(name, pfm)
+    return (name=name, frequencies=pfm)
 end
 
 function _basename_without_extension(path::AbstractString)

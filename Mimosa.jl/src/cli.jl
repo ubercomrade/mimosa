@@ -633,7 +633,7 @@ function _read_model_collection(path::AbstractString, model_type::AbstractString
             while true
                 try
                     pfm = read_meme(path; index=idx)
-                    pwm = pwm_from_pfm(pfm; background=0.25f0)
+                    pwm = pwm_from_pfm(pfm.frequencies; background=0.25f0, name=pfm.name)
                     push!(models, pwm)
                     idx += 1
                 catch e
@@ -826,9 +826,6 @@ function _model_info(model::AbstractProfileSource)
         info["width"] = length(model)
         info["rows"] = size(model.weights, 1)
         info["background"] = collect(model.background)
-    elseif model isa PFM
-        info["width"] = length(model)
-        info["rows"] = size(model.frequencies, 1)
     elseif model isa BaMM
         info["order"] = model.order
         info["motif_length"] = model.motif_length

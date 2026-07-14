@@ -3,13 +3,9 @@ using Mimosa
 
 const EXAMPLES = joinpath(dirname(dirname(@__DIR__)), "..", "examples")
 
-@testset "PFM/PWM constructors and invariants" begin
-    pfm = PFM("test", Float32[0.25 0.5; 0.25 0.25; 0.25 0.1; 0.25 0.15])
-    @test length(pfm) == 2
-    @test size(pfm) == (4, 2)
-    @test eltype(pfm) === Float32
-
-    pwm = pwm_from_pfm(pfm; background=0.25, name="test")
+@testset "PWM construction from frequency matrices" begin
+    frequencies = Float32[0.25 0.5; 0.25 0.25; 0.25 0.1; 0.25 0.15]
+    pwm = pwm_from_pfm(frequencies; background=0.25, name="test")
     @test length(pwm) == 2
     @test size(pwm) == (5, 2)
     @test eltype(pwm) === Float32
@@ -41,12 +37,12 @@ end
 end
 
 @testset "reverse_complement involutive" begin
-    pfm = PFM("t", Float32[0.1 0.2 0.3; 0.4 0.5 0.6; 0.7 0.8 0.9; 1.0 0.0 0.5])
-    rc = reverse_complement(pfm)
-    @test reverse_complement(rc) ≈ pfm
+    frequencies = Float32[0.1 0.2 0.3; 0.4 0.5 0.6; 0.7 0.8 0.9; 1.0 0.0 0.5]
+    rc = reverse_complement(frequencies)
+    @test reverse_complement(rc) ≈ frequencies
     @test size(rc) == (4, 3)
     # A row maps to T row reversed
-    @test rc.frequencies[4, :] ≈ reverse(pfm.frequencies[1, :])
+    @test rc[4, :] ≈ reverse(frequencies[1, :])
 end
 
 @testset "scorebounds" begin

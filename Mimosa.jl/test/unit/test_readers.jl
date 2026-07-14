@@ -1,19 +1,24 @@
 using Test
 using Mimosa
 
+@testset "Low-level PFM readers are internal" begin
+    @test !(:read_meme in names(Mimosa))
+    @test !(:read_pfm in names(Mimosa))
+end
+
 const REPO_ROOT = joinpath(dirname(dirname(@__DIR__)), "..")
 const EXAMPLES = joinpath(REPO_ROOT, "examples")
 const TEST_FIXTURES = joinpath(REPO_ROOT, "tests", "fixtures")
 
 @testset "read_meme parses pif4.meme" begin
-    pfm = read_meme(joinpath(EXAMPLES, "pif4.meme"); index=0)
+    pfm = Mimosa.read_meme(joinpath(EXAMPLES, "pif4.meme"); index=0)
     @test pfm.name == "pwm_model"
     @test size(pfm.frequencies) == (4, 12)
     @test eltype(pfm.frequencies) === Float32
 end
 
 @testset "read_pfm parses pif4.pfm" begin
-    pfm = read_pfm(joinpath(EXAMPLES, "pif4.pfm"))
+    pfm = Mimosa.read_pfm(joinpath(EXAMPLES, "pif4.pfm"))
     @test size(pfm.frequencies) == (4, 12)
     @test eltype(pfm.frequencies) === Float32
 end
@@ -33,7 +38,7 @@ end
 @testset "MEME multi-motif index selection" begin
     path = joinpath(TEST_FIXTURES, "models", "pwm", "PEAKS036274_FOXA1_P35582_MACS2.meme")
     if isfile(path)
-        pfm0 = read_meme(path; index=0)
+        pfm0 = Mimosa.read_meme(path; index=0)
         @test size(pfm0.frequencies) == (4, 13)
     else
         @test_skip "historical multi-motif fixture is unavailable"
@@ -47,7 +52,7 @@ end
         println(io)
         println(io, "MOTIF")
     end
-    @test_throws Mimosa.ModelFormatError read_meme(tmp)
+    @test_throws Mimosa.ModelFormatError Mimosa.read_meme(tmp)
 
     tmp2 = tempname()
     open(tmp2, "w") do io
@@ -58,12 +63,12 @@ end
         println(io, "0.25 0.25 0.25 0.25")
         println(io, "0.25 0.25 0.25")  # wrong column count
     end
-    @test_throws Mimosa.ModelFormatError read_meme(tmp2)
+    @test_throws Mimosa.ModelFormatError Mimosa.read_meme(tmp2)
 
-    @test_throws Mimosa.ModelFormatError read_meme(
+    @test_throws Mimosa.ModelFormatError Mimosa.read_meme(
         joinpath(EXAMPLES, "pif4.meme"); index=99
     )
-    @test_throws Mimosa.ModelFormatError read_meme("/nonexistent/path.meme")
+    @test_throws Mimosa.ModelFormatError Mimosa.read_meme("/nonexistent/path.meme")
 end
 
 @testset "PFM malformed inputs" begin
@@ -71,9 +76,9 @@ end
     open(tmp, "w") do io
         println(io, "0.1 0.2 0.3")
     end
-    @test_throws Mimosa.ModelFormatError read_pfm(tmp)
+    @test_throws Mimosa.ModelFormatError Mimosa.read_pfm(tmp)
 
-    @test_throws Mimosa.ModelFormatError read_pfm("/nonexistent/path.pfm")
+    @test_throws Mimosa.ModelFormatError Mimosa.read_pfm("/nonexistent/path.pfm")
 end
 
 @testset "readmodel unsupported format" begin

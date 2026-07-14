@@ -1,6 +1,6 @@
 # Model type hierarchy and matrix conversions for Mimosa.
 
-include("types.jl")
+include("pwm.jl")
 include("matrices.jl")
 include("bamm.jl")
 include("sitega.jl")

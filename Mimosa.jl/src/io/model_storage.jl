@@ -1,17 +1,17 @@
-# Portable model storage: TOML manifest + NPY binary blobs.
+# Portable model storage: TOML manifest + raw Float32 binary blobs.
 #
-# Implements the v1 schema from ADR 0003. Models are saved as a directory
-# bundle with a `manifest.toml` and binary numeric blobs in NPY format.
+# Implements the v2 schema. Models are saved as a directory bundle with a
+# `manifest.toml` and explicitly little-endian row-major binary data.
 #
 # Directory bundle structure:
 #   path/
 #   ├── manifest.toml
 #   └── data/
-#       └── weights.npy  (or frequencies.npy)
+#       └── weights.bin
 #
 # The manifest contains:
 #   - format magic and version
-#   - model kind (pwm, pfm, bamm, sitega, dimont, slim)
+#   - model kind (pwm, bamm, sitega, dimont, slim)
 #   - model name
 #   - dtype, shape, layout
 #   - background (for PWM)
@@ -25,11 +25,11 @@
     MODEL_FORMAT_VERSION
 
 Current version of the portable model bundle format.
-Value is `1`. Bundles with a different version are rejected on load.
+Value is `2`. Version 1 NPY bundles are legacy and rejected on load.
 """
-const MODEL_FORMAT_VERSION = 1
+const MODEL_FORMAT_VERSION = 2
 
-const MODEL_KINDS = Set(["pwm", "pfm", "bamm", "sitega", "dimont", "slim"])
+const MODEL_KINDS = Set(["pwm", "bamm", "sitega", "dimont", "slim"])
 
 # ── Model fingerprinting (for cache keys) ────────────────────────────────────
 
@@ -62,10 +62,10 @@ end
 Save a motif model to a portable directory bundle at `path`.
 
 The bundle contains a `manifest.toml` with metadata and a `data/` directory
-with NPY binary blobs. Writes use a complete sibling staging directory and
+with raw Float32 binary blobs. Writes use a complete sibling staging directory and
 atomic rename.
 
-Raises `InvariantError` when a model cannot be represented by the v1 bundle.
+Raises `InvariantError` when a model cannot be represented by the v2 bundle.
 """
 function writemodel(path::AbstractString, model::AbstractMotifModel; format::Symbol=:auto)
     format in (:auto, :bundle) ||
@@ -80,10 +80,11 @@ function writemodel(path::AbstractString, model::AbstractMotifModel; format::Sym
 
     return _with_bundle_write(path) do target, stage
         data_dir = joinpath(stage, BUNDLE_DATA_DIR)
-        npy_path = joinpath(data_dir, "$(arr_name).npy")
-        _write_npy_2d(npy_path, arr)
-        checksum = _file_sha256(npy_path)
+        data_path = joinpath(data_dir, "$(arr_name).bin")
+        _write_raw_f32_2d(data_path, arr)
+        checksum = _file_sha256(data_path)
         shape = [size(arr, 1), size(arr, 2)]
+        byte_length = _bundle_shape_payload_bytes(shape, "<f4", String(path), "model array")
 
         manifest = Dict{String,Any}(
             "format" => "mimosa",
@@ -99,9 +100,10 @@ function writemodel(path::AbstractString, model::AbstractMotifModel; format::Sym
             ),
             "arrays" => Dict{String,Any}(
                 arr_name => Dict{String,Any}(
-                    "file" => "data/$(arr_name).npy",
+                    "file" => "data/$(arr_name).bin",
                     "dtype" => "<f4",
                     "shape" => shape,
+                    "byte_length" => byte_length,
                     "checksum" => "sha256:$checksum",
                 ),
             ),
@@ -129,7 +131,7 @@ end
 """
     readmodel(path; format=:auto, kwargs...)
 
-Read a motif model from a directory bundle (v1 format) or a legacy format
+Read a motif model from a directory bundle (v2 format) or a legacy format
 file. When `path` is a directory containing `manifest.toml`, the portable
 bundle format is used. Otherwise, legacy format detection applies.
 """
@@ -152,10 +154,10 @@ function readmodel(
     fmt = format === :auto ? _detect_format(path) : format
     if fmt === :meme
         pfm = read_meme(path; index=index)
-        return pwm_from_pfm(pfm; background=background)
+        return pwm_from_pfm(pfm.frequencies; background=background, name=pfm.name)
     elseif fmt === :pfm
         pfm = read_pfm(path)
-        return pwm_from_pfm(pfm; background=background)
+        return pwm_from_pfm(pfm.frequencies; background=background, name=pfm.name)
     elseif fmt === :bamm
         order_val = get(kwargs, :order, nothing)
         return read_bamm(path; order=order_val)
@@ -181,8 +183,6 @@ function _read_model_bundle(path::AbstractString, manifest_path::AbstractString)
 
         if kind == "pwm"
             return _read_pwm_bundle(path, manifest, name)
-        elseif kind == "pfm"
-            return _read_pfm_bundle(path, manifest, name)
         elseif kind == "bamm"
             return _read_bamm_bundle(path, manifest, name)
         elseif kind == "sitega"
@@ -219,10 +219,15 @@ function _read_model_array(
         throw(_bundle_error(path, "manifest and array shape declarations disagree."))
     dtype == "<f4" || throw(_bundle_error(path, "model arrays must use dtype '<f4'."))
     file_path = _validate_bundle_array_checksum(path, spec, path)
-    data = _read_npy_f32_2d(file_path; expected_shape=shape)
-    all(isfinite, data) ||
-        throw(_bundle_error(path, "model array contains non-finite values."))
-    return data
+    byte_length = _required_manifest_int(
+        _required_manifest_table(manifest["arrays"], array_name, path, "arrays"),
+        "byte_length",
+        path,
+        "array '$array_name'";
+        minimum=1,
+        maximum=MAX_BUNDLE_BLOB_BYTES,
+    )
+    return _read_raw_f32_2d(file_path; expected_shape=shape, expected_bytes=byte_length)
 end
 
 function _validate_declared_model_shape(
@@ -259,17 +264,6 @@ function _read_pwm_bundle(path::AbstractString, manifest::Dict, name::AbstractSt
     all(isfinite, bg) ||
         throw(_bundle_error(path, "PWM background is not representable as Float32."))
     return PWM(name, weights, bg)
-end
-
-function _read_pfm_bundle(path::AbstractString, manifest::Dict, name::AbstractString)
-    shape_value = haskey(manifest, "shape") ? manifest["shape"] : nothing
-    shape_value === nothing && throw(_bundle_error(path, "manifest is missing 'shape'."))
-    declared_shape = _required_manifest_shape(shape_value, path, "manifest")
-    length(declared_shape) == 2 && declared_shape[1] == 4 && declared_shape[2] > 0 ||
-        throw(_bundle_error(path, "PFM manifest shape must be [4, positive motif_length]."))
-    _validate_declared_model_shape(path, manifest, 4, declared_shape[2], "PFM")
-    frequencies = _read_model_array(path, manifest, "frequencies")
-    return PFM(name, frequencies)
 end
 
 function _read_bamm_bundle(path::AbstractString, manifest::Dict, name::AbstractString)
@@ -335,7 +329,6 @@ end
 # ── Model helpers ───────────────────────────────────────────────────────────
 
 _model_kind(::PWM) = "pwm"
-_model_kind(::PFM) = "pfm"
 _model_kind(::BaMM) = "bamm"
 _model_kind(::SiteGA) = "sitega"
 _model_kind(::Dimont) = "dimont"
@@ -343,18 +336,15 @@ _model_kind(::Slim) = "slim"
 _model_kind(::ScoreProfile) = "score_profile"
 
 _model_array(model::PWM) = model.weights
-_model_array(model::PFM) = model.frequencies
 _model_array(model::BaMM) = model.representation
 _model_array(model::SiteGA) = model.representation
 _model_array(model::Dimont) = model.representation
 _model_array(model::Slim) = model.representation
 
 _model_array_name(::PWM) = "weights"
-_model_array_name(::PFM) = "frequencies"
 _model_array_name(::AbstractHigherOrderMotif) = "representation"
 
 _model_length(model::PWM) = length(model)
-_model_length(model::PFM) = length(model)
 _model_length(model::BaMM) = model.motif_length
 _model_length(model::SiteGA) = model.motif_length
 _model_length(model::Dimont) = model.motif_length

@@ -10,10 +10,10 @@ const EXAMPLES = joinpath(REPO_ROOT, "examples")
     @test reverse_complement(rc) == pwm
 end
 
-@testset "reverse_complement involution (PFM)" begin
-    pfm = read_meme(joinpath(EXAMPLES, "pif4.meme"))
-    rc = reverse_complement(pfm)
-    @test reverse_complement(rc) == pfm
+@testset "reverse_complement involution (frequency matrix)" begin
+    frequencies = Mimosa.read_meme(joinpath(EXAMPLES, "pif4.meme")).frequencies
+    rc = reverse_complement(frequencies)
+    @test reverse_complement(rc) == frequencies
 end
 
 @testset "identical model-derived profile comparison gives 1.0" begin

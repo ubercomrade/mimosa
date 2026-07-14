@@ -12,7 +12,7 @@ migration boundary for legacy data; it is not a dual-support policy.
 | padded/masked batches | flat `EncodedSequenceBatch` and `RaggedArray` storage |
 | Numba/global thread control | explicit `ExecutionPolicy` and bounded top-level tasks |
 | direct matrix and profile strategies | profile-only comparison |
-| pickle/joblib persistence | bounded TOML + checksum-verified NPY bundles |
+| pickle/joblib persistence | bounded TOML + checksum-verified model blobs |
 | SciPy GEV fitting | native Float64 BFGS fitting |
 
 Direct matrix alignment, PCC/Euclidean metrics, the `motif` CLI command, and

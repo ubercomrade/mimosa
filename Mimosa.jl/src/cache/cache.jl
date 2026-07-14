@@ -150,8 +150,6 @@ function content_fingerprint(model::AbstractMotifModel)
         write(io, content_fingerprint(model.weights))
         write(io, "|")
         write(io, join(string.(model.background), ","))
-    elseif model isa PFM
-        write(io, content_fingerprint(model.frequencies))
     elseif model isa BaMM
         write(io, content_fingerprint(model.representation))
         write(io, "|")

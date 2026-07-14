@@ -13,7 +13,7 @@
 | Statistics | Native GEV, p-values, BH FDR, E-values | `fit_gev`, `pvalue`, `adjusted_pvalues`, `evalue` |
 | Nulls | Profile strategy, format v2 | `build_null`, `savenull`, `loadnull` |
 | Parallelism | Bounded deterministic tasks | `SerialExecution`, `ThreadedExecution` |
-| Model storage | TOML/NPY format v1 | `writemodel`, `readmodel` |
+| Model storage | TOML/raw-binary format v2 | `writemodel`, `readmodel` |
 | Cache | Explicit format-v1 content cache | `Cache`, `cache_get`, `cache_set`, `clearcache` |
 | CLI | Five workflows | `profile`, `build-null`, `cache clear`, `inspect-model`, `convert-model` |
 

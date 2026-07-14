@@ -91,38 +91,38 @@ end
 
     # Correct destination size works.
     dest = Vector{Float32}(undef, n_pos)
-    @test_nowarn scan_forward!(dest, pwm.weights, seq, n_pos)
-    @test_nowarn scan_reverse!(dest, pwm.weights, seq, n_pos)
-    @test_nowarn scan_best!(dest, pwm.weights, seq, n_pos)
+    @test_nowarn scan_forward!(dest, pwm, seq, n_pos)
+    @test_nowarn scan_reverse!(dest, pwm, seq, n_pos)
+    @test_nowarn scan_best!(dest, pwm, seq, n_pos)
 
     fwd = Vector{Float32}(undef, n_pos)
     rev = Vector{Float32}(undef, n_pos)
-    @test_nowarn scan_both!(fwd, rev, pwm.weights, seq, n_pos)
+    @test_nowarn scan_both!(fwd, rev, pwm, seq, n_pos)
 
     # Short destination should throw.
     short_dest = Vector{Float32}(undef, max(n_pos - 1, 0))
     if n_pos > 0
-        @test_throws ArgumentError scan_forward!(short_dest, pwm.weights, seq, n_pos)
-        @test_throws ArgumentError scan_reverse!(short_dest, pwm.weights, seq, n_pos)
-        @test_throws ArgumentError scan_best!(short_dest, pwm.weights, seq, n_pos)
+        @test_throws ArgumentError scan_forward!(short_dest, pwm, seq, n_pos)
+        @test_throws ArgumentError scan_reverse!(short_dest, pwm, seq, n_pos)
+        @test_throws ArgumentError scan_best!(short_dest, pwm, seq, n_pos)
     end
 
     if n_pos > 0
         short_fwd = Vector{Float32}(undef, n_pos - 1)
-        @test_throws ArgumentError scan_both!(short_fwd, rev, pwm.weights, seq, n_pos)
-        @test_throws ArgumentError scan_both!(fwd, short_fwd, pwm.weights, seq, n_pos)
+        @test_throws ArgumentError scan_both!(short_fwd, rev, pwm, seq, n_pos)
+        @test_throws ArgumentError scan_both!(fwd, short_fwd, pwm, seq, n_pos)
     end
 
-    # Invalid raw codes and inconsistent geometry must not reach @inbounds kernels.
-    @test_throws ArgumentError scan_forward!(dest, pwm.weights, UInt8[0xff for _ in seq], n_pos)
-    @test_throws ArgumentError scan_forward!(dest, pwm.weights, seq, n_pos + 1)
-    @test_throws ArgumentError scan_both!(fwd, fwd, pwm.weights, seq, n_pos)
+    # Invalid codes and inconsistent geometry must not reach @inbounds kernels.
+    @test_throws ArgumentError scan_forward!(dest, pwm, UInt8[0xff for _ in seq], n_pos)
+    @test_throws ArgumentError scan_forward!(dest, pwm, seq, n_pos + 1)
+    @test_throws ArgumentError scan_both!(fwd, fwd, pwm, seq, n_pos)
 
     # Negative n_pos should throw.
-    @test_throws ArgumentError scan_forward!(dest, pwm.weights, seq, -1)
-    @test_throws ArgumentError scan_reverse!(dest, pwm.weights, seq, -1)
-    @test_throws ArgumentError scan_best!(dest, pwm.weights, seq, -1)
-    @test_throws ArgumentError scan_both!(fwd, rev, pwm.weights, seq, -1)
+    @test_throws ArgumentError scan_forward!(dest, pwm, seq, -1)
+    @test_throws ArgumentError scan_reverse!(dest, pwm, seq, -1)
+    @test_throws ArgumentError scan_best!(dest, pwm, seq, -1)
+    @test_throws ArgumentError scan_both!(fwd, rev, pwm, seq, -1)
 end
 
 @testset "B2: higher-order scan kernel destination validation" begin
@@ -134,23 +134,19 @@ end
     n_pos = npositions(model, length(seq))
 
     dest = Vector{Float32}(undef, n_pos)
-    @test_nowarn Mimosa._ho_scan_forward!(dest, model.representation, 1, 0, 3, seq, n_pos)
+    @test_nowarn scan_forward!(dest, model, seq, n_pos)
 
     # Short dest.
     if n_pos > 0
         short = Vector{Float32}(undef, n_pos - 1)
-        @test_throws ArgumentError Mimosa._ho_scan_forward!(
-            short, model.representation, 1, 0, 3, seq, n_pos
-        )
+        @test_throws ArgumentError scan_forward!(short, model, seq, n_pos)
     end
 
     # Negative n_pos.
-    @test_throws ArgumentError Mimosa._ho_scan_forward!(
-        dest, model.representation, 1, 0, 3, seq, -1
-    )
+    @test_throws ArgumentError scan_forward!(dest, model, seq, -1)
 end
 
-@testset "B2: rolling higher-order codes preserve raw scan results" begin
+@testset "B2: higher-order strand APIs agree" begin
     models = AbstractHigherOrderMotif[
         BaMM("bamm", reshape(Float32.(1:75), 25, 3), 1, 3),
         SiteGA("sitega", reshape(Float32.(1:100), 25, 4), 4),
@@ -163,24 +159,8 @@ end
         n_pos = npositions(model, length(seq))
         forward = Vector{Float32}(undef, n_pos)
         reverse = similar(forward)
-        Mimosa._ho_scan_forward!(
-            forward,
-            model.representation,
-            Mimosa.kmer(model),
-            Mimosa.context_length(model),
-            Mimosa.scan_width(model),
-            seq,
-            n_pos,
-        )
-        Mimosa._ho_scan_reverse!(
-            reverse,
-            model.representation,
-            Mimosa.kmer(model),
-            Mimosa.window_size(model),
-            Mimosa.scan_width(model),
-            seq,
-            n_pos,
-        )
+        scan_forward!(forward, model, seq, n_pos)
+        scan_reverse!(reverse, model, seq, n_pos)
 
         @test scan(model, seq; strands=ForwardOnly()) == forward
         @test scan(model, seq; strands=ReverseOnly()) == reverse
@@ -191,15 +171,15 @@ end
     end
 end
 
-@testset "B2: universal model scan preserves raw PWM results" begin
+@testset "B2: PWM strand APIs agree" begin
     weights = reshape(Float32.(1:20), 5, 4)
     model = PWM("pwm", weights, (0.25f0, 0.25f0, 0.25f0, 0.25f0))
     seq = UInt8[4, 0, 1, 2, 3, 0, 4]
     n_pos = npositions(model, length(seq))
     forward = Vector{Float32}(undef, n_pos)
     reverse = similar(forward)
-    scan_forward!(forward, weights, seq, n_pos)
-    scan_reverse!(reverse, weights, seq, n_pos)
+    scan_forward!(forward, model, seq, n_pos)
+    scan_reverse!(reverse, model, seq, n_pos)
 
     @test scan(model, seq; strands=ForwardOnly()) == forward
     @test scan(model, seq; strands=ReverseOnly()) == reverse
@@ -284,28 +264,6 @@ end
 end
 
 # ── B3: Model constructor invariant enforcement ───────────────────────────
-
-@testset "B3: PFM constructor validation" begin
-    # Valid PFM.
-    valid = Float32[0.25 0.5; 0.25 0.25; 0.25 0.15; 0.25 0.1]
-    @test_nowarn PFM("test", valid)
-
-    # Wrong number of rows.
-    @test_throws ModelDimensionError PFM("test", Float32[0.5 0.5; 0.5 0.5])
-
-    # Zero width.
-    @test_throws ModelDimensionError PFM("test", Matrix{Float32}(undef, 4, 0))
-
-    # Non-finite values.
-    @test_throws ModelFormatError PFM(
-        "test", Float32[0.25 Inf; 0.25 0.25; 0.25 0.25; 0.25 0.25]
-    )
-
-    # Negative values.
-    @test_throws ModelFormatError PFM(
-        "test", Float32[-0.1 0.5; 0.25 0.25; 0.25 0.25; 0.25 0.25]
-    )
-end
 
 @testset "B3: PWM constructor validation" begin
     # Valid PWM.

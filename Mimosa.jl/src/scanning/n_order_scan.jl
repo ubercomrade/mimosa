@@ -6,13 +6,10 @@ function npositions(seq_len::Int, motif_width::Int)
     return max(seq_len - motif_width + 1, 0)
 end
 
-npositions(model::PWM, seq_len::Int) = npositions(seq_len, motif_length(model))
-kmer(::PWM) = 1
-context_length(::PWM) = 0
-scan_width(model::PWM) = motif_length(model)
-
-function scan(model::PFM, args...; kwargs...)
-    throw(ArgumentError("PFM is not directly scannable; convert it with pwm_from_pfm first."))
+@inline function _require_scannable(model::AbstractMotifModel)
+    is_scannable(model) ||
+        throw(ArgumentError("$(typeof(model)) is not directly scannable."))
+    return nothing
 end
 
 function _validate_scan_input(seq::AbstractVector{UInt8}, n_pos::Int, width::Int, dests...)
@@ -25,34 +22,9 @@ function _validate_scan_input(seq::AbstractVector{UInt8}, n_pos::Int, width::Int
     n_pos > npositions(length(seq), width) &&
         throw(ArgumentError("n_pos=$n_pos exceeds sequence geometry for width=$width."))
     any(code -> code > N_CODE, seq) && throw(ArgumentError("invalid encoded DNA code."))
-    any(length(dest) < n_pos for dest in dests) && throw(ArgumentError("destination is too short."))
+    any(length(dest) < n_pos for dest in dests) &&
+        throw(ArgumentError("destination is too short."))
     return nothing
-end
-
-function scan(model::PWM, seq::AbstractVector{UInt8}; strands::StrandPolicy=ForwardOnly())
-    n_pos = npositions(model, length(seq))
-    if strands isa BothStrands
-        forward = Vector{Float32}(undef, n_pos); reverse = similar(forward)
-        scan_both!(forward, reverse, model, seq, n_pos)
-        return StrandPair(forward, reverse)
-    end
-    dest = Vector{Float32}(undef, n_pos)
-    strands isa ForwardOnly && return scan_forward!(dest, model, seq, n_pos)
-    strands isa ReverseOnly && return scan_reverse!(dest, model, seq, n_pos)
-    strands isa BestStrand && return scan_best!(dest, model, seq, n_pos)
-    throw(ArgumentError("unsupported strand policy: $(typeof(strands))"))
-end
-
-function scan!(dest::AbstractVector{T}, model::PWM, seq::AbstractVector{UInt8}; strands::StrandPolicy=ForwardOnly()) where {T<:AbstractFloat}
-    n_pos = npositions(model, length(seq)); length(dest) >= n_pos || throw(ArgumentError("destination is too short."))
-    strands isa ForwardOnly && return scan_forward!(dest, model, seq, n_pos)
-    strands isa ReverseOnly && return scan_reverse!(dest, model, seq, n_pos)
-    strands isa BestStrand && return scan_best!(dest, model, seq, n_pos)
-    throw(ArgumentError("scan! with BothStrands is not supported."))
-end
-
-function scan(model::PWM, batch::EncodedSequenceBatch; strands::StrandPolicy=ForwardOnly(), execution::ExecutionPolicy=SerialExecution())
-    return _scan_model_batch(model, batch; strands=strands, execution=execution)
 end
 
 function _scan_costs(offsets::Vector{Int})
@@ -60,236 +32,9 @@ function _scan_costs(offsets::Vector{Int})
 end
 
 function _scan_dest(data::AbstractVector, offsets::Vector{Int}, row_index::Int)
-    start = offsets[row_index]; stop = offsets[row_index + 1] - 1
+    start = offsets[row_index];
+    stop = offsets[row_index + 1] - 1
     return start > stop ? view(data, 1:0) : @view(data[start:stop])
-end
-
-scan_result_lengths(model::PWM, batch::EncodedSequenceBatch) =
-    [npositions(model, seqlength(batch, i)) for i in 1:nsequences(batch)]
-# Dimont, Slim and any model whose per-window score is the column-wise sum
-# of a `(5^kmer, n_terms)` representation indexed by a 5-ary code of
-# `kmer` consecutive (possibly complemented) bases.
-#
-# Geometry (provided by the concrete model via `kmer`, `context_length`,
-# `window_size`, `scan_width`):
-#   kmer_val   = bases per scoring term
-#   ctx        = bases before motif start used for context
-#   win        = total sequence window needed
-#   n_terms    = number of scoring terms per window (= `scan_width(model)`)
-#   n_pos      = number of scan positions = seq_len - win + 1
-#
-# Forward term t (0-indexed):
-#   code = encode_5ary(seq[pos - ctx + t], ..., seq[pos - ctx + t + kmer - 1])
-#   score += representation[code, t]
-# Reverse term t:
-#   code = encode_5ary(complement(seq[pos + win - 1 - (t + 0)]), ...)
-#   score += representation[code, t]
-#
-# Out-of-window positions use the N encoding (4). This kernel is type-stable
-# and allocates nothing in the inner loop.
-
-"""
-    _ho_scan_forward!(dest, rep, kmer_val, ctx, n_terms, seq, n_pos)
-
-Fill `dest[1:n_pos]` with forward-strand scores for one sequence using the
-generic higher-order kernel. `rep` is indexed `[code+1, term+1]`.
-"""
-function _ho_scan_forward!(
-    dest::AbstractVector{T},
-    rep::AbstractMatrix,
-    kmer_val::Int,
-    ctx::Int,
-    n_terms::Int,
-    seq::AbstractVector{UInt8},
-    n_pos::Int,
-) where {T<:AbstractFloat}
-    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
-    length(dest) < n_pos && throw(
-        ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
-    )
-    seq_len = length(seq)
-    # Invariant: seq codes in 0..N_CODE (guaranteed by EncodedSequenceBatch).
-    # code = base*5 + ... for kmer_val bases, each in 0..4, so code in 0..5^kmer_val-1.
-    # rep has 5^kmer_val rows, so code+1 is always in bounds.
-    # @inbounds is safe: pos ranges 1..n_pos, term ranges 0..n_terms-1,
-    # offset ranges 0..kmer_val-1.  Out-of-window positions use code 4 (N).
-    @inbounds for pos in 1:n_pos
-        total = zero(T)
-        for term in 0:(n_terms - 1)
-            code = 0
-            src_start = (pos - 1) - ctx + term
-            for offset in 0:(kmer_val - 1)
-                src = src_start + offset
-                if 0 <= src < seq_len
-                    encoded = Int(seq[src + 1])
-                else
-                    encoded = 4
-                end
-                code = code * 5 + encoded
-            end
-            total += rep[code + 1, term + 1]
-        end
-        dest[pos] = total
-    end
-    return dest
-end
-
-"""
-    _ho_scan_reverse!(dest, rep, kmer_val, win, n_terms, seq, n_pos)
-
-Fill `dest[1:n_pos]` with reverse-strand scores for one sequence using the
-generic higher-order kernel.
-"""
-function _ho_scan_reverse!(
-    dest::AbstractVector{T},
-    rep::AbstractMatrix,
-    kmer_val::Int,
-    win::Int,
-    n_terms::Int,
-    seq::AbstractVector{UInt8},
-    n_pos::Int,
-) where {T<:AbstractFloat}
-    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
-    length(dest) < n_pos && throw(
-        ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
-    )
-    seq_len = length(seq)
-    # Invariant: same as _ho_scan_forward! but with complement for reverse strand.
-    # complement(b) = N_CODE if b==N_CODE else 3-b, still in 0..N_CODE.
-    @inbounds for pos in 1:n_pos
-        total = zero(T)
-        for term in 0:(n_terms - 1)
-            code = 0
-            for offset in 0:(kmer_val - 1)
-                src = (pos - 1) + (win - 1) - (term + offset)
-                if 0 <= src < seq_len
-                    base = Int(seq[src + 1])
-                    encoded = base == 4 ? 4 : 3 - base
-                else
-                    encoded = 4
-                end
-                code = code * 5 + encoded
-            end
-            total += rep[code + 1, term + 1]
-        end
-        dest[pos] = total
-    end
-    return dest
-end
-
-"""
-    _ho_scan_best!(dest, rep, kmer_val, ctx, win, n_terms, seq, n_pos)
-
-Fill `dest[1:n_pos]` with the per-position maximum of forward and reverse
-strand scores.
-"""
-function _ho_scan_best!(
-    dest::AbstractVector{T},
-    rep::AbstractMatrix,
-    kmer_val::Int,
-    ctx::Int,
-    win::Int,
-    n_terms::Int,
-    seq::AbstractVector{UInt8},
-    n_pos::Int,
-) where {T<:AbstractFloat}
-    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
-    length(dest) < n_pos && throw(
-        ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
-    )
-    seq_len = length(seq)
-    # Invariant: same as _ho_scan_forward! and _ho_scan_reverse! above.
-    @inbounds for pos in 1:n_pos
-        fwd_total = zero(T)
-        rev_total = zero(T)
-        for term in 0:(n_terms - 1)
-            fwd_code = 0
-            src_start = (pos - 1) - ctx + term
-            for offset in 0:(kmer_val - 1)
-                src = src_start + offset
-                if 0 <= src < seq_len
-                    encoded = Int(seq[src + 1])
-                else
-                    encoded = 4
-                end
-                fwd_code = fwd_code * 5 + encoded
-            end
-            fwd_total += rep[fwd_code + 1, term + 1]
-
-            rev_code = 0
-            for offset in 0:(kmer_val - 1)
-                src = (pos - 1) + (win - 1) - (term + offset)
-                if 0 <= src < seq_len
-                    base = Int(seq[src + 1])
-                    encoded = base == 4 ? 4 : 3 - base
-                else
-                    encoded = 4
-                end
-                rev_code = rev_code * 5 + encoded
-            end
-            rev_total += rep[rev_code + 1, term + 1]
-        end
-        dest[pos] = max(fwd_total, rev_total)
-    end
-    return dest
-end
-
-"""
-    _ho_scan_both!(fwd, rev, rep, kmer_val, ctx, win, n_terms, seq, n_pos)
-
-Fill `fwd` and `rev` with forward and reverse strand scores respectively.
-"""
-function _ho_scan_both!(
-    fwd::AbstractVector{T},
-    rev::AbstractVector{T},
-    rep::AbstractMatrix,
-    kmer_val::Int,
-    ctx::Int,
-    win::Int,
-    n_terms::Int,
-    seq::AbstractVector{UInt8},
-    n_pos::Int,
-) where {T<:AbstractFloat}
-    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
-    (length(fwd) < n_pos || length(rev) < n_pos) && throw(
-        ArgumentError("fwd/rev destinations must each have at least $n_pos elements.")
-    )
-    seq_len = length(seq)
-    # Invariant: same as _ho_scan_forward! and _ho_scan_reverse! above.
-    @inbounds for pos in 1:n_pos
-        fwd_total = zero(T)
-        rev_total = zero(T)
-        for term in 0:(n_terms - 1)
-            fwd_code = 0
-            src_start = (pos - 1) - ctx + term
-            for offset in 0:(kmer_val - 1)
-                src = src_start + offset
-                if 0 <= src < seq_len
-                    encoded = Int(seq[src + 1])
-                else
-                    encoded = 4
-                end
-                fwd_code = fwd_code * 5 + encoded
-            end
-            fwd_total += rep[fwd_code + 1, term + 1]
-
-            rev_code = 0
-            for offset in 0:(kmer_val - 1)
-                src = (pos - 1) + (win - 1) - (term + offset)
-                if 0 <= src < seq_len
-                    base = Int(seq[src + 1])
-                    encoded = base == 4 ? 4 : 3 - base
-                else
-                    encoded = 4
-                end
-                rev_code = rev_code * 5 + encoded
-            end
-            rev_total += rep[rev_code + 1, term + 1]
-        end
-        fwd[pos] = fwd_total
-        rev[pos] = rev_total
-    end
-    return (fwd, rev)
 end
 
 # ── Rolling k-mer code preparation ──────────────────────────────────────────
@@ -556,17 +301,15 @@ function _ho_scan_offsets(batch::EncodedSequenceBatch, model, npos_fn::F) where 
     return offsets
 end
 
-# ── Generic AbstractHigherOrderMotif adapter ─────────────────────────────────
+# ── Higher-order motif traits ────────────────────────────────────────────────
 #
-# The following methods provide a single generic implementation of the scan
-# adapter layer for all AbstractHigherOrderMotif subtypes (BaMM, SiteGA, Dimont,
-# Slim).
+# The following traits adapt BaMM, SiteGA, Dimont, and Slim to the generic
+# scan kernels shared with PWM.
 #
 # Each model provides the geometry via the trait functions:
 #   kmer(model), context_length(model), window_size(model), scan_width(model)
 # and stores its scoring matrix in the `representation` field.
-# Score loops use precomputed rolling k-mer codes; the raw kernels above remain
-# as a reference implementation for validation tests.
+# Score loops use precomputed rolling k-mer codes.
 
 """
     npositions(model::AbstractHigherOrderMotif, seq_len::Int)
@@ -585,10 +328,10 @@ scoretype(model::AbstractHigherOrderMotif) = eltype(scorematrix(model))
 # ── Generic single-sequence scan kernels ──────────────────────────────────
 
 """
-    scan_forward!(dest, model::AbstractHigherOrderMotif, seq, n_pos)
+    scan_forward!(dest, model::AbstractMotifModel, seq, n_pos)
 
 Fill `dest[1:n_pos]` with forward-strand scores for one sequence.
-Generic method for all higher-order models.
+Generic method for all directly scannable motif models.
 """
 function scan_forward!(
     dest::AbstractVector{T},
@@ -607,10 +350,10 @@ function scan_forward!(
 end
 
 """
-    scan_reverse!(dest, model::AbstractHigherOrderMotif, seq, n_pos)
+    scan_reverse!(dest, model::AbstractMotifModel, seq, n_pos)
 
 Fill `dest[1:n_pos]` with reverse-strand scores for one sequence.
-Generic method for all higher-order models.
+Generic method for all directly scannable motif models.
 """
 function scan_reverse!(
     dest::AbstractVector{T},
@@ -629,10 +372,10 @@ function scan_reverse!(
 end
 
 """
-    scan_best!(dest, model::AbstractHigherOrderMotif, seq, n_pos)
+    scan_best!(dest, model::AbstractMotifModel, seq, n_pos)
 
 Fill `dest[1:n_pos]` with the per-position maximum of forward and reverse scores.
-Generic method for all higher-order models.
+Generic method for all directly scannable motif models.
 """
 function scan_best!(
     dest::AbstractVector{T},
@@ -652,10 +395,10 @@ function scan_best!(
 end
 
 """
-    scan_both!(fwd, rev, model::AbstractHigherOrderMotif, seq, n_pos)
+    scan_both!(fwd, rev, model::AbstractMotifModel, seq, n_pos)
 
 Fill `fwd` and `rev` with forward and reverse strand scores respectively.
-Generic method for all higher-order models.
+Generic method for all directly scannable motif models.
 """
 function scan_both!(
     fwd::AbstractVector{T},
@@ -680,47 +423,47 @@ end
 # ── Generic single-sequence allocating scan ──────────────────────────────
 
 """
-    scan(model::AbstractHigherOrderMotif, seq; strands)
+    scan(model::AbstractMotifModel, seq; strands)
 
-Scan a single encoded sequence with a higher-order model.
-Generic method for all AbstractHigherOrderMotif subtypes.
+Scan a single encoded sequence with a directly scannable motif model.
 
 Returns:
 - `Vector{Float32}` for `ForwardOnly`, `ReverseOnly`, `BestStrand`.
 - [`StrandPair{Vector{Float32}}`](@ref) for `BothStrands`.
 """
 function scan(
-    model::AbstractHigherOrderMotif,
+    model::AbstractMotifModel,
     seq::AbstractVector{UInt8};
     strands::StrandPolicy=ForwardOnly(),
 )
+    _require_scannable(model)
     n_pos = npositions(model, length(seq))
-    return _scan_single_ho(strands, model, seq, n_pos)
+    return _scan_single_model(strands, model, seq, n_pos)
 end
 
-function _scan_single_ho(
-    ::ForwardOnly, model::AbstractHigherOrderMotif, seq::AbstractVector{UInt8}, n_pos::Int
+function _scan_single_model(
+    ::ForwardOnly, model::AbstractMotifModel, seq::AbstractVector{UInt8}, n_pos::Int
 )
     dest = Vector{Float32}(undef, n_pos)
     return scan_forward!(dest, model, seq, n_pos)
 end
 
-function _scan_single_ho(
-    ::ReverseOnly, model::AbstractHigherOrderMotif, seq::AbstractVector{UInt8}, n_pos::Int
+function _scan_single_model(
+    ::ReverseOnly, model::AbstractMotifModel, seq::AbstractVector{UInt8}, n_pos::Int
 )
     dest = Vector{Float32}(undef, n_pos)
     return scan_reverse!(dest, model, seq, n_pos)
 end
 
-function _scan_single_ho(
-    ::BestStrand, model::AbstractHigherOrderMotif, seq::AbstractVector{UInt8}, n_pos::Int
+function _scan_single_model(
+    ::BestStrand, model::AbstractMotifModel, seq::AbstractVector{UInt8}, n_pos::Int
 )
     dest = Vector{Float32}(undef, n_pos)
     return scan_best!(dest, model, seq, n_pos)
 end
 
-function _scan_single_ho(
-    ::BothStrands, model::AbstractHigherOrderMotif, seq::AbstractVector{UInt8}, n_pos::Int
+function _scan_single_model(
+    ::BothStrands, model::AbstractMotifModel, seq::AbstractVector{UInt8}, n_pos::Int
 )
     fwd = Vector{Float32}(undef, n_pos)
     rev = Vector{Float32}(undef, n_pos)
@@ -731,46 +474,47 @@ end
 # ── Generic single-sequence in-place scan ──────────────────────────────────
 
 """
-    scan!(dest, model::AbstractHigherOrderMotif, seq; strands)
+    scan!(dest, model::AbstractMotifModel, seq; strands)
 
 Fill `dest` with scan scores for one sequence.
-Generic method for all AbstractHigherOrderMotif subtypes.
+Generic method for all directly scannable motif models.
 """
 function scan!(
     dest::AbstractVector{T},
-    model::AbstractHigherOrderMotif,
+    model::AbstractMotifModel,
     seq::AbstractVector{UInt8};
     strands::StrandPolicy=ForwardOnly(),
 ) where {T<:AbstractFloat}
+    _require_scannable(model)
     n_pos = npositions(model, length(seq))
     if length(dest) < n_pos
         throw(
             ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
         )
     end
-    return _scan_inplace_ho!(strands, dest, model, seq, n_pos)
+    return _scan_inplace_model!(strands, dest, model, seq, n_pos)
 end
 
-function _scan_inplace_ho!(
-    ::ForwardOnly, dest::AbstractVector{T}, model::AbstractHigherOrderMotif, seq, n_pos
+function _scan_inplace_model!(
+    ::ForwardOnly, dest::AbstractVector{T}, model::AbstractMotifModel, seq, n_pos
 ) where {T<:AbstractFloat}
     return scan_forward!(dest, model, seq, n_pos)
 end
 
-function _scan_inplace_ho!(
-    ::ReverseOnly, dest::AbstractVector{T}, model::AbstractHigherOrderMotif, seq, n_pos
+function _scan_inplace_model!(
+    ::ReverseOnly, dest::AbstractVector{T}, model::AbstractMotifModel, seq, n_pos
 ) where {T<:AbstractFloat}
     return scan_reverse!(dest, model, seq, n_pos)
 end
 
-function _scan_inplace_ho!(
-    ::BestStrand, dest::AbstractVector{T}, model::AbstractHigherOrderMotif, seq, n_pos
+function _scan_inplace_model!(
+    ::BestStrand, dest::AbstractVector{T}, model::AbstractMotifModel, seq, n_pos
 ) where {T<:AbstractFloat}
     return scan_best!(dest, model, seq, n_pos)
 end
 
-function _scan_inplace_ho!(
-    ::BothStrands, dest::AbstractVector{T}, model::AbstractHigherOrderMotif, seq, n_pos
+function _scan_inplace_model!(
+    ::BothStrands, dest::AbstractVector{T}, model::AbstractMotifModel, seq, n_pos
 ) where {T<:AbstractFloat}
     return throw(
         ArgumentError(
@@ -782,16 +526,16 @@ end
 # ── Generic batch scanning (EncodedSequenceBatch) ─────────────────────────
 
 """
-    scan(model::AbstractHigherOrderMotif, batch; strands, execution)
+    scan(model::AbstractMotifModel, batch; strands, execution)
 
-Scan all sequences in a batch with a higher-order model, returning a
+Scan all sequences in a batch with a motif model, returning a
 [`RaggedArray{Float32}`](@ref) of scores.
 
 For `BothStrands`, returns a [`StrandPair{RaggedArray{Float32}}`](@ref).
 
 Under `ThreadedExecution`, sequences are processed in parallel at the
  top level. Inner scanning kernels remain serial.
-Generic method for all AbstractHigherOrderMotif subtypes.
+Generic method for all directly scannable motif models.
 """
 function _scan_model_batch(
     model::AbstractMotifModel,
@@ -799,6 +543,7 @@ function _scan_model_batch(
     strands::StrandPolicy=ForwardOnly(),
     execution::ExecutionPolicy=SerialExecution(),
 )
+    _require_scannable(model)
     if strands isa BothStrands
         return _ho_scan_batch_both(
             model,
@@ -823,7 +568,7 @@ function _scan_model_batch(
 end
 
 function scan(
-    model::AbstractHigherOrderMotif,
+    model::AbstractMotifModel,
     batch::EncodedSequenceBatch;
     strands::StrandPolicy=ForwardOnly(),
     execution::ExecutionPolicy=SerialExecution(),
@@ -834,11 +579,12 @@ end
 # ── Generic scan result lengths ─────────────────────────────────────────
 
 """
-    scan_result_lengths(model::AbstractHigherOrderMotif, batch)
+    scan_result_lengths(model::AbstractMotifModel, batch)
 
 Return a `Vector{Int}` with the number of scan positions for each sequence.
-Generic method for all AbstractHigherOrderMotif subtypes.
+Generic method for all directly scannable motif models.
 """
-function scan_result_lengths(model::AbstractHigherOrderMotif, batch::EncodedSequenceBatch)
+function scan_result_lengths(model::AbstractMotifModel, batch::EncodedSequenceBatch)
+    _require_scannable(model)
     return [npositions(model, seqlength(batch, i)) for i in 1:nsequences(batch)]
 end

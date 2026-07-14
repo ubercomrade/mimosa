@@ -21,7 +21,7 @@ CLI command, and the `"motif"` null strategy are not part of the current API.
 - Orientation-aware PFM reconstruction
 - Native Float64 GEV fitting, p-values, BH FDR, and E-values
 - Profile null construction and result annotation
-- Versioned TOML/NPY model and null bundles with atomic writes
+- Versioned TOML/raw-binary model bundles and TOML/NPY null bundles with atomic writes
 - Explicit content-addressed cache
 - Thin JSON CLI with stable exit codes
 

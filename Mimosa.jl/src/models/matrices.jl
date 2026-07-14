@@ -76,12 +76,6 @@ function pwm_from_pfm(
     return PWM(name, weights, bg)
 end
 
-function pwm_from_pfm(
-    model::PFM; background::AbstractFloat=0.25f0, name::AbstractString=model.name
-)
-    return pwm_from_pfm(model.frequencies; background=background, name=name)
-end
-
 """
     reverse_complement(weights)
 
@@ -118,7 +112,6 @@ end
 function reverse_complement(model::PWM)
     return PWM(model.name, reverse_complement(model.weights), model.background)
 end
-reverse_complement(model::PFM) = PFM(model.name, reverse_complement(model.frequencies))
 
 """
     scorebounds(model::PWM)
@@ -130,13 +123,6 @@ across all rows and sum across positions.
 """
 function scorebounds(model::PWM)
     w = model.weights
-    col_min = vec(minimum(w; dims=1))
-    col_max = vec(maximum(w; dims=1))
-    return (sum(col_min), sum(col_max))
-end
-
-function scorebounds(model::PFM)
-    w = model.frequencies
     col_min = vec(minimum(w; dims=1))
     col_max = vec(maximum(w; dims=1))
     return (sum(col_min), sum(col_max))

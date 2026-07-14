@@ -24,24 +24,15 @@ using Mimosa
     @test loaded.background == pwm.background
 end
 
-@testset "Model storage round-trip: PFM" begin
-    freq = Float32[
-        0.3 0.2 0.4 0.1
-        0.2 0.3 0.1 0.4
-        0.1 0.4 0.2 0.3
-        0.4 0.1 0.3 0.2
-    ]
-    pfm = PFM("test_pfm", freq)
-
+@testset "Model storage rejects legacy PFM bundles" begin
     dir = mktempdir()
     bundle_path = joinpath(dir, "pfm_bundle")
-
-    writemodel(bundle_path, pfm)
-    loaded = readmodel(bundle_path)
-
-    @test loaded isa PFM
-    @test loaded.name == pfm.name
-    @test loaded.frequencies == pfm.frequencies
+    mkpath(bundle_path)
+    write(
+        joinpath(bundle_path, "manifest.toml"),
+        "format = \"mimosa\"\nformat_version = 1\nkind = \"pfm\"\nname = \"legacy\"\n",
+    )
+    @test_throws ModelFormatError readmodel(bundle_path)
 end
 
 @testset "Model storage round-trip: BaMM" begin
@@ -130,7 +121,7 @@ end
     writemodel(bundle_path, pwm)
 
     # Corrupt the data file
-    data_file = joinpath(bundle_path, "data", "weights.npy")
+    data_file = joinpath(bundle_path, "data", "weights.bin")
     write(data_file, UInt8[0, 0, 0, 0, 0])
 
     @test_throws MimosaError readmodel(bundle_path)
@@ -147,7 +138,7 @@ end
         manifest_path,
         """
 format = "wrong"
-format_version = 1
+format_version = 2
 kind = "pwm"
 name = "test"
 """,
@@ -175,7 +166,7 @@ end
     # Bump the version in manifest
     manifest_path = joinpath(bundle_path, "manifest.toml")
     content = read(manifest_path, String)
-    content = replace(content, "format_version = 1" => "format_version = 999")
+    content = replace(content, "format_version = 2" => "format_version = 999")
     write(manifest_path, content)
 
     @test_throws MimosaError readmodel(bundle_path)
@@ -223,34 +214,23 @@ function _refresh_model_checksum!(manifest_path, data_path)
     return nothing
 end
 
-function _replace_npy_bytes(bytes::Vector{UInt8}, old::Vector{UInt8}, new::Vector{UInt8})
-    length(old) == length(new) || error("test replacement must preserve length")
-    for start in 1:(length(bytes) - length(old) + 1)
-        bytes[start:(start + length(old) - 1)] == old || continue
-        result = copy(bytes)
-        result[start:(start + length(new) - 1)] .= new
-        return result
-    end
-    return error("test NPY token not found")
-end
-
 @testset "Model storage: hostile bundle validation" begin
     mktempdir() do root
         bundle = joinpath(root, "model_bundle")
         writemodel(bundle, _storage_test_pwm())
         manifest_path = joinpath(bundle, "manifest.toml")
-        data_path = joinpath(bundle, "data", "weights.npy")
+        data_path = joinpath(bundle, "data", "weights.bin")
         original_manifest = read(manifest_path, String)
         original_data = read(data_path)
 
         for bad_path in [
-            "../outside.npy",
-            "/tmp/outside.npy",
-            raw"..\outside.npy",
-            raw"C:\tmp\outside.npy",
-            raw"C:/tmp/outside.npy",
+            "../outside.bin",
+            "/tmp/outside.bin",
+            raw"..\outside.bin",
+            raw"C:\tmp\outside.bin",
+            raw"C:/tmp/outside.bin",
         ]
-            write(manifest_path, replace(original_manifest, "data/weights.npy" => bad_path))
+            write(manifest_path, replace(original_manifest, "data/weights.bin" => bad_path))
             @test_throws ModelFormatError readmodel(bundle)
         end
 
@@ -268,11 +248,11 @@ end
         write(manifest_path, replace(original_manifest, "checksum = \"$checksum\"\n" => ""))
         @test_throws ModelFormatError readmodel(bundle)
 
-        for version in ["0", "-1", "1.0", "\"1\""]
+        for version in ["0", "-1", "1", "1.0", "\"2\""]
             write(
                 manifest_path,
                 replace(
-                    original_manifest, "format_version = 1" => "format_version = $version"
+                    original_manifest, "format_version = 2" => "format_version = $version"
                 ),
             )
             @test_throws ModelFormatError readmodel(bundle)
@@ -298,7 +278,7 @@ end
 
         write(manifest_path, original_manifest)
         bad_data = copy(original_data)
-        bad_data[1] = 0x00
+        bad_data[1:4] .= 0xff
         write(data_path, bad_data)
         _refresh_model_checksum!(manifest_path, data_path)
         @test_throws ModelFormatError readmodel(bundle)
@@ -311,25 +291,14 @@ end
         _refresh_model_checksum!(manifest_path, data_path)
         @test readmodel(bundle) isa PWM
 
-        wrong_endian = _replace_npy_bytes(
-            original_data, Vector{UInt8}(codeunits("<f4")), Vector{UInt8}(codeunits(">f4"))
-        )
-        write(data_path, wrong_endian)
-        _refresh_model_checksum!(manifest_path, data_path)
-        @test_throws ModelFormatError readmodel(bundle)
-
         write(data_path, vcat(original_data, UInt8[0xff]))
         _refresh_model_checksum!(manifest_path, data_path)
         @test_throws ModelFormatError readmodel(bundle)
 
         write(data_path, original_data)
         _refresh_model_checksum!(manifest_path, data_path)
-        @test_throws ModelFormatError Mimosa._read_npy_array(
-            data_path; expected_dtype="<f4", expected_rank=1
-        )
-
         if !Sys.iswindows()
-            outside = joinpath(root, "outside.npy")
+            outside = joinpath(root, "outside.bin")
             write(outside, original_data)
             rm(data_path)
             symlink(outside, data_path)

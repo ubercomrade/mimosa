@@ -667,6 +667,31 @@ function _read_npy_f64(
     )
 end
 
+function _read_raw_f32_2d(
+    path::AbstractString; expected_shape::AbstractVector{<:Integer}, expected_bytes::Integer
+)
+    expected_bytes > 0 || throw(_bundle_error(path, "raw payload must not be empty."))
+    file_size = _validate_bundle_blob_size(path)
+    file_size == expected_bytes || throw(
+        _bundle_error(
+            path,
+            "raw payload length mismatch: expected $expected_bytes bytes, got $file_size.",
+        ),
+    )
+    _bundle_shape_payload_bytes(expected_shape, "<f4", path, "raw model array") ==
+    expected_bytes || throw(_bundle_error(path, "raw payload length disagrees with shape."))
+    nrows, ncols = Int.(expected_shape)
+    data = Matrix{Float32}(undef, nrows, ncols)
+    open(path, "r") do io
+        @inbounds for row in 1:nrows, column in 1:ncols
+            data[row, column] = reinterpret(Float32, ltoh(read(io, UInt32)))
+        end
+    end
+    all(isfinite, data) ||
+        throw(_bundle_error(path, "raw model array contains non-finite values."))
+    return data
+end
+
 function _npy_shape_text(shape::AbstractVector{<:Integer})
     length(shape) == 1 && return "($(shape[1]),)"
     return "(" * join(shape, ", ") * ")"
@@ -708,6 +733,19 @@ function _write_npy(path::AbstractString, data::Vector{Float64})
         write(io, header)
         for value in data
             write(io, htol(value))
+        end
+        return flush(io)
+    end
+    return nothing
+end
+
+function _write_raw_f32_2d(path::AbstractString, data::AbstractMatrix{<:AbstractFloat})
+    open(path, "w") do io
+        for row in axes(data, 1), column in axes(data, 2)
+            value = Float32(data[row, column])
+            isfinite(value) ||
+                throw(InvariantError("model value cannot be represented as Float32."))
+            write(io, htol(reinterpret(UInt32, value)))
         end
         return flush(io)
     end

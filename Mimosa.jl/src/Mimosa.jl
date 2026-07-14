@@ -28,8 +28,6 @@ include("cli.jl")
 include("precompile.jl")
 
 export readmodel,
-    read_meme,
-    read_pfm,
     read_scores,
     read_bamm,
     read_sitega,
@@ -47,7 +45,6 @@ export AbstractProfileSource,
     AbstractMotifModel,
     AbstractMatrixMotif,
     AbstractHigherOrderMotif,
-    PFM,
     PWM,
     BaMM,
     SiteGA,

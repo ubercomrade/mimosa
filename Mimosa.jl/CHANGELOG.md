@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   null strategies and pre-v2 null bundles are rejected.
 - Profile comparison uses `co`, `co_rowwise`, `dice`, `dice_rowwise`, and
   `cosine` through the strand-aware normalization pipeline.
+- Model bundles now use format v2: TOML manifests and raw little-endian
+  Float32 blobs replace NPY payloads. Version 1 NPY bundles and PFM model
+  bundles are rejected; `read_meme` and `read_pfm` are internal parsers.
 
 ### Added
 

@@ -34,53 +34,6 @@ abstract type AbstractHigherOrderMotif <: AbstractMotifModel end
 is_scannable(::AbstractMotifModel) = false
 
 """
-    PFM{T,M}
-
-Position Frequency Matrix: non-negative per-position nucleotide frequencies.
-
-`frequencies` uses axes `(base, position)` with `base ∈ 1:4` (A, C, G, T).
-"""
-struct PFM{T<:AbstractFloat,M<:AbstractMatrix{T}} <: AbstractMatrixMotif
-    name::String
-    frequencies::M
-
-    function PFM{T,M}(
-        name::String, frequencies::M
-    ) where {T<:AbstractFloat,M<:AbstractMatrix{T}}
-        _validate_pfm(frequencies)
-        return new{T,M}(name, frequencies)
-    end
-end
-
-function PFM(name::AbstractString, frequencies::AbstractMatrix{T}) where {T<:AbstractFloat}
-    return PFM{T,typeof(frequencies)}(String(name), frequencies)
-end
-
-function _validate_pfm(frequencies::AbstractMatrix)
-    if size(frequencies, 1) != 4
-        throw(
-            ModelDimensionError(
-                "PFM frequencies must have 4 rows (A,C,G,T), got $(size(frequencies, 1))."
-            ),
-        )
-    end
-    if size(frequencies, 2) < 1
-        throw(
-            ModelDimensionError(
-                "PFM motif length must be positive, got $(size(frequencies, 2))."
-            ),
-        )
-    end
-    if !all(isfinite, frequencies)
-        throw(ModelFormatError("", "PFM frequencies contain non-finite values."))
-    end
-    if any(x -> x < 0, frequencies)
-        throw(ModelFormatError("", "PFM frequencies contain negative values."))
-    end
-    return nothing
-end
-
-"""
     PWM{T,M,B}
 
 Position Weight Matrix: log-odds weights for scanning.
@@ -148,7 +101,6 @@ function _validate_pwm_weights(weights::AbstractMatrix, background::NTuple{4})
     return nothing
 end
 
-Base.length(model::PFM) = size(model.frequencies, 2)
 Base.length(model::PWM) = size(model.weights, 2)
 is_scannable(::PWM) = true
 
@@ -167,7 +119,6 @@ Return the matrix used by the scanning kernels. Matrix motifs expose their
 frequency or weight matrix; higher-order motifs expose their flattened
 context-by-position representation.
 """
-scorematrix(model::PFM) = model.frequencies
 scorematrix(model::PWM) = model.weights
 
 """
@@ -185,24 +136,12 @@ no context before the motif window).
 """
 site_start_offset(::AbstractMatrixMotif) = 0
 
-Base.eltype(::Type{<:PFM{T}}) where {T} = T
 Base.eltype(::Type{<:PWM{T}}) where {T} = T
 
-Base.size(model::PFM) = size(model.frequencies)
 Base.size(model::PWM) = size(model.weights)
 
-function Base.show(io::IO, model::PFM)
-    return print(io, "PFM(\"$(model.name)\", $(size(model.frequencies)))")
-end
-Base.show(io::IO, model::PWM) = print(io, "PWM(\"$(model.name)\", $(size(model.weights)))")
-
-Base.:(==)(a::PFM, b::PFM) = a.name == b.name && a.frequencies == b.frequencies
 function Base.:(==)(a::PWM, b::PWM)
     return a.name == b.name && a.weights == b.weights && a.background == b.background
-end
-
-function Base.isapprox(a::PFM, b::PFM; kwargs...)
-    return a.name == b.name && isapprox(a.frequencies, b.frequencies; kwargs...)
 end
 
 function Base.isapprox(a::PWM, b::PWM; kwargs...)
@@ -210,3 +149,31 @@ function Base.isapprox(a::PWM, b::PWM; kwargs...)
            isapprox(a.weights, b.weights; kwargs...) &&
            isapprox(collect(a.background), collect(b.background); kwargs...)
 end
+
+"""
+    kmer(::PWM)
+
+Return the number of encoded bases per PWM scoring term.
+"""
+kmer(::PWM) = 1
+
+"""
+    context_length(::PWM)
+
+Return the number of bases preceding a PWM motif start used as context.
+"""
+context_length(::PWM) = 0
+
+"""
+    scan_width(model::PWM)
+
+Return the number of PWM scoring terms in one scan window.
+"""
+scan_width(model::PWM) = motif_length(model)
+
+"""
+    npositions(model::PWM, seq_len)
+
+Return the number of PWM scan positions in a sequence of length `seq_len`.
+"""
+npositions(model::PWM, seq_len::Int) = npositions(seq_len, motif_length(model))
