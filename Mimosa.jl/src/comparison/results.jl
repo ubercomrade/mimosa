@@ -32,6 +32,26 @@ function ComparisonResult(
     offset::Int,
     orientation::AbstractString,
     metric::AbstractString,
+    n_sites::Int,
+)
+    return ComparisonResult(
+        String(query),
+        String(target),
+        Float32(score),
+        offset,
+        String(orientation),
+        String(metric),
+        n_sites,
+    )
+end
+
+function ComparisonResult(
+    query::AbstractString,
+    target::AbstractString,
+    score,
+    offset::Int,
+    orientation::AbstractString,
+    metric::AbstractString,
 )
     return ComparisonResult(query, target, score, offset, orientation, metric, 0)
 end

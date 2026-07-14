@@ -684,7 +684,7 @@ function _run_build_null(parsed::CLIParsed)
 
     # Read models
     models = _read_model_collection(motifs_path, model_type)
-    known_names = Set(m.name for m in models)
+    known_names = Set(modelname(m) for m in models)
     relations = parse_group_relations(
         groups_path;
         name_column=name_col,
@@ -821,7 +821,7 @@ function _print_inspect_help(io::IO)
 end
 
 function _model_info(model::AbstractProfileSource)
-    info = Dict{String,Any}("name" => model.name, "type" => _model_kind(model))
+    info = Dict{String,Any}("name" => modelname(model), "type" => _model_kind(model))
     if model isa PWM
         info["width"] = length(model)
         info["rows"] = size(model.weights, 1)
@@ -909,7 +909,7 @@ function _run_convert_model(parsed::CLIParsed)
             "input" => input_path,
             "output" => output_path,
             "type" => _model_kind(model),
-            "name" => model.name,
+            "name" => modelname(model),
         ),
     )
     return 0

@@ -301,7 +301,7 @@ function _ho_scan_offsets(batch::EncodedSequenceBatch, model, npos_fn::F) where 
     return offsets
 end
 
-# ── Higher-order motif traits ────────────────────────────────────────────────
+# ── Built-in rolling-k-mer backend ──────────────────────────────────────────
 #
 # The following traits adapt BaMM, SiteGA, Dimont, and Slim to the generic
 # scan kernels shared with PWM.
@@ -311,31 +311,56 @@ end
 # and stores its scoring matrix in the `representation` field.
 # Score loops use precomputed rolling k-mer codes.
 
-"""
-    npositions(model::AbstractHigherOrderMotif, seq_len::Int)
+const _HigherOrderRollingKmerModel = Union{BaMM,SiteGA,Dimont,Slim}
+const _BuiltinRollingKmerModel = Union{PWM,BaMM,SiteGA,Dimont,Slim}
 
-Return the number of scanning positions for a higher-order model.
-"""
-function npositions(model::AbstractHigherOrderMotif, seq_len::Int)
-    return max(seq_len - window_size(model) + 1, 0)
-end
-
-motif_length(model::AbstractHigherOrderMotif) = model.motif_length
-is_scannable(::AbstractHigherOrderMotif) = true
-scorematrix(model::AbstractHigherOrderMotif) = model.representation
-scoretype(model::AbstractHigherOrderMotif) = eltype(scorematrix(model))
+_has_builtin_scan_kernel(::_BuiltinRollingKmerModel) = true
+scorematrix(model::_HigherOrderRollingKmerModel) = model.representation
 
 # ── Generic single-sequence scan kernels ──────────────────────────────────
+#
+# Two paths:
+#   1. Built-in rolling-k-mer models use the optimized precomputed
+#      rolling-k-mer code kernels, unchanged from the historical
+#      implementation.
+#   2. Custom `AbstractMotifModel` subtypes that implement
+#      `scan_pair_kernel!(forward, reverse, model, seq, n_pos)` go
+#      through the safe pair-kernel boundary defined in
+#      `models/validation.jl`. The single-strand APIs (`scan_forward!`,
+#      `scan_reverse!`, `scan_best!`) derive from the pair kernel as
+#      documented in the Extensibility API Plan §4.2: the fallback may
+#      compute both strands even for a single-strand request.
 
 """
     scan_forward!(dest, model::AbstractMotifModel, seq, n_pos)
 
 Fill `dest[1:n_pos]` with forward-strand scores for one sequence.
-Generic method for all directly scannable motif models.
+
+Built-in matrix and higher-order models use the optimized rolling-k-mer
+kernels. Custom models that only implement `scan_pair_kernel!` use a
+generic fallback that calls the pair kernel and returns the forward
+track.
 """
 function scan_forward!(
     dest::AbstractVector{T},
     model::AbstractMotifModel,
+    seq::AbstractVector{UInt8},
+    n_pos::Int,
+) where {T<:AbstractFloat}
+    is_scannable(model) ||
+        throw(ArgumentError("$(typeof(model)) is not directly scannable."))
+    _validate_scan_input(seq, n_pos, window_size(model), dest)
+    n_pos == 0 && return dest
+    fwd = T === Float32 ? dest : Vector{Float32}(undef, n_pos)
+    rev = Vector{Float32}(undef, n_pos)
+    _scan_pair_kernel_safe!(fwd, rev, model, seq, n_pos)
+    T === Float32 || copyto!(dest, 1, fwd, 1, n_pos)
+    return dest
+end
+
+function scan_forward!(
+    dest::AbstractVector{T},
+    model::_BuiltinRollingKmerModel,
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
@@ -353,11 +378,27 @@ end
     scan_reverse!(dest, model::AbstractMotifModel, seq, n_pos)
 
 Fill `dest[1:n_pos]` with reverse-strand scores for one sequence.
-Generic method for all directly scannable motif models.
 """
 function scan_reverse!(
     dest::AbstractVector{T},
     model::AbstractMotifModel,
+    seq::AbstractVector{UInt8},
+    n_pos::Int,
+) where {T<:AbstractFloat}
+    is_scannable(model) ||
+        throw(ArgumentError("$(typeof(model)) is not directly scannable."))
+    _validate_scan_input(seq, n_pos, window_size(model), dest)
+    n_pos == 0 && return dest
+    fwd = Vector{Float32}(undef, n_pos)
+    rev = T === Float32 ? dest : Vector{Float32}(undef, n_pos)
+    _scan_pair_kernel_safe!(fwd, rev, model, seq, n_pos)
+    T === Float32 || copyto!(dest, 1, rev, 1, n_pos)
+    return dest
+end
+
+function scan_reverse!(
+    dest::AbstractVector{T},
+    model::_BuiltinRollingKmerModel,
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
@@ -374,12 +415,32 @@ end
 """
     scan_best!(dest, model::AbstractMotifModel, seq, n_pos)
 
-Fill `dest[1:n_pos]` with the per-position maximum of forward and reverse scores.
-Generic method for all directly scannable motif models.
+Fill `dest[1:n_pos]` with the per-position maximum of forward and reverse
+scores, in the documented scan order (forward visited first, then
+reverse; ties keep the forward value via strict `>` comparison).
 """
 function scan_best!(
     dest::AbstractVector{T},
     model::AbstractMotifModel,
+    seq::AbstractVector{UInt8},
+    n_pos::Int,
+) where {T<:AbstractFloat}
+    is_scannable(model) ||
+        throw(ArgumentError("$(typeof(model)) is not directly scannable."))
+    _validate_scan_input(seq, n_pos, window_size(model), dest)
+    n_pos == 0 && return dest
+    fwd = Vector{Float32}(undef, n_pos)
+    rev = Vector{Float32}(undef, n_pos)
+    _scan_pair_kernel_safe!(fwd, rev, model, seq, n_pos)
+    @inbounds for i in 1:n_pos
+        dest[i] = fwd[i] > rev[i] ? fwd[i] : rev[i]
+    end
+    return dest
+end
+
+function scan_best!(
+    dest::AbstractVector{T},
+    model::_BuiltinRollingKmerModel,
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
@@ -398,12 +459,35 @@ end
     scan_both!(fwd, rev, model::AbstractMotifModel, seq, n_pos)
 
 Fill `fwd` and `rev` with forward and reverse strand scores respectively.
-Generic method for all directly scannable motif models.
 """
 function scan_both!(
     fwd::AbstractVector{T},
     rev::AbstractVector{T},
     model::AbstractMotifModel,
+    seq::AbstractVector{UInt8},
+    n_pos::Int,
+) where {T<:AbstractFloat}
+    Base.mightalias(fwd, rev) &&
+        throw(ArgumentError("forward and reverse destinations must not alias."))
+    is_scannable(model) ||
+        throw(ArgumentError("$(typeof(model)) is not directly scannable."))
+    _validate_scan_input(seq, n_pos, window_size(model), fwd, rev)
+    n_pos == 0 && return (fwd, rev)
+    if T === Float32
+        return _scan_pair_kernel_safe!(fwd, rev, model, seq, n_pos)
+    end
+    fwd32 = Vector{Float32}(undef, n_pos)
+    rev32 = Vector{Float32}(undef, n_pos)
+    _scan_pair_kernel_safe!(fwd32, rev32, model, seq, n_pos)
+    copyto!(fwd, 1, fwd32, 1, n_pos)
+    copyto!(rev, 1, rev32, 1, n_pos)
+    return (fwd, rev)
+end
+
+function scan_both!(
+    fwd::AbstractVector{T},
+    rev::AbstractVector{T},
+    model::_BuiltinRollingKmerModel,
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
@@ -436,6 +520,7 @@ function scan(
     seq::AbstractVector{UInt8};
     strands::StrandPolicy=ForwardOnly(),
 )
+    validate_model(model; capability=:compare)
     _require_scannable(model)
     n_pos = npositions(model, length(seq))
     return _scan_single_model(strands, model, seq, n_pos)
@@ -485,6 +570,7 @@ function scan!(
     seq::AbstractVector{UInt8};
     strands::StrandPolicy=ForwardOnly(),
 ) where {T<:AbstractFloat}
+    validate_model(model; capability=:compare)
     _require_scannable(model)
     n_pos = npositions(model, length(seq))
     if length(dest) < n_pos
@@ -573,6 +659,7 @@ function scan(
     strands::StrandPolicy=ForwardOnly(),
     execution::ExecutionPolicy=SerialExecution(),
 )
+    validate_model(model; capability=:compare)
     return _scan_model_batch(model, batch; strands=strands, execution=execution)
 end
 
@@ -585,6 +672,7 @@ Return a `Vector{Int}` with the number of scan positions for each sequence.
 Generic method for all directly scannable motif models.
 """
 function scan_result_lengths(model::AbstractMotifModel, batch::EncodedSequenceBatch)
+    validate_model(model; capability=:compare)
     _require_scannable(model)
     return [npositions(model, seqlength(batch, i)) for i in 1:nsequences(batch)]
 end

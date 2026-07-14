@@ -138,37 +138,67 @@ end
 
 Return a hex-encoded SHA-256 fingerprint of a motif model's content.
 The fingerprint incorporates the model type, name, representation, and
-background (for PWM).
+background (for PWM). Built-in models keep their byte-stable
+representations and cache keys.
 """
 function content_fingerprint(model::AbstractMotifModel)
     io = IOBuffer()
     write(io, string(typeof(model)))
     write(io, "|")
-    write(io, model.name)
+    write(io, modelname(model))
     write(io, "|")
-    if model isa PWM
-        write(io, content_fingerprint(model.weights))
-        write(io, "|")
-        write(io, join(string.(model.background), ","))
-    elseif model isa BaMM
-        write(io, content_fingerprint(model.representation))
-        write(io, "|")
-        write(io, "order=" * string(model.order))
-        write(io, ",ml=" * string(model.motif_length))
-    elseif model isa SiteGA
-        write(io, content_fingerprint(model.representation))
-        write(io, "|")
-        write(io, "ml=" * string(model.motif_length))
-    elseif model isa AbstractHigherOrderMotif
-        # Dimont, Slim: have `span` and `motif_length`
-        write(io, content_fingerprint(model.representation))
-        write(io, "|")
-        write(io, "span=" * string(model.span))
-        write(io, ",ml=" * string(model.motif_length))
-    else
-        throw(ArgumentError("no content fingerprint is defined for $(typeof(model))."))
-    end
+    _write_model_fingerprint_body!(io, model)
     return content_fingerprint(take!(io))
+end
+
+# Dispatch on concrete built-in types so the byte representations and
+# cache keys remain bit-stable. The generic `AbstractMotifModel` method
+# above calls `modelname(model)` and `_write_model_fingerprint_body!`,
+# which throws a clear error for unknown custom model types.
+function _write_model_fingerprint_body!(io::IO, model::PWM)
+    write(io, content_fingerprint(model.weights))
+    write(io, "|")
+    return write(io, join(string.(model.background), ","))
+end
+
+function _write_model_fingerprint_body!(io::IO, model::BaMM)
+    write(io, content_fingerprint(model.representation))
+    write(io, "|")
+    write(io, "order=" * string(model.order))
+    return write(io, ",ml=" * string(model.motif_length))
+end
+
+function _write_model_fingerprint_body!(io::IO, model::SiteGA)
+    write(io, content_fingerprint(model.representation))
+    write(io, "|")
+    return write(io, "ml=" * string(model.motif_length))
+end
+
+# Dimont and Slim share the same field layout (`span`, `motif_length`,
+# `representation`) and therefore the same fingerprint body. Dispatch
+# on each concrete type so a future change to one does not silently
+# affect the other.
+function _write_model_fingerprint_body!(io::IO, model::Dimont)
+    write(io, content_fingerprint(model.representation))
+    write(io, "|")
+    write(io, "span=" * string(model.span))
+    return write(io, ",ml=" * string(model.motif_length))
+end
+
+function _write_model_fingerprint_body!(io::IO, model::Slim)
+    write(io, content_fingerprint(model.representation))
+    write(io, "|")
+    write(io, "span=" * string(model.span))
+    return write(io, ",ml=" * string(model.motif_length))
+end
+
+function _write_model_fingerprint_body!(io::IO, model::AbstractMotifModel)
+    return throw(
+        ArgumentError(
+            "no content fingerprint is defined for $(typeof(model)); " *
+            "implement `Mimosa.model_fingerprint(model::MyModel)` for cache/null capability.",
+        ),
+    )
 end
 
 """
@@ -181,7 +211,7 @@ share a fingerprint.
 function content_fingerprint(profile::ScoreProfile)
     io = IOBuffer()
     write(io, "ScoreProfile|layout=ragged-column-major|dtype=Float32|")
-    write(io, profile.name)
+    write(io, modelname(profile))
     write(io, "|data=")
     write(io, content_fingerprint(profile.scores.data))
     write(io, "|offsets=")

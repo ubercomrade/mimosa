@@ -58,6 +58,42 @@ offsets — no padding, no rectangular matrix.
 - **One-based inclusive** indexing throughout the library
 - Site coordinates use `UnitRange{Int}`: `start:stop` (both inclusive)
 
+### Model geometry (ADR 0003)
+
+A model's geometry is described by three public accessors:
+
+| Accessor | Default | Meaning |
+|---|---|---|
+| `motif_length(model)` | required | number of bases in the returned site (positive `Int`) |
+| `left_context(model)` | `0` | bases before the site needed to compute one score |
+| `right_context(model)` | `0` | bases after the site needed to compute one score |
+
+Mimosa.jl derives:
+
+```
+window_size(model) = left_context(model) + motif_length(model) + right_context(model)
+npositions(model, L) = max(L - window_size(model) + 1, 0)
+site_start_offset(model) = left_context(model)
+```
+
+A scan position is the start of the full window (one-based, inclusive).
+The motif site begins at `scan_position + left_context(model)`.
+Forward and reverse scores at the same scan index share the same
+physical window and the same physical site interval; the reverse kernel
+orients the score computation. Reverse-complement site extraction
+reverses only the orientation of the returned bases, not the physical
+interval.
+
+Built-in mapping:
+
+| Model  | `motif_length` | `left_context` | `right_context` |
+|-------|----------------|----------------|-----------------|
+| PWM    | `length(model)` | 0 | 0 |
+| SiteGA | `model.motif_length` | 0 | 0 |
+| BaMM   | `model.motif_length` | `model.order` | 0 |
+| Dimont | `model.motif_length` | `model.span` | 0 |
+| Slim   | `model.motif_length` | `model.span` | 0 |
+
 ### CLI JSON coordinates
 
 - **Zero-based half-open** `start`/`end` coordinates in JSON output

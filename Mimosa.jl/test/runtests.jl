@@ -26,6 +26,8 @@ Aqua.test_all(Mimosa; stale_deps=false, project_extras=false)
     include("unit/test_cache.jl")
     include("unit/test_model_storage.jl")
     include("unit/test_validation.jl")
+    include("unit/test_model_geometry.jl")
+    include("unit/test_extending.jl")
     include("unit/test_exports.jl")
     include("unit/test_type_stability.jl")
 

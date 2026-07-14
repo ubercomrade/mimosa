@@ -94,13 +94,14 @@ function _resolve_profile_bundle(
     background_sequences::Union{EncodedSequenceBatch,Nothing};
     execution::ExecutionPolicy=SerialExecution(),
 )
-    raw = scan(model, sequences; strands=BothStrands(), execution=execution)
+    validate_model(model; capability=:compare)
+    raw = _scan_model_batch(model, sequences; strands=BothStrands(), execution=execution)
     bg = background_sequences === nothing ? sequences : background_sequences
     if bg === sequences
         _, normalized = _fit_transform_empirical(raw)
         return normalized
     end
-    bg_raw = scan(model, bg; strands=BothStrands(), execution=execution)
+    bg_raw = _scan_model_batch(model, bg; strands=BothStrands(), execution=execution)
     table = fit(EmpiricalLogTail(), flatten_bundle(bg_raw))
     return normalize_bundle(table, raw)
 end
@@ -154,6 +155,12 @@ function compare(
         query_norm, query_anchors, target_norm, target_anchors, config
     )
     return ComparisonResult(
-        query.name, target.name, score, shift, orientation, metric_str, n_sites
+        String(modelname(query)),
+        String(modelname(target)),
+        score,
+        shift,
+        orientation,
+        metric_str,
+        n_sites,
     )
 end

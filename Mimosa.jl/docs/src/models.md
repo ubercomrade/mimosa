@@ -74,12 +74,22 @@ scan!(dest, model, sequence; strands=ForwardOnly())
 ```
 
 The scanning kernel is shared across model families and parameterized by
-geometry: k-mer length, preceding context, window size, and number of scoring
-terms. `motif_length(model)` is the represented motif width, while
-`window_size(model)` is the number of sequence bases required for one score.
-For BaMM, Dimont, and Slim, the window includes preceding context; for PWM and
-SiteGA it equals the motif length. `npositions(model, sequence_length)` exposes
-the resulting scan-track length.
+the public geometry contract (ADR 0003):
+`motif_length`, `left_context`, and `right_context`. Mimosa.jl derives
+`window_size`, `npositions`, and `site_start_offset` from these.
+For BaMM, Dimont, and Slim, the window includes preceding context
+(`left_context = order/span`); for PWM and SiteGA it equals the motif
+length. `npositions(model, sequence_length)` exposes the resulting
+scan-track length.
+
+## Custom models
+
+See [Extending Mimosa](extending.md). A custom model subtypes
+`AbstractMotifModel` and implements `modelname`, `motif_length`, and
+`scan_pair_kernel!`. Context models additionally implement
+`left_context` and/or `right_context`. The generic scan, prepare,
+compare, sites, and PFM reconstruction workflows then work through the
+public API without modifying Mimosa.jl.
 
 ## Type parameters
 

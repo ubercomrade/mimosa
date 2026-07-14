@@ -395,3 +395,200 @@ end
     # (not `using Mimosa.Scanning` etc.) is the contract.
     @test true
 end
+
+# ---------------------------------------------------------------------------
+# Extensibility API (ADR 0003): custom model through the public API only
+# ---------------------------------------------------------------------------
+#
+# This testset defines a downstream custom model in a separate module that
+# imports Mimosa as a regular dependency. It deliberately avoids any field
+# named `representation`, `weights`, `order`, or `span`, and never references
+# a `Mimosa._private_name`. The model implements only the three required
+# methods plus a left_context override.
+
+module DownstreamCustomModel
+
+using Test
+using Mimosa
+
+# A minimal custom model. Note the absence of any field named
+# `representation`, `weights`, `order`, or `span`.
+struct MatchCounter <: Mimosa.AbstractMotifModel
+    label::String          # not named `name`
+    pattern::Vector{UInt8} # encoded consensus
+end
+
+Mimosa.modelname(m::MatchCounter) = m.label
+Mimosa.motif_length(m::MatchCounter) = length(m.pattern)
+
+function Mimosa.scan_pair_kernel!(
+    fwd_out::AbstractVector{Float32},
+    rev_out::AbstractVector{Float32},
+    model::MatchCounter,
+    seq::AbstractVector{UInt8},
+    n_positions::Int,
+)
+    pat = model.pattern
+    L = length(pat)
+    rc_pat = UInt8[b == 0x04 ? b : (0x03 - b) for b in reverse(pat)]
+    @inbounds for pos in 1:n_positions
+        f = zero(Float32)
+        r = zero(Float32)
+        for k in 1:L
+            b = seq[pos + k - 1]
+            f += (b == pat[k]) ? 1.0f0 : 0.0f0
+            r += (b == rc_pat[k]) ? 1.0f0 : 0.0f0
+        end
+        fwd_out[pos] = f
+        rev_out[pos] = r
+    end
+    return (fwd_out, rev_out)
+end
+
+struct ContextCounter <: Mimosa.AbstractMotifModel
+    label::String
+    width::Int
+    upstream::Int
+    downstream::Int
+end
+
+Mimosa.modelname(model::ContextCounter) = model.label
+Mimosa.motif_length(model::ContextCounter) = model.width
+Mimosa.left_context(model::ContextCounter) = model.upstream
+Mimosa.right_context(model::ContextCounter) = model.downstream
+
+function Mimosa.scan_pair_kernel!(
+    fwd_out::AbstractVector{Float32},
+    rev_out::AbstractVector{Float32},
+    model::ContextCounter,
+    seq::AbstractVector{UInt8},
+    n_positions::Int,
+)
+    @inbounds for pos in 1:n_positions
+        site_start = pos + model.upstream
+        score = zero(Float32)
+        for offset in 0:(model.width - 1)
+            score += seq[site_start + offset] < 0x04 ? 1.0f0 : 0.0f0
+        end
+        fwd_out[pos] = score
+        rev_out[pos] = score
+    end
+    return (fwd_out, rev_out)
+end
+
+function run()
+    @testset "validate_model" begin
+        m = MatchCounter("downstream", Mimosa.encode_sequence("ACGT"))
+        @test validate_model(m; capability=:compare) === m
+        @test validate_model(m; capability=:sites) === m
+        @test_throws ModelInterfaceError validate_model(m; capability=:cache)
+    end
+
+    @testset "scan, batch, and threaded equivalence" begin
+        m = MatchCounter("downstream", Mimosa.encode_sequence("ACGT"))
+        seq = Mimosa.encode_sequence("GGGGACGTGGGGACGTGGGG")
+        n_pos = Mimosa.npositions(m, length(seq))
+        @test n_pos == length(seq) - 4 + 1
+
+        fwd = scan(m, seq; strands=ForwardOnly())
+        rev = scan(m, seq; strands=ReverseOnly())
+        best = scan(m, seq; strands=BestStrand())
+        both = scan(m, seq; strands=BothStrands())
+        @test length(fwd) == n_pos
+        @test best == max.(fwd, rev)
+        @test both.forward == fwd
+        @test both.reverse == rev
+
+        rows = [
+            Mimosa.encode_sequence("ACGTACGT"),
+            UInt8[],
+            Mimosa.encode_sequence("GGGGACGTGGGG"),
+        ]
+        batch = EncodedSequenceBatch(rows)
+        s_fwd = scan(m, batch; strands=ForwardOnly(), execution=SerialExecution())
+        t_fwd = scan(m, batch; strands=ForwardOnly(), execution=ThreadedExecution(2))
+        @test s_fwd == t_fwd
+        @test nrows(s_fwd) == 3
+        @test rowlength(s_fwd, 2) == 0
+    end
+
+    @testset "asymmetric context geometry and sites" begin
+        model = ContextCounter("context", 3, 1, 2)
+        @test validate_model(model; capability=:sites) === model
+        @test window_size(model) == 6
+        @test site_start_offset(model) == 1
+
+        batch = EncodedSequenceBatch([Mimosa.encode_sequence("AACGTACGTA")])
+        scores = scan(model, batch; strands=BothStrands())
+        @test rowlength(scores.forward, 1) == 5
+        sites = selectsites(model, batch, BestPerSequence())
+        @test !isempty(sites)
+        pfm = reconstruct_pfm(model, batch, BestPerSequence())
+        @test size(pfm) == (4, 3)
+    end
+
+    @testset "compare and prepared profile" begin
+        m1 = MatchCounter("q", Mimosa.encode_sequence("ACGT"))
+        m2 = MatchCounter("t", Mimosa.encode_sequence("ACGT"))
+        sequences = Mimosa.make_random_sequences(8, 60; seed=21)
+
+        result = compare(m1, m2, sequences; metric=:co, search_range=3, window_radius=2)
+        @test result isa ComparisonResult
+        @test result.query == "q"
+        @test result.target == "t"
+
+        prepared = prepare_profile(m1, sequences)
+        @test prepared isa PreparedProfile
+
+        res2 = compare(prepared, m2, sequences; metric=:co, search_range=3, window_radius=2)
+        @test res2.query == "q"
+
+        targets = AbstractMotifModel[
+            m2, MatchCounter("other", Mimosa.encode_sequence("ACGA"))
+        ]
+        results = compare(
+            prepared, targets, sequences; metric=:co, search_range=3, window_radius=2
+        )
+        @test length(results) == 2
+    end
+
+    @testset "custom vs built-in PWM" begin
+        custom = MatchCounter("custom", Mimosa.encode_sequence("ACGT"))
+        examples = joinpath(dirname(dirname(dirname(@__DIR__))), "examples")
+        pwm = readmodel(joinpath(examples, "pif4.meme"))
+        sequences = Mimosa.make_random_sequences(6, 60; seed=33)
+
+        r1 = compare(custom, pwm, sequences; metric=:co, search_range=3, window_radius=2)
+        r2 = compare(pwm, custom, sequences; metric=:co, search_range=3, window_radius=2)
+        @test r1.query == "custom"
+        @test r1.target == pwm.name
+        @test r2.query == pwm.name
+        @test r2.target == "custom"
+    end
+
+    @testset "sites and PFM reconstruction" begin
+        m = MatchCounter("downstream", Mimosa.encode_sequence("ACGT"))
+        batch = Mimosa.make_random_sequences(15, 100; seed=5)
+
+        sites = selectsites(m, batch, BestPerSequence(); strands=BothStrands())
+        @test sites isa SiteCollection
+
+        if !isempty(sites)
+            pfm = reconstruct_pfm(m, batch, BestPerSequence(); pseudocount=Float32(1e-4))
+            @test size(pfm) == (4, 4)
+        end
+    end
+
+    @testset "compare without fingerprint" begin
+        m1 = MatchCounter("q", Mimosa.encode_sequence("ACGT"))
+        m2 = MatchCounter("t", Mimosa.encode_sequence("ACGT"))
+        sequences = Mimosa.make_random_sequences(4, 40; seed=8)
+        @test_nowarn compare(m1, m2, sequences; metric=:co, search_range=2, window_radius=1)
+    end
+end
+
+end # module
+
+@testset "Downstream contract: custom model" begin
+    DownstreamCustomModel.run()
+end

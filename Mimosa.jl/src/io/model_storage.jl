@@ -50,6 +50,9 @@ Return a hex-encoded SHA-256 fingerprint of a collection of profile sources,
 incorporating each model's individual fingerprint in sorted order.
 """
 function model_collection_fingerprint(sources::AbstractVector{<:AbstractProfileSource})
+    for source in sources
+        source isa AbstractMotifModel && validate_model(source; capability=:cache)
+    end
     fps = sort!([model_fingerprint(source) for source in sources])
     return content_fingerprint(join(fps, "|"))
 end
@@ -116,7 +119,7 @@ function writemodel(path::AbstractString, model::AbstractMotifModel; format::Sym
             manifest["motif_length"] = _model_length(model)
         elseif model isa SiteGA
             manifest["motif_length"] = _model_length(model)
-        elseif model isa AbstractHigherOrderMotif
+        elseif model isa Union{Dimont,Slim}
             manifest["span"] = model.span
             manifest["motif_length"] = _model_length(model)
         end
@@ -367,7 +370,7 @@ _model_array(model::Dimont) = model.representation
 _model_array(model::Slim) = model.representation
 
 _model_array_name(::PWM) = "weights"
-_model_array_name(::AbstractHigherOrderMotif) = "representation"
+_model_array_name(::Union{BaMM,SiteGA,Dimont,Slim}) = "representation"
 
 _model_length(model::PWM) = length(model)
 _model_length(model::BaMM) = model.motif_length

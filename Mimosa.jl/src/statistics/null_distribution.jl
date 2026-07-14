@@ -221,7 +221,10 @@ function build_null(
     kwargs...,
 )
     isempty(kwargs) || throw(ArgumentError("unsupported profile null-build option."))
-    names = String[model.name for model in models]
+    for model in models
+        model isa AbstractMotifModel && validate_model(model; capability=:cache)
+    end
+    names = String[modelname(model) for model in models]
     length(unique(names)) == length(names) ||
         throw(ArgumentError("model names must be unique for null construction."))
     all(!isempty, names) || throw(ArgumentError("model names must not be empty."))
@@ -244,11 +247,11 @@ function build_null(
             )
         end
     end
-    prepared_by_name = Dict(profile.name => profile for profile in prepared)
+    prepared_by_name = Dict(modelname(p) => p for p in prepared)
     result = _build_null(models, relations, config, execution) do q, t
         return compare(
-            prepared_by_name[q.name],
-            prepared_by_name[t.name];
+            prepared_by_name[modelname(q)],
+            prepared_by_name[modelname(t)];
             metric=config.metric,
             search_range=search_range,
             window_radius=window_radius,
@@ -296,7 +299,7 @@ function _build_null(
         throw(ArgumentError("models must contain only AbstractProfileSource values."))
     by_name = Dict{String,AbstractProfileSource}()
     for model in models
-        by_name[model.name] = model
+        by_name[modelname(model)] = model
     end
 
     # Build the work schedule: list of (query, target) pairs to compare.
@@ -314,17 +317,16 @@ function _build_null(
     n_queries = 0
 
     for query in models
-        target_names = eligible_targets(relations, query.name)
+        qname = modelname(query)
+        target_names = eligible_targets(relations, qname)
         # Filter to known models and exclude self
-        target_names = filter(n -> n != query.name && haskey(by_name, n), target_names)
+        target_names = filter(n -> n != qname && haskey(by_name, n), target_names)
 
         if length(target_names) < config.min_null_targets
             reason = "only $(length(target_names)) null target(s); required $(config.min_null_targets)"
-            push!(skipped, (query=query.name, reason=reason))
+            push!(skipped, (query=qname, reason=reason))
             if config.strict
-                throw(
-                    ArgumentError("Skipping null contribution for $(query.name): $reason")
-                )
+                throw(ArgumentError("Skipping null contribution for $qname: $reason"))
             end
             continue
         end
@@ -354,7 +356,7 @@ function _build_null(
         result = compare_pair(q, t)
         score = Float64(result.score)
         raw_scores[i] = score
-        return pairs[i] = NullPair(q.name, t.name, score)
+        return pairs[i] = NullPair(String(modelname(q)), String(modelname(t)), score)
     end
 
     fit_result = fit_gev(raw_scores)

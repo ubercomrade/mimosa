@@ -8,7 +8,7 @@ only to make a regression pass.
 
 Encoded bytes, offsets, lengths, shapes, indices, counts, result order, pair
 order, site coordinates, comparison offsets/orientations, and schema fields are
-exact. Current schema versions are model 1, null 3, cache 2, and annotated
+exact. Current schema versions are model 2, null 3, cache 2, and annotated
 result 1.
 
 ## Floating-Point Contracts
@@ -50,6 +50,17 @@ destinations before unchecked kernels.
 Julia site coordinates are one-based inclusive. CLI coordinates are zero-based
 half-open. Forward and reverse scores at one position refer to the same physical
 window.
+
+The public geometry contract (ADR 0003) defines `motif_length`,
+`left_context`, and `right_context` as the only required geometry
+accessors. `window_size`, `npositions`, and `site_start_offset` are
+derived. A custom model implementing `scan_pair_kernel!` produces
+Float32 scan values through the same code path as the built-in
+specialized kernels; the fallback may compute both strands even for a
+single-strand request, but the visible single-strand result is
+identical to the corresponding track of `BothStrands`. Built-in scan
+values, tie-breaking, and coordinate conventions are unchanged by the
+extension API.
 
 ## Reproducibility
 

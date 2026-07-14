@@ -16,6 +16,16 @@ struct ScoreProfile <: AbstractProfileSource
 end
 
 Base.length(profile::ScoreProfile) = nrows(profile.scores)
+
+"""
+    modelname(profile::ScoreProfile)
+
+Return the profile name. ScoreProfile is an `AbstractProfileSource`, not an
+`AbstractMotifModel`, but `modelname` is the public accessor for all profile
+sources.
+"""
+modelname(profile::ScoreProfile) = profile.name
+
 function Base.show(io::IO, profile::ScoreProfile)
     return print(io, "ScoreProfile(\"$(profile.name)\", $(nrows(profile.scores)) rows)")
 end

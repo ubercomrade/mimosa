@@ -780,6 +780,14 @@ struct PreparedProfile{T}
     min_logfpr::Float32
 end
 
+"""
+    modelname(profile::PreparedProfile)
+
+Return the prepared profile name. `PreparedProfile` is an
+`AbstractProfileSource` and uses `modelname` as its public name accessor.
+"""
+modelname(profile::PreparedProfile) = profile.name
+
 function PreparedProfile(
     name::String,
     bundle::StrandPair{<:RaggedArray{Float32}},
@@ -824,6 +832,23 @@ function PreparedProfile(
     return PreparedProfile(name, bundle, anchors, 0.0f0)
 end
 
+function PreparedProfile(
+    name::AbstractString,
+    bundle::StrandPair{<:RaggedArray{Float32}},
+    anchors::Tuple{AnchorCSR,AnchorCSR},
+    min_logfpr::Real,
+)
+    return PreparedProfile(String(name), bundle, anchors, min_logfpr)
+end
+
+function PreparedProfile(
+    name::AbstractString,
+    bundle::StrandPair{<:RaggedArray{Float32}},
+    anchors::Tuple{AnchorCSR,AnchorCSR},
+)
+    return PreparedProfile(String(name), bundle, anchors)
+end
+
 """
     _collect_both_anchors(bundle::StrandPair{<:RaggedArray{Float32}}, threshold::Float32)
 
@@ -859,7 +884,7 @@ function prepare_profile(
     _, normalized = _fit_transform_empirical(model.scores)
     norm_bundle = StrandPair(normalized, normalized)
     anchors = _collect_both_anchors(norm_bundle, threshold)
-    return PreparedProfile(model.name, norm_bundle, anchors, threshold)
+    return PreparedProfile(String(modelname(model)), norm_bundle, anchors, threshold)
 end
 
 """
@@ -880,17 +905,18 @@ function prepare_profile(
     execution::ExecutionPolicy=SerialExecution(),
 )
     threshold = Float32(min_logfpr)
-    raw = scan(model, sequences; strands=BothStrands(), execution=execution)
+    validate_model(model; capability=:compare)
+    raw = _scan_model_batch(model, sequences; strands=BothStrands(), execution=execution)
     bg = background === nothing ? sequences : background
     if bg === sequences
         _, norm_bundle = _fit_transform_empirical(raw)
     else
-        bg_raw = scan(model, bg; strands=BothStrands(), execution=execution)
+        bg_raw = _scan_model_batch(model, bg; strands=BothStrands(), execution=execution)
         table = fit(EmpiricalLogTail(), flatten_bundle(bg_raw))
         norm_bundle = normalize_bundle(table, raw)
     end
     anchors = _collect_both_anchors(norm_bundle, threshold)
-    return PreparedProfile(model.name, norm_bundle, anchors, threshold)
+    return PreparedProfile(String(modelname(model)), norm_bundle, anchors, threshold)
 end
 
 # ── PreparedProfile compare methods ────────────────────────────────────────────
@@ -935,7 +961,7 @@ function compare(
         query.bundle, query.anchors, target_norm, target_anchors, config
     )
     return ComparisonResult(
-        query.name, target.name, score, shift, orientation, metric_str, n_sites
+        modelname(query), modelname(target), score, shift, orientation, metric_str, n_sites
     )
 end
 
@@ -960,7 +986,7 @@ function compare(
         query.bundle, query.anchors, target.bundle, target.anchors, config
     )
     return ComparisonResult(
-        query.name, target.name, score, shift, orientation, metric_str, n_sites
+        modelname(query), modelname(target), score, shift, orientation, metric_str, n_sites
     )
 end
 
@@ -1001,7 +1027,13 @@ function compare(
             query.bundle, query.anchors, target_bundle, target_anchors, config
         )
         return results[i] = ComparisonResult(
-            query.name, target.name, score, shift, orientation, metric_str, n_sites
+            modelname(query),
+            modelname(target),
+            score,
+            shift,
+            orientation,
+            metric_str,
+            n_sites,
         )
     end
     return results
@@ -1033,7 +1065,13 @@ function compare(
             query.bundle, query.anchors, target.bundle, target.anchors, config
         )
         return results[i] = ComparisonResult(
-            query.name, target.name, score, shift, orientation, metric_str, n_sites
+            modelname(query),
+            modelname(target),
+            score,
+            shift,
+            orientation,
+            metric_str,
+            n_sites,
         )
     end
     return results
@@ -1079,7 +1117,7 @@ function compare(
         query.bundle, query.anchors, target_norm, target_anchors, config
     )
     return ComparisonResult(
-        query.name, target.name, score, shift, orientation, metric_str, n_sites
+        modelname(query), modelname(target), score, shift, orientation, metric_str, n_sites
     )
 end
 
@@ -1121,7 +1159,7 @@ function compare(
         query_norm, query_anchors, target.bundle, target.anchors, config
     )
     return ComparisonResult(
-        query.name, target.name, score, shift, orientation, metric_str, n_sites
+        modelname(query), modelname(target), score, shift, orientation, metric_str, n_sites
     )
 end
 
@@ -1165,7 +1203,13 @@ function compare(
             query.bundle, query.anchors, target_bundle, target_anchors, config
         )
         return results[i] = ComparisonResult(
-            query.name, target.name, score, shift, orientation, metric_str, n_sites
+            modelname(query),
+            modelname(target),
+            score,
+            shift,
+            orientation,
+            metric_str,
+            n_sites,
         )
     end
     return results

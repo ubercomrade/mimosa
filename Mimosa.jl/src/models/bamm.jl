@@ -26,7 +26,7 @@ motif_length)` tensor. Code computation:
 `code = b[1] * 5^order + b[2] * 5^(order-1) + ... + b[order+1] * 5^0`
 where `b[i]` is the 5-ary encoded base.
 """
-struct BaMM{T<:AbstractFloat,M<:AbstractMatrix{T}} <: AbstractHigherOrderMotif
+struct BaMM{T<:AbstractFloat,M<:AbstractMatrix{T}} <: AbstractMotifModel
     name::String
     representation::M
     order::Int
@@ -132,20 +132,32 @@ Return the k-mer size (= order + 1) for scanning.
 """
 kmer(model::BaMM) = model.order + 1
 
+# ── Extensibility API (ADR 0003) ──────────────────────────────────────────────
+#
+# BaMM uses `order` bases preceding the motif site as context. The site
+# itself spans `motif_length` positions, and there is no downstream
+# context. `context_length` is kept as an internal alias that delegates
+# to `left_context` for the rolling k-mer kernels.
+
+modelname(model::BaMM) = model.name
+motif_length(model::BaMM) = model.motif_length
+left_context(model::BaMM) = model.order
+right_context(::BaMM) = 0
+
 """
     context_length(model::BaMM)
 
 Return the context length (= order) for scanning: the number of bases before
 the motif start position that contribute to the first term's context.
 """
-context_length(model::BaMM) = model.order
+context_length(model::BaMM) = left_context(model)
 
 """
     window_size(model::BaMM)
 
 Return the total window size needed for scanning (= motif_length + order).
 """
-window_size(model::BaMM) = model.motif_length + model.order
+window_size(model::BaMM) = model.motif_length + left_context(model)
 
 """
     scan_width(model::BaMM)
@@ -161,4 +173,4 @@ scan_width(model::BaMM) = model.motif_length
 Return the offset from scan position to motif start (= `order`): the first
 `context_length` bases of the scan window are context, not motif.
 """
-site_start_offset(model::BaMM) = context_length(model)
+site_start_offset(model::BaMM) = left_context(model)

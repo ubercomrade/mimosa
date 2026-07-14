@@ -39,7 +39,7 @@ Dimont motif model from Jstacs (ThresholdedStrandChIPper with MarkovModelDiffSM)
 The representation is a flattened 2D view of the full `(5, 5, ..., 5,
 motif_length)` tensor, materialized from the XML parameter trees.
 """
-struct Dimont{T<:AbstractFloat,M<:AbstractMatrix{T}} <: AbstractHigherOrderMotif
+struct Dimont{T<:AbstractFloat,M<:AbstractMatrix{T}} <: AbstractMotifModel
     name::String
     representation::M
     span::Int
@@ -147,19 +147,29 @@ Return the k-mer size (= span + 1) for scanning.
 """
 kmer(model::Dimont) = model.span + 1
 
+# ── Extensibility API (ADR 0003) ──────────────────────────────────────────────
+#
+# Dimont uses `span` bases preceding the motif site as context. The site
+# spans `motif_length` positions; there is no downstream context.
+
+modelname(model::Dimont) = model.name
+motif_length(model::Dimont) = model.motif_length
+left_context(model::Dimont) = model.span
+right_context(::Dimont) = 0
+
 """
     context_length(model::Dimont)
 
 Return the context length (= span) for scanning.
 """
-context_length(model::Dimont) = model.span
+context_length(model::Dimont) = left_context(model)
 
 """
     window_size(model::Dimont)
 
 Return the total window size needed for scanning (= motif_length + span).
 """
-window_size(model::Dimont) = model.motif_length + model.span
+window_size(model::Dimont) = model.motif_length + left_context(model)
 
 """
     scan_width(model::Dimont)
@@ -175,4 +185,4 @@ scan_width(model::Dimont) = model.motif_length
 Return the offset from scan position to motif start (= `span`): the first
 `span` bases of the scan window are context, not motif.
 """
-site_start_offset(model::Dimont) = context_length(model)
+site_start_offset(model::Dimont) = left_context(model)

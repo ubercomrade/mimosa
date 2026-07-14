@@ -147,7 +147,7 @@ end
 end
 
 @testset "B2: higher-order strand APIs agree" begin
-    models = AbstractHigherOrderMotif[
+    models = AbstractMotifModel[
         BaMM("bamm", reshape(Float32.(1:75), 25, 3), 1, 3),
         SiteGA("sitega", reshape(Float32.(1:100), 25, 4), 4),
         Dimont("dimont", reshape(Float32.(1:75), 25, 3), 1, 3),

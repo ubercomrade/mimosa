@@ -521,6 +521,7 @@ function reconstruct_pfm(
     strands::StrandPolicy=BothStrands(),
     execution::ExecutionPolicy=SerialExecution(),
 )
+    validate_model(model; capability=:sites)
     coll = _collect_hits(model, batch, selector; strands=strands, execution=execution)
 
     if isempty(coll)
@@ -552,16 +553,7 @@ function reconstruct_pfm(
     top_fraction::Union{Nothing,Float64}=nothing,
     execution::ExecutionPolicy=SerialExecution(),
 )
-    selector = if mode == :best
-        BestPerSequence()
-    elseif mode == :threshold
-        score_threshold === nothing &&
-            throw(ArgumentError("score_threshold is required for mode=:threshold."))
-        ThresholdHits(score_threshold)
-    else
-        throw(ArgumentError("mode must be :best or :threshold, got :$mode."))
-    end
-
+    selector = _resolve_selector(mode; score_threshold=score_threshold)
     if top_fraction !== nothing
         selector = TopFractionHits(top_fraction)
     end
@@ -593,6 +585,7 @@ function selectsites(
     strands::StrandPolicy=BothStrands(),
     execution::ExecutionPolicy=SerialExecution(),
 )
+    validate_model(model; capability=:sites)
     coll = _collect_hits(model, batch, selector; strands=strands, execution=execution)
     sort_hits!(coll)
     return coll
@@ -633,63 +626,63 @@ function _scan_bundle_for_sites(
     execution::ExecutionPolicy=SerialExecution(),
 )
     if strands isa ForwardOnly
-        fwd = scan(model, batch; strands=ForwardOnly(), execution=execution)
+        fwd = _scan_model_batch(model, batch; strands=ForwardOnly(), execution=execution)
         rev = _empty_ragged_like(fwd)
         return StrandPair(fwd, rev)
     elseif strands isa ReverseOnly
-        rev = scan(model, batch; strands=ReverseOnly(), execution=execution)
+        rev = _scan_model_batch(model, batch; strands=ReverseOnly(), execution=execution)
         fwd = _empty_ragged_like(rev)
         return StrandPair(fwd, rev)
     else
         # BothStrands and BestStrand both need both tracks
-        result = scan(model, batch; strands=BothStrands(), execution=execution)
+        result = _scan_model_batch(model, batch; strands=BothStrands(), execution=execution)
         return result
     end
 end
 
-# ── Higher-order model support ────────────────────────────────────────────
+# ── Generic AbstractMotifModel support (Extensibility API Plan §7.2) ─────────
 #
 # The hit collection logic (best, threshold, top-fraction) is identical across
 # all model families — it operates on StrandPair score bundles. The only
 # differences are:
 #   1. How the bundle is produced (dispatch via scan(model, batch; ...)).
-#   2. The site start offset (context_length for BaMM/Dimont/Slim, 0 for others).
-# Both are resolved via multiple dispatch on the model type.
+#   2. The site start offset (left_context for any model with context).
+# Both are resolved via the public geometry accessors.
 
 """
-    _scan_bundle_for_sites(model::AbstractHigherOrderMotif, batch, strands)
+    _scan_bundle_for_sites(model::AbstractMotifModel, batch, strands)
 
-Scan a higher-order model (BaMM, SiteGA, Dimont, Slim) to produce the
+Scan any `AbstractMotifModel` (custom or higher-order built-in) to produce the
 required strand bundle.
 """
 function _scan_bundle_for_sites(
-    model::AbstractHigherOrderMotif,
+    model::AbstractMotifModel,
     batch::EncodedSequenceBatch,
     strands::StrandPolicy,
     execution::ExecutionPolicy=SerialExecution(),
 )
     if strands isa ForwardOnly
-        fwd = scan(model, batch; strands=ForwardOnly(), execution=execution)
+        fwd = _scan_model_batch(model, batch; strands=ForwardOnly(), execution=execution)
         rev = _empty_ragged_like(fwd)
         return StrandPair(fwd, rev)
     elseif strands isa ReverseOnly
-        rev = scan(model, batch; strands=ReverseOnly(), execution=execution)
+        rev = _scan_model_batch(model, batch; strands=ReverseOnly(), execution=execution)
         fwd = _empty_ragged_like(rev)
         return StrandPair(fwd, rev)
     else
-        result = scan(model, batch; strands=BothStrands(), execution=execution)
+        result = _scan_model_batch(model, batch; strands=BothStrands(), execution=execution)
         return result
     end
 end
 
 """
-    _collect_hits(model::AbstractHigherOrderMotif, batch, selector; strands)
+    _collect_hits(model::AbstractMotifModel, batch, selector; strands)
 
-Collect hits from a higher-order model scan. The hit collection logic is
-shared with PWM since it operates on StrandPair bundles.
+Collect hits from any model scan. The hit collection logic is shared with PWM
+since it operates on StrandPair bundles.
 """
 function _collect_hits(
-    model::AbstractHigherOrderMotif,
+    model::AbstractMotifModel,
     batch::EncodedSequenceBatch,
     selector::SiteSelector;
     strands::StrandPolicy=BothStrands(),
@@ -721,54 +714,68 @@ function _collect_hits_from_bundle(
     end
 end
 
+function _resolve_selector(mode::Symbol; score_threshold::Union{Nothing,Float32}=nothing)
+    if mode == :best
+        return BestPerSequence()
+    elseif mode == :threshold
+        score_threshold === nothing &&
+            throw(ArgumentError("score_threshold is required for mode=:threshold."))
+        return ThresholdHits(score_threshold)
+    else
+        throw(ArgumentError("mode must be :best or :threshold, got :$mode."))
+    end
+end
+
 """
-    selectsites(model::AbstractHigherOrderMotif, batch, selector;
+    selectsites(model::AbstractMotifModel, batch, selector;
                 strands=BothStrands(), execution=SerialExecution())
 
-Extract motif binding sites from a higher-order model (BaMM, SiteGA, Dimont,
-Slim). The `start` field in the returned [`SiteCollection`](@ref) is the scan
-position; the actual motif start is `start + site_start_offset(model)`.
+Extract motif binding sites from any motif model. The `start` field in the
+returned [`SiteCollection`](@ref) is the scan position; the actual motif start
+is `start + site_start_offset(model)` (= `left_context(model)`).
 
 Returns a sorted [`SiteCollection`](@ref).
 """
 function selectsites(
-    model::AbstractHigherOrderMotif,
+    model::AbstractMotifModel,
     batch::EncodedSequenceBatch,
     selector::SiteSelector;
     strands::StrandPolicy=BothStrands(),
     execution::ExecutionPolicy=SerialExecution(),
 )
+    validate_model(model; capability=:sites)
     coll = _collect_hits(model, batch, selector; strands=strands, execution=execution)
     sort_hits!(coll)
     return coll
 end
 
 """
-    reconstruct_pfm(model::AbstractHigherOrderMotif, batch, selector;
+    reconstruct_pfm(model::AbstractMotifModel, batch, selector;
                     pseudocount=0.25f0, strands=BothStrands(),
                     execution=SerialExecution())
 
-Reconstruct a PFM from binding sites extracted from a higher-order model.
-The site window accounts for `site_start_offset(model)` to extract only the
-motif-length window, excluding context bases.
+Reconstruct a PFM from binding sites extracted from any motif model. The site
+window accounts for `site_start_offset(model)` (= `left_context(model)`) to
+extract only the motif-length window, excluding context bases.
 
 Returns a `Matrix{Float32}` of shape `(4, motif_length)`.
 """
 function reconstruct_pfm(
-    model::AbstractHigherOrderMotif,
+    model::AbstractMotifModel,
     batch::EncodedSequenceBatch,
     selector::SiteSelector;
     pseudocount::Float32=0.25f0,
     strands::StrandPolicy=BothStrands(),
     execution::ExecutionPolicy=SerialExecution(),
 )
+    validate_model(model; capability=:sites)
     coll = _collect_hits(model, batch, selector; strands=strands, execution=execution)
 
     if isempty(coll)
         throw(ArgumentError("No sites found for PFM reconstruction."))
     end
 
-    motif_width = length(model)
+    motif_width = motif_length(model)
     offset = site_start_offset(model)
     sites = extract_site_matrix(batch, coll, motif_width; site_offset=offset)
     pcm = build_pcm(sites, motif_width)
@@ -776,15 +783,15 @@ function reconstruct_pfm(
 end
 
 """
-    reconstruct_pfm(model::AbstractHigherOrderMotif, batch;
+    reconstruct_pfm(model::AbstractMotifModel, batch;
                     mode=:best, pseudocount=0.25f0, strands=BothStrands(),
                     score_threshold=nothing, top_fraction=nothing)
 
-Convenience method for PFM reconstruction from higher-order models with
+Convenience method for PFM reconstruction from any motif model with
 keyword-based selection mode.
 """
 function reconstruct_pfm(
-    model::AbstractHigherOrderMotif,
+    model::AbstractMotifModel,
     batch::EncodedSequenceBatch;
     mode::Symbol=:best,
     pseudocount::Float32=0.25f0,
@@ -793,16 +800,7 @@ function reconstruct_pfm(
     top_fraction::Union{Nothing,Float64}=nothing,
     execution::ExecutionPolicy=SerialExecution(),
 )
-    selector = if mode == :best
-        BestPerSequence()
-    elseif mode == :threshold
-        score_threshold === nothing &&
-            throw(ArgumentError("score_threshold is required for mode=:threshold."))
-        ThresholdHits(score_threshold)
-    else
-        throw(ArgumentError("mode must be :best or :threshold, got :$mode."))
-    end
-
+    selector = _resolve_selector(mode; score_threshold=score_threshold)
     if top_fraction !== nothing
         selector = TopFractionHits(top_fraction)
     end

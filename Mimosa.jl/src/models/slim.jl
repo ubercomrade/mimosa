@@ -41,7 +41,7 @@ The representation is a flattened 2D view of the full `(5, 5, ..., 5,
 motif_length)` tensor, materialized from the XML mixture parameters via
 log-sum-exp over components and ancestors.
 """
-struct Slim{T<:AbstractFloat,M<:AbstractMatrix{T}} <: AbstractHigherOrderMotif
+struct Slim{T<:AbstractFloat,M<:AbstractMatrix{T}} <: AbstractMotifModel
     name::String
     representation::M
     span::Int
@@ -147,19 +147,29 @@ Return the k-mer size (= span + 1) for scanning.
 """
 kmer(model::Slim) = model.span + 1
 
+# ── Extensibility API (ADR 0003) ──────────────────────────────────────────────
+#
+# Slim uses `span` bases preceding the motif site as context. The site
+# spans `motif_length` positions; there is no downstream context.
+
+modelname(model::Slim) = model.name
+motif_length(model::Slim) = model.motif_length
+left_context(model::Slim) = model.span
+right_context(::Slim) = 0
+
 """
     context_length(model::Slim)
 
 Return the context length (= span) for scanning.
 """
-context_length(model::Slim) = model.span
+context_length(model::Slim) = left_context(model)
 
 """
     window_size(model::Slim)
 
 Return the total window size needed for scanning (= motif_length + span).
 """
-window_size(model::Slim) = model.motif_length + model.span
+window_size(model::Slim) = model.motif_length + left_context(model)
 
 """
     scan_width(model::Slim)
@@ -175,4 +185,4 @@ scan_width(model::Slim) = model.motif_length
 Return the offset from scan position to motif start (= `span`): the first
 `span` bases of the scan window are context, not motif.
 """
-site_start_offset(model::Slim) = context_length(model)
+site_start_offset(model::Slim) = left_context(model)

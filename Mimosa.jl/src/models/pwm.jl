@@ -4,39 +4,6 @@ const NUCLEOTIDE_CARDINALITY = 4
 const PSEUDOCOUNT_PWM::Float32 = 1e-4
 
 """
-    AbstractProfileSource
-
-Abstract supertype of inputs that can be prepared for profile comparison.
-"""
-abstract type AbstractProfileSource end
-
-"""
-    AbstractMotifModel
-
-Abstract supertype of all motif model families (PWM, PFM, BaMM, SiteGA, etc.).
-Motif models can be scanned against encoded sequences. Precomputed profiles are
-`AbstractProfileSource`s, but are not motif models.
-"""
-abstract type AbstractMotifModel <: AbstractProfileSource end
-
-"""
-    AbstractMatrixMotif
-
-Abstract supertype of matrix-based motif models (`PFM`, `PWM`).
-"""
-abstract type AbstractMatrixMotif <: AbstractMotifModel end
-
-"""
-    AbstractHigherOrderMotif
-
-Abstract supertype of higher-order motif models (BaMM, SiteGA, Dimont, Slim).
-"""
-abstract type AbstractHigherOrderMotif <: AbstractMotifModel end
-
-"""Return whether `model` has a direct sequence-scanning implementation."""
-is_scannable(::AbstractMotifModel) = false
-
-"""
     PWM{T,M,B}
 
 Position Weight Matrix: log-odds weights for scanning.
@@ -47,7 +14,7 @@ the Python representation that materializes a 5-row extended PWM.
 `background` is a 4-tuple of nucleotide background frequencies.
 """
 struct PWM{T<:AbstractFloat,M<:AbstractMatrix{T},B<:NTuple{4,AbstractFloat}} <:
-       AbstractMatrixMotif
+       AbstractMotifModel
     name::String
     weights::M
     background::B
@@ -107,13 +74,23 @@ end
 Base.length(model::PWM) = size(model.weights, 2)
 is_scannable(::PWM) = true
 
+# ── Extensibility API (ADR 0003) ──────────────────────────────────────────────
+#
+# PWM is a no-context matrix model: `motif_length == length`, both
+# contexts are zero, the window equals the motif, and the site starts at
+# the scan position.
+
+modelname(model::PWM) = model.name
+left_context(::PWM) = 0
+right_context(::PWM) = 0
+
 """
     motif_length(model::AbstractMotifModel)
 
 Return the number of motif positions represented by `model`.
 """
-motif_length(model::AbstractMatrixMotif) = length(model)
-window_size(model::AbstractMatrixMotif) = motif_length(model)
+motif_length(model::PWM) = length(model)
+window_size(model::PWM) = motif_length(model)
 
 """
     scorematrix(model::AbstractMotifModel)
@@ -132,12 +109,12 @@ Return the element type of [`scorematrix`](@ref) for `model`.
 scoretype(model::AbstractMotifModel) = eltype(scorematrix(model))
 
 """
-    site_start_offset(model::AbstractMatrixMotif)
+    site_start_offset(model::PWM)
 
 Return the offset from scan position to motif start (= 0 for PWM/PFM:
 no context before the motif window).
 """
-site_start_offset(::AbstractMatrixMotif) = 0
+site_start_offset(::PWM) = 0
 
 Base.eltype(::Type{<:PWM{T}}) where {T} = T
 

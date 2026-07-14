@@ -31,7 +31,7 @@ The representation is a flattened 2D view of the `(5, 5, motif_length)` tensor.
 Only the first `motif_length - 1` columns are used in scanning (dinucleotide
 terms), but all `motif_length` columns participate in score bounds.
 """
-struct SiteGA{T<:AbstractFloat,M<:AbstractMatrix{T}} <: AbstractHigherOrderMotif
+struct SiteGA{T<:AbstractFloat,M<:AbstractMatrix{T}} <: AbstractMotifModel
     name::String
     representation::M
     motif_length::Int
@@ -116,6 +116,16 @@ end
 Return the k-mer size (= 2 for dinucleotide SiteGA).
 """
 kmer(::SiteGA) = 2
+
+# ── Extensibility API (ADR 0003) ──────────────────────────────────────────────
+#
+# SiteGA scores adjacent dinucleotides inside the motif window. There is
+# no context before or after the site.
+
+modelname(model::SiteGA) = model.name
+motif_length(model::SiteGA) = model.motif_length
+left_context(::SiteGA) = 0
+right_context(::SiteGA) = 0
 
 """
     context_length(model::SiteGA)

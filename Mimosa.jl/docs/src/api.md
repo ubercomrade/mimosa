@@ -11,13 +11,24 @@ SiteGA
 Dimont
 Slim
 ScoreProfile
-AbstractMatrixMotif
-AbstractHigherOrderMotif
 is_scannable
 pfm_to_pwm
 pwm_from_pfm
 extend_pwm_with_n
+```
+
+## Model geometry and extension contract
+
+```@docs
+modelname
+motif_length
+left_context
+right_context
+window_size
+npositions
 site_start_offset
+scan_pair_kernel!
+validate_model
 ```
 
 ## Model I/O
@@ -44,11 +55,8 @@ scan_forward!
 scan_reverse!
 scan_best!
 scan_both!
-npositions
 scan_result_lengths
 scorebounds
-motif_length
-window_size
 scorematrix
 scoretype
 StrandPair
@@ -212,4 +220,5 @@ MimosaError
 ModelFormatError
 ModelDimensionError
 InvariantError
+ModelInterfaceError
 ```
