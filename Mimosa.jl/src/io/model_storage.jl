@@ -131,9 +131,9 @@ end
 """
     readmodel(path; format=:auto, kwargs...)
 
-Read a motif model from a directory bundle (v2 format) or a legacy format
-file. When `path` is a directory containing `manifest.toml`, the portable
-bundle format is used. Otherwise, legacy format detection applies.
+Read a motif model from a directory bundle (v2 format) or a supported text
+format. When `path` is a directory containing `manifest.toml`, the portable
+bundle format is used. Otherwise, automatic format detection applies.
 """
 function readmodel(
     path::AbstractString;
@@ -150,14 +150,12 @@ function readmodel(
         throw(ModelFormatError(path, "bundle is missing manifest.toml."))
     end
 
-    # Legacy format detection
+    # Non-bundle format detection
     fmt = format === :auto ? _detect_format(path) : format
     if fmt === :meme
-        pfm = read_meme(path; index=index)
-        return pwm_from_pfm(pfm.frequencies; background=background, name=pfm.name)
+        return _read_meme_pwm(path; index=index, background=background)
     elseif fmt === :pfm
-        pfm = read_pfm(path)
-        return pwm_from_pfm(pfm.frequencies; background=background, name=pfm.name)
+        return _read_pfm_pwm(path; background=background)
     elseif fmt === :bamm
         order_val = get(kwargs, :order, nothing)
         return read_bamm(path; order=order_val)
@@ -170,6 +168,33 @@ function readmodel(
     else
         throw(ModelFormatError(path, "unsupported format: $(fmt)."))
     end
+end
+
+function _detect_format(path::AbstractString)
+    lower = lowercase(path)
+    endswith(lower, ".meme") && return :meme
+    endswith(lower, ".pfm") && return :pfm
+    endswith(lower, ".ihbcp") && return :bamm
+    endswith(lower, ".mat") && return :sitega
+    endswith(lower, ".xml") && return _detect_xml_format(path)
+    return :unknown
+end
+
+# Both Dimont and Slim use the `.xml` extension. Distinguish by content:
+# Slim models contain a `<SLIM>` element, Dimont models contain a
+# `MarkovModelDiffSM` element. This is an I/O-boundary check (model loading,
+# not a hot path).
+function _detect_xml_format(path::AbstractString)
+    isfile(path) || throw(ModelFormatError(path, "file not found."))
+    filesize(path) <= 256 * 1024^2 ||
+        throw(ModelFormatError(path, "XML model exceeds the size limit."))
+    content = open(path, "r") do io
+        return String(read(io, min(filesize(path), 64 * 1024)))
+    end
+    if occursin("<SLIM", content)
+        return :slim
+    end
+    return :dimont
 end
 
 function _read_model_bundle(path::AbstractString, manifest_path::AbstractString)

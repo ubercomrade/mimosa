@@ -58,7 +58,8 @@ src/
 │   ├── null_distribution.jl  # NullDistribution, build_null
 │   └── null_storage.jl # savenull, loadnull
 ├── io/                 # File format parsers
-│   ├── motif_readers.jl # MEME, PFM parsers
+│   ├── pfm_readers.jl   # MEME, PFM parsers
+│   ├── pwm_reader.jl    # PFM-to-PWM reader adapters
 │   ├── bamm_reader.jl  # BaMM .ihbcp parser
 │   ├── sitega_reader.jl # SiteGA .mat parser
 │   ├── xml_parser.jl   # Minimal XML parser

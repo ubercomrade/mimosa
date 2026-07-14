@@ -23,6 +23,14 @@ end
     @test eltype(pfm.frequencies) === Float32
 end
 
+@testset "PWM reader adapters" begin
+    meme_pwm = Mimosa._read_meme_pwm(joinpath(EXAMPLES, "pif4.meme"))
+    pfm_pwm = Mimosa._read_pfm_pwm(joinpath(EXAMPLES, "pif4.pfm"))
+    @test meme_pwm isa PWM
+    @test pfm_pwm isa PWM
+    @test meme_pwm.weights ≈ pfm_pwm.weights
+end
+
 @testset "readmodel detects format from extension" begin
     pwm_meme = readmodel(joinpath(EXAMPLES, "pif4.meme"))
     @test pwm_meme isa PWM
