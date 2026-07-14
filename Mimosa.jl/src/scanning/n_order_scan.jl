@@ -1,4 +1,71 @@
-# Generic context-aware (higher-order) scanning kernel shared by BaMM,
+# Unified rolling k-mer scanning kernel shared by PWM and higher-order motifs.
+
+function npositions(seq_len::Int, motif_width::Int)
+    seq_len < 0 && throw(ArgumentError("sequence length must be non-negative."))
+    motif_width < 1 && throw(ArgumentError("motif width must be positive."))
+    return max(seq_len - motif_width + 1, 0)
+end
+
+npositions(model::PWM, seq_len::Int) = npositions(seq_len, motif_length(model))
+kmer(::PWM) = 1
+context_length(::PWM) = 0
+scan_width(model::PWM) = motif_length(model)
+
+function scan(model::PFM, args...; kwargs...)
+    throw(ArgumentError("PFM is not directly scannable; convert it with pwm_from_pfm first."))
+end
+
+function _validate_scan_input(seq::AbstractVector{UInt8}, n_pos::Int, width::Int, dests...)
+    Base.require_one_based_indexing(seq)
+    for dest in dests
+        Base.require_one_based_indexing(dest)
+    end
+    n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
+    width < 1 && throw(ArgumentError("scan width must be positive."))
+    n_pos > npositions(length(seq), width) &&
+        throw(ArgumentError("n_pos=$n_pos exceeds sequence geometry for width=$width."))
+    any(code -> code > N_CODE, seq) && throw(ArgumentError("invalid encoded DNA code."))
+    any(length(dest) < n_pos for dest in dests) && throw(ArgumentError("destination is too short."))
+    return nothing
+end
+
+function scan(model::PWM, seq::AbstractVector{UInt8}; strands::StrandPolicy=ForwardOnly())
+    n_pos = npositions(model, length(seq))
+    if strands isa BothStrands
+        forward = Vector{Float32}(undef, n_pos); reverse = similar(forward)
+        scan_both!(forward, reverse, model, seq, n_pos)
+        return StrandPair(forward, reverse)
+    end
+    dest = Vector{Float32}(undef, n_pos)
+    strands isa ForwardOnly && return scan_forward!(dest, model, seq, n_pos)
+    strands isa ReverseOnly && return scan_reverse!(dest, model, seq, n_pos)
+    strands isa BestStrand && return scan_best!(dest, model, seq, n_pos)
+    throw(ArgumentError("unsupported strand policy: $(typeof(strands))"))
+end
+
+function scan!(dest::AbstractVector{T}, model::PWM, seq::AbstractVector{UInt8}; strands::StrandPolicy=ForwardOnly()) where {T<:AbstractFloat}
+    n_pos = npositions(model, length(seq)); length(dest) >= n_pos || throw(ArgumentError("destination is too short."))
+    strands isa ForwardOnly && return scan_forward!(dest, model, seq, n_pos)
+    strands isa ReverseOnly && return scan_reverse!(dest, model, seq, n_pos)
+    strands isa BestStrand && return scan_best!(dest, model, seq, n_pos)
+    throw(ArgumentError("scan! with BothStrands is not supported."))
+end
+
+function scan(model::PWM, batch::EncodedSequenceBatch; strands::StrandPolicy=ForwardOnly(), execution::ExecutionPolicy=SerialExecution())
+    return _scan_model_batch(model, batch; strands=strands, execution=execution)
+end
+
+function _scan_costs(offsets::Vector{Int})
+    return [offsets[i + 1] - offsets[i] for i in 1:(length(offsets) - 1)]
+end
+
+function _scan_dest(data::AbstractVector, offsets::Vector{Int}, row_index::Int)
+    start = offsets[row_index]; stop = offsets[row_index + 1] - 1
+    return start > stop ? view(data, 1:0) : @view(data[start:stop])
+end
+
+scan_result_lengths(model::PWM, batch::EncodedSequenceBatch) =
+    [npositions(model, seqlength(batch, i)) for i in 1:nsequences(batch)]
 # Dimont, Slim and any model whose per-window score is the column-wise sum
 # of a `(5^kmer, n_terms)` representation indexed by a 5-ary code of
 # `kmer` consecutive (possibly complemented) bases.

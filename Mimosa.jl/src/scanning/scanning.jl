@@ -1,5 +1,4 @@
-# Scanning module: strand policies and PWM/higher-order scanning kernels.
+# Scanning module: strand policies and the unified motif scanning kernel.
 
 include("strands.jl")
-include("pwm_scan.jl")
-include("higher_order_scan.jl")
+include("n_order_scan.jl")
