@@ -109,7 +109,7 @@ loaded = loadnull("output/null_bundle")
 annotated = annotate_results([comparison], loaded; effective_number_of_targets=1)
 ```
 
-Null bundles use format version 2 and strategy `"profile"` only.
+Null bundles use format version 3 and strategy `"profile"` only.
 
 ## Threaded Execution
 

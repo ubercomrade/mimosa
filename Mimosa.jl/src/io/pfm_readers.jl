@@ -7,7 +7,7 @@ const MAX_LINE_LENGTH = 1_000_000
 """
     read_meme(path; index=0)
 
-Read one motif from a MEME letter-probability file and return a [`PFM`](@ref).
+Read one motif from a MEME letter-probability file and return a frequency matrix.
 
 `index` selects the motif by file order (zero-based for compatibility with
 the Python API; internally converted to one-based).

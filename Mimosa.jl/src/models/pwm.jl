@@ -221,7 +221,7 @@ end
 """
     pwm_from_pfm(pfm; background=0.25, name="")
 
-Build a ready-to-scan [`PWM`](@ref) from a [`PFM`](@ref) or raw frequency matrix.
+Build a ready-to-scan [`PWM`](@ref) from a raw position-frequency matrix.
 
 This mirrors Python's `pwm_model_from_pfm`: `pfm_to_pwm` then extend with the
 per-column minimum as the N-state row.

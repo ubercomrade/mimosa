@@ -3,7 +3,7 @@
 ## Design principles
 
 1. **Library-first**: The public API is the Julia module; the CLI is a thin adapter
-2. **Concrete domain types**: `PWM`, `PFM`, `BaMM`, etc. are parametric immutable
+2. **Concrete domain types**: `PWM`, `BaMM`, `SiteGA`, `Dimont`, and `Slim` are parametric immutable
    structs — no `GenericModel` with `Any` fields
 3. **Multiple dispatch**: Metrics, strand policies, execution policies are small
    types; `scan`, `compare`, `scorebounds` dispatch on model types
@@ -26,8 +26,8 @@ src/
 ├── serialization.jl    # JSON serialization (to_json, to_dict)
 ├── cli.jl              # Thin CLI adapter
 ├── models/             # Model types and constructors
-│   ├── types.jl        # Shared model hierarchy, PFM, PWM
-│   ├── pwm.jl          # PWM scanning geometry traits
+│   ├── models.jl       # Model hierarchy and includes
+│   ├── pwm.jl          # PWM type, PFM conversion, geometry traits
 │   ├── bamm.jl         # BaMM type
 │   ├── sitega.jl       # SiteGA type
 │   ├── dimont.jl       # Dimont type
@@ -37,13 +37,15 @@ src/
 │   ├── fasta.jl        # FASTA reader
 │   └── ragged.jl       # RaggedArray
 ├── scanning/           # Scanning interface, validation, and kernels
+│   ├── scanning.jl      # Scanner module includes
 │   ├── strands.jl       # Strand policies
-│   ├── pwm_scan.jl     # Checked PWM boundary and kernels
-│   └── higher_order_scan.jl  # Shared higher-order kernels and adapter
+│   └── n_order_scan.jl # Checked boundary and shared rolling k-mer kernels
 ├── comparison/         # Profile comparison
+│   ├── comparison.jl    # Comparison module includes
 │   ├── results.jl      # ComparisonResult, compare()
 │   └── profile_comparison.jl  # Profile alignment
 ├── profiles/           # Profile inputs, normalization, anchors, and alignment
+│   ├── profiles.jl      # Profiles module includes
 │   ├── precomputed_profile.jl # ScoreProfile precomputed profile source
 │   ├── normalization.jl # EmpiricalLogTail
 │   ├── anchors.jl       # Anchor collection
@@ -52,12 +54,14 @@ src/
 ├── sites/              # Site extraction and PFM reconstruction
 │   └── sites.jl
 ├── statistics/         # Null distributions and statistics
+│   ├── statistics.jl    # Statistics module includes
 │   ├── gev.jl          # Native GEV fit
 │   ├── pvalues.jl      # p-value, BH FDR, E-value
 │   ├── relations.jl    # Group relations
 │   ├── null_distribution.jl  # NullDistribution, build_null
 │   └── null_storage.jl # savenull, loadnull
 ├── io/                 # File format parsers
+│   ├── io.jl            # I/O module includes and public readers
 │   ├── pfm_readers.jl   # MEME, PFM parsers
 │   ├── pwm_reader.jl    # PFM-to-PWM reader adapters
 │   ├── bamm_reader.jl  # BaMM .ihbcp parser
@@ -66,7 +70,8 @@ src/
 │   ├── dimont_reader.jl # Dimont XML parser
 │   ├── slim_reader.jl  # Slim XML parser
 │   ├── score_reader.jl # Score profile reader
-│   └── model_storage.jl # Portable bundle format
+│   ├── bundle_storage.jl # Bounded bundle parsing helpers
+│   └── model_storage.jl # Portable model bundle format
 ├── parallel/          # Execution policies
 │   └── parallel.jl
 └── cache/              # Content-based cache
@@ -84,20 +89,15 @@ Architectural decisions are documented in the project's `docs/adr/` directory:
 - ADR 0005: GEV fitting
 - ADR 0006: Coordinate/offset/orientation conventions
 
-## Type stability guarantees
+## Scanning contract
 
-All hot kernels are type-stable with concrete return types:
-
-| Function | Return type | Allocations |
-|----------|-------------|-------------|
-| `scan_forward!` | `Vector{Float32}` | 0 |
-| `scan_reverse!` | `Vector{Float32}` | 0 |
-| `scan_best!` | `Vector{Float32}` | 0 |
-| `_ho_scan_forward!` | `Vector{Float32}` | 0 |
-| `_ho_scan_reverse!` | `Vector{Float32}` | 0 |
-| `reverse_complement!` | `Vector{UInt8}` | 0 |
-| `compare` | `ComparisonResult` | ~29 (alignment views) |
-| `fit_gev` | `GEVFit` / `GEVFitFailure` | ~120 (BFGS optimizer) |
+`scan(model, sequence)` returns a `Vector{Float32}` for forward, reverse, or
+best-strand policies and a `StrandPair` for `BothStrands()`. Batch scans return
+the corresponding `RaggedArray{Float32}` representation. `scan!` fills a
+caller-provided destination for one sequence; it deliberately rejects
+`BothStrands()` because that policy has two outputs. The shared kernels retain
+serial floating-point reduction order, while batch-level work can be scheduled
+through an explicit `ThreadedExecution` policy.
 
 ## Precompilation
 

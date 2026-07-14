@@ -5,9 +5,10 @@
 To add a new motif model type to Mimosa.jl, you need:
 
 1. A concrete immutable struct subtyping `AbstractMotifModel`
-2. A `scorebounds` method
-3. A `scan` / `scan!` method
-4. A parser (via `readmodel` dispatch)
+2. Geometry and score-matrix methods: `motif_length`, `window_size`,
+   `scorematrix`, and `is_scannable`
+3. A `scorebounds` method and concrete strand kernels
+4. A parser registered at the I/O boundary in the existing `readmodel` dispatch
 5. Optionally: sites, reconstruction, comparison, writer
 
 ## Step 1: Define the type
@@ -21,6 +22,10 @@ end
 
 Base.length(model::MyModel) = size(model.representation, 2)
 Base.eltype(::Type{<:MyModel{T}}) where {T} = T
+motif_length(model::MyModel) = length(model)
+window_size(model::MyModel) = motif_length(model)
+scorematrix(model::MyModel) = model.representation
+is_scannable(::MyModel) = true
 ```
 
 ## Step 2: Implement score bounds
@@ -43,7 +48,9 @@ end
 
 ## Step 3: Implement scanning
 
-For matrix models (similar to PWM):
+Implement all four concrete strand kernels: `scan_forward!`, `scan_reverse!`,
+`scan_best!`, and `scan_both!`. The public `scan`, `scan!`, and batch methods
+then use them after validating encoded input and output geometry:
 
 ```julia
 function scan_forward!(
@@ -53,14 +60,19 @@ function scan_forward!(
     return dest
 end
 
-function scan(model::MyModel, seq::AbstractVector{UInt8}; strands::StrandPolicy=ForwardOnly())
-    # Dispatch to scan_forward!, scan_reverse!, etc.
+function scan_reverse!(
+    dest::AbstractVector{T}, model::MyModel, seq::AbstractVector{UInt8}, n_pos::Int
+) where {T<:AbstractFloat}
+    # Reverse-strand kernel here
+    return dest
 end
 ```
 
-For higher-order models, you can reuse the generic `_ho_scan_forward!` /
-`_ho_scan_reverse!` kernels by providing the correct geometry (kmer, context,
-window, n_terms).
+For higher-order models, provide the internal geometry traits used by the
+shared rolling-k-mer kernels: `kmer`, `context_length`, `scan_width`, and
+`site_start_offset`. Keep these implementation details private to the package;
+third-party extensions should mirror an existing model family and add focused
+serial/threaded equivalence tests.
 
 ## Step 4: Add a parser
 
@@ -70,13 +82,8 @@ function read_mymodel(path::AbstractString; kwargs...)
     return MyModel(name, representation, ...)
 end
 
-# Register with auto-detection
-function readmodel(path::AbstractString; format=:auto, kwargs...)
-    if format == :auto && endswith(path, ".mymodel")
-        return read_mymodel(path; kwargs...)
-    end
-    # ... existing format dispatch
-end
+# Add the extension to the existing format-detection and dispatch branches in
+# `src/io/model_storage.jl`; do not add a competing broad `readmodel` method.
 ```
 
 ## Step 5: Add tests

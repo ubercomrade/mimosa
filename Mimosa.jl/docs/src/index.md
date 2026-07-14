@@ -3,8 +3,8 @@
 Mimosa.jl is a Julia 1.10+ package for DNA motif scanning, profile-based
 comparison, site extraction, PFM reconstruction, and statistical evaluation.
 
-It supports PWM/PFM, BaMM, SiteGA, Dimont, Slim, and precomputed
-[`ScoreProfile`](@ref) inputs. Model comparison is profile-only: models are
+It supports PWM models read from MEME or PFM input, BaMM, SiteGA, Dimont,
+Slim, and precomputed [`ScoreProfile`](@ref) inputs. Model comparison is profile-only: models are
 scanned against an explicit [`EncodedSequenceBatch`](@ref), empirically
 normalized, anchored, and aligned across strands.
 

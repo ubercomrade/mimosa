@@ -46,7 +46,7 @@ julia --project=Mimosa.jl Mimosa.jl/app/mimosa.jl build-null motifs/ \
 The relation file is TSV/CSV with configurable motif-name and group columns.
 Only cross-group eligible pairs are compared. `--strict` and
 `--min-null-targets` control insufficient-target handling. The output is always
-a version-2 profile null bundle. `--jobs` is a deprecated alias for `--threads`.
+a version-3 profile null bundle. `--jobs` is a deprecated alias for `--threads`.
 
 ### `cache clear`
 

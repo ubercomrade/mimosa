@@ -7,8 +7,7 @@ and specific file format.
 
 | Type | Family | Format | Description |
 |------|--------|--------|-------------|
-| `PWM{T,M,B}` | Matrix | MEME | Position Weight Matrix with N-state row |
-| `PFM{T,M}` | Matrix | PFM | Position Frequency Matrix |
+| `PWM{T,M,B}` | Matrix | MEME, PFM | Position Weight Matrix with N-state row |
 | `BaMM{T,M}` | Higher-order | `.ihbcp` | Bayesian Markov Model |
 | `SiteGA{T,M}` | Higher-order | `.mat` | Dinucleotide model |
 | `Dimont{T,M}` | Higher-order | XML | Jstacs Bayesian network |
@@ -25,16 +24,16 @@ or serialized as a motif bundle.
 
 ### MEME (PWM)
 
-Standard MEME format. The parser reads the log-odds matrix, converts to 5-row
-extended PWM (A, C, G, T, N), with the N row as per-column minimum.
+MEME letter-probability matrices are read as frequencies and converted to a
+5-row log-odds PWM (A, C, G, T, N), with the N row as the per-column minimum.
 
-### PFM (Position Frequency Matrix)
+### PFM (Position Frequency Matrix) input
 
-`PFM` is a matrix representation and is not directly scannable. Convert it
-explicitly with `pwm_from_pfm(pfm)` before calling `scan`; this keeps the
-background and pseudocount choice visible at the API boundary.
-
-Simple whitespace-separated frequency matrix with 4 rows (A, C, G, T).
+A plain-text `.pfm` file is an input format, not a public model type.
+`readmodel("motif.pfm"; background=0.25f0)` reads its 4-row (A, C, G, T)
+frequency matrix and returns a ready-to-scan `PWM`. For an in-memory frequency
+matrix, call `pwm_from_pfm(pfm; background=...)`; the conversion applies the
+documented pseudocount and adds the N-state row.
 
 ### BaMM `.ihbcp`
 
@@ -74,10 +73,13 @@ scan(model, batch; strands=BestStrand(), execution=SerialExecution())
 scan!(dest, model, sequence; strands=ForwardOnly())
 ```
 
-The scanning kernel for higher-order models (BaMM, Dimont, Slim) uses a shared
-generic implementation in `_ho_scan_forward!` / `_ho_scan_reverse!` parameterized
-by geometry (kmer, context, window, n_terms). SiteGA uses a dinucleotide-specific
-kernel. PWM uses a direct 5-row matrix lookup.
+The scanning kernel is shared across model families and parameterized by
+geometry: k-mer length, preceding context, window size, and number of scoring
+terms. `motif_length(model)` is the represented motif width, while
+`window_size(model)` is the number of sequence bases required for one score.
+For BaMM, Dimont, and Slim, the window includes preceding context; for PWM and
+SiteGA it equals the motif length. `npositions(model, sequence_length)` exposes
+the resulting scan-track length.
 
 ## Type parameters
 

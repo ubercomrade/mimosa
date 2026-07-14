@@ -5,13 +5,19 @@
 ```@docs
 AbstractProfileSource
 AbstractMotifModel
-PFM
 PWM
 BaMM
 SiteGA
 Dimont
 Slim
 ScoreProfile
+AbstractMatrixMotif
+AbstractHigherOrderMotif
+is_scannable
+pfm_to_pwm
+pwm_from_pfm
+extend_pwm_with_n
+site_start_offset
 ```
 
 ## Model I/O
@@ -19,6 +25,12 @@ ScoreProfile
 ```@docs
 readmodel
 writemodel
+read_scores
+read_bamm
+read_sitega
+write_sitega
+read_dimont
+read_slim
 readsequences
 read_fasta
 ```
@@ -28,12 +40,17 @@ read_fasta
 ```@docs
 scan
 scan!
+scan_forward!
+scan_reverse!
+scan_best!
+scan_both!
+npositions
+scan_result_lengths
 scorebounds
 motif_length
 window_size
 scorematrix
 scoretype
-npositions
 StrandPair
 ```
 
@@ -41,11 +58,24 @@ StrandPair
 
 ```@docs
 EncodedSequenceBatch
+nsequences
+seqlength
+sequence
+empty_sequence_batch
+N_CODE
+encode_base
 encode_sequence
 reverse_complement
 reverse_complement!
+to_padded
+from_padded
 make_random_sequences
 RaggedArray
+nrows
+rowlength
+row
+build_ragged
+empty_ragged
 ```
 
 ## Strand policies
@@ -63,6 +93,7 @@ BothStrands
 ```@docs
 compare
 ComparisonResult
+metric_name
 AbstractProfileMetric
 OverlapCoefficient
 OverlapCoefficientRowwise
@@ -72,6 +103,22 @@ CosineSimilarityProfile
 ProfileConfig
 PreparedProfile
 prepare_profile
+profile_bundle
+parse_profile_metric
+LogTailTable
+EmpiricalLogTail
+fit
+lookup_score
+transform_scores
+flatten_bundle
+normalize_bundle
+AnchorCSR
+build_anchor_csr
+collect_best_anchors
+collect_threshold_anchors
+collect_anchors
+score_shift
+profile_compare
 ```
 
 ## Site extraction
@@ -85,6 +132,13 @@ SiteHit
 SiteCollection
 selectsites
 reconstruct_pfm
+extract_site_matrix
+site_strings
+build_pcm
+pcm_to_pfm
+sort_hits!
+select_top_fraction
+empty_site_collection
 ```
 
 ## Statistics
@@ -97,19 +151,26 @@ fit_gev
 survival
 cdf
 pvalue
+scipy_params
 BenjaminiHochberg
 adjusted_pvalues
 evalue
+NullPair
 NullDistribution
+ProfileComparisonContract
 NullBuildConfig
 NullBuildResult
 build_null
 annotate_results
 AnnotatedResult
+eligible_targets
 parse_group_relations
 GroupRelations
 savenull
 loadnull
+MODEL_FORMAT_VERSION
+NULL_FORMAT_VERSION
+ANNOTATED_RESULT_SCHEMA_VERSION
 ```
 
 ## Execution policies
@@ -127,8 +188,13 @@ Cache
 cache_key
 cache_has
 cache_get
+cache_get_meta
 cache_set
 clearcache
+content_fingerprint
+model_fingerprint
+model_collection_fingerprint
+sequence_fingerprint
 ```
 
 ## Serialization
@@ -136,6 +202,7 @@ clearcache
 ```@docs
 to_json
 to_dict
+main
 ```
 
 ## Errors

@@ -33,7 +33,7 @@ explicit `ThreadedExecution` policy in the workflow being measured.
 - `using Mimosa` performs no filesystem I/O, launches no work, prints nothing,
   and changes no global thread or BLAS setting.
 - CLI JSON is stdout-only; diagnostics are stderr-only; exit codes are stable.
-- Public storage uses model format 1, null format 3, cache format 2, and
+- Public storage uses model format 2, null format 3, cache format 2, and
   annotated-result schema 1.
 - Bundle reads remain bounded and checksum verified; writes remain atomic.
 - Numerical tolerances, security tests, Aqua/JET checks, and frozen fixtures are

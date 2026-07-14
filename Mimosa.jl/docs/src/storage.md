@@ -11,7 +11,7 @@ Model bundles use format version 2:
 model_bundle/
 ├── manifest.toml
 └── data/
-    └── representation.bin
+    └── weights.bin  # PWM; higher-order models use representation.bin
 ```
 
 The manifest records kind, name, dtype, shape, row-major layout, model-specific
@@ -24,7 +24,7 @@ Use `writemodel(path, model)` and `readmodel(path)`.
 
 ## Null Bundles
 
-Null bundles use format version 2:
+Null bundles use format version 3:
 
 ```text
 null_bundle/
