@@ -28,7 +28,6 @@ src/
 ├── models/             # Model types and constructors
 │   ├── types.jl        # Shared model hierarchy, PFM, PWM
 │   ├── pwm.jl          # PWM scanning geometry traits
-│   ├── matrices.jl     # pfm_to_pwm, pcm_to_pfm, reverse_complement
 │   ├── bamm.jl         # BaMM type
 │   ├── sitega.jl       # SiteGA type
 │   ├── dimont.jl       # Dimont type

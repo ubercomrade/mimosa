@@ -486,6 +486,25 @@ function build_pcm(sites::Matrix{UInt8}, motif_width::Int)
 end
 
 """
+    pcm_to_pfm(pcm; pseudocount=0.25)
+
+Convert a Position Count Matrix to a Position Frequency Matrix.
+
+`pcm` axes: `(base, position)` with `base ∈ 1:4`.
+"""
+function pcm_to_pfm(
+    pcm::AbstractMatrix{T}; pseudocount::AbstractFloat=0.25f0
+) where {T<:AbstractFloat}
+    if size(pcm, 1) != NUCLEOTIDE_CARDINALITY
+        throw(ModelDimensionError("PCM must have 4 rows, got $(size(pcm, 1))."))
+    end
+    n_sites = sum(pcm; dims=1)
+    pc = T(pseudocount)
+    denom = n_sites .+ T(NUCLEOTIDE_CARDINALITY) * pc
+    return (pcm .+ pc) ./ denom
+end
+
+"""
     reconstruct_pfm(model::PWM, batch::EncodedSequenceBatch, selector::SiteSelector;
                     pseudocount=0.25f0, strands=BothStrands(),
                     execution=SerialExecution())
