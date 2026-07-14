@@ -1,11 +1,20 @@
 # Concrete motif model types per ADR 0001.
 
 """
+    AbstractProfileSource
+
+Abstract supertype of inputs that can be prepared for profile comparison.
+"""
+abstract type AbstractProfileSource end
+
+"""
     AbstractMotifModel
 
 Abstract supertype of all motif model families (PWM, PFM, BaMM, SiteGA, etc.).
+Motif models can be scanned against encoded sequences. Precomputed profiles are
+`AbstractProfileSource`s, but are not motif models.
 """
-abstract type AbstractMotifModel end
+abstract type AbstractMotifModel <: AbstractProfileSource end
 
 """
     AbstractMatrixMotif
@@ -23,8 +32,6 @@ abstract type AbstractHigherOrderMotif <: AbstractMotifModel end
 
 """Return whether `model` has a direct sequence-scanning implementation."""
 is_scannable(::AbstractMotifModel) = false
-"""Return whether `model` is a precomputed score profile."""
-is_precomputed_profile(::AbstractMotifModel) = false
 
 """
     PFM{T,M}

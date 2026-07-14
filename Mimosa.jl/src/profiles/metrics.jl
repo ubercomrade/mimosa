@@ -1,4 +1,4 @@
-# Profile comparison metrics: overlap-based and cosine similarity.
+# Profile comparison metric types and dispatch helpers.
 
 """
     AbstractProfileMetric
@@ -48,7 +48,7 @@ struct DiceSimilarityRowwise <: AbstractProfileMetric end
 """
     CosineSimilarityProfile
 
-Row-wise cosine similarity: mean of per-window cosine values.
+Row-wise cosine similarity: mean of per-window cosine similarity.
 """
 struct CosineSimilarityProfile <: AbstractProfileMetric end
 
@@ -84,13 +84,14 @@ function _resolve_profile_metric(metric)
     return parse_profile_metric(metric)
 end
 
-# Dispatch helpers (no string comparisons in hot paths)
+"""Return whether a metric pools values over all selected windows."""
+is_pooled(::AbstractProfileMetric) = false
 is_pooled(::OverlapCoefficient) = true
 is_pooled(::DiceSimilarity) = true
-is_pooled(::AbstractProfileMetric) = false
 
+"""Return whether a metric uses the Dice denominator."""
+is_dice_metric(::AbstractProfileMetric) = false
 is_dice_metric(::DiceSimilarity) = true
 is_dice_metric(::DiceSimilarityRowwise) = true
-is_dice_metric(::AbstractProfileMetric) = false
 
 const PROFILE_EPS = 1e-6

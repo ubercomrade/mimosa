@@ -3,6 +3,7 @@
 ## Model types
 
 ```@docs
+AbstractProfileSource
 AbstractMotifModel
 PFM
 PWM

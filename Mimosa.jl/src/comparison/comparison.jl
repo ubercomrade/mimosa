@@ -1,5 +1,4 @@
-# Profile comparison: metrics, results, and profile comparison.
+# Profile comparison dispatch and result types.
 
-include("profile_metrics.jl")
 include("results.jl")
 include("profile_comparison.jl")

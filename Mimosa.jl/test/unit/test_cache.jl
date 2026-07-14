@@ -261,4 +261,10 @@ end
 
     # Different collection → different fingerprint
     @test model_collection_fingerprint([m1]) != model_collection_fingerprint([m1, m2])
+
+    profile = ScoreProfile("profile", build_ragged([Float32[0.1, 0.2]]))
+    @test model_collection_fingerprint([profile]) ==
+        model_collection_fingerprint(AbstractProfileSource[profile])
+    @test model_collection_fingerprint([m1, profile]) ==
+        model_collection_fingerprint([profile, m1])
 end

@@ -13,7 +13,13 @@ and specific file format.
 | `SiteGA{T,M}` | Higher-order | `.mat` | Dinucleotide model |
 | `Dimont{T,M}` | Higher-order | XML | Jstacs Bayesian network |
 | `Slim{T,M}` | Higher-order | XML | Jstacs GenDisMix classifier |
-| `ScoreProfile` | Pseudo-model | FASTA-like | Precomputed score profiles |
+
+## Precomputed profiles
+
+`ScoreProfile` is a precomputed profile source, not a motif model. Its `length`
+is the number of profile rows for compatibility; use `nrows(profile.scores)` for
+that value. It is prepared directly for profile comparison and cannot be scanned
+or serialized as a motif bundle.
 
 ## File formats
 
@@ -27,10 +33,6 @@ extended PWM (A, C, G, T, N), with the N row as per-column minimum.
 `PFM` is a matrix representation and is not directly scannable. Convert it
 explicitly with `pwm_from_pfm(pfm)` before calling `scan`; this keeps the
 background and pseudocount choice visible at the API boundary.
-
-`ScoreProfile` is a precomputed profile, not a motif. Its `length` is the
-number of profile rows for compatibility; use `nrows(profile.scores)` for
-that value. It intentionally has no `motif_length` or `window_size`.
 
 Simple whitespace-separated frequency matrix with 4 rows (A, C, G, T).
 

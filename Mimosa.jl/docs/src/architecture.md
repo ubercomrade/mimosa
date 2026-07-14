@@ -32,7 +32,6 @@ src/
 │   ├── sitega.jl       # SiteGA type
 │   ├── dimont.jl       # Dimont type
 │   ├── slim.jl         # Slim type
-│   └── score_profile.jl # ScoreProfile pseudo-model
 ├── sequences/          # Sequence representation
 │   ├── encoding.jl     # EncodedSequenceBatch, reverse_complement
 │   ├── fasta.jl        # FASTA reader
@@ -47,11 +46,12 @@ src/
 │   └── slim_scan.jl    # Slim scanning
 ├── comparison/         # Profile comparison
 │   ├── results.jl      # ComparisonResult, compare()
-│   ├── profile_metrics.jl     # Profile metrics
 │   └── profile_comparison.jl  # Profile alignment
-├── profiles/           # Profile normalization and anchors
+├── profiles/           # Profile inputs, normalization, anchors, and alignment
+│   ├── precomputed_profile.jl # ScoreProfile precomputed profile source
 │   ├── normalization.jl # EmpiricalLogTail
 │   ├── anchors.jl       # Anchor collection
+│   ├── metrics.jl       # Profile metrics
 │   └── alignment.jl    # Shift-based window alignment
 ├── sites/              # Site extraction and PFM reconstruction
 │   └── sites.jl

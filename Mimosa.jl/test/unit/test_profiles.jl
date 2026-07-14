@@ -201,6 +201,10 @@ end
         "target2", build_ragged([Float32[0.3, 0.1, 0.9, 0.2, 0.8, 0.1, 0.5, 0.3, 0.7, 0.2]])
     )
 
+    @test sp1 isa AbstractProfileSource
+    @test !(sp1 isa AbstractMotifModel)
+    @test !applicable(motif_length, sp1)
+
     # Prepare the query
     prepared = prepare_profile(sp1)
     @test prepared.name == "query"

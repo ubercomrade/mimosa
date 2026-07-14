@@ -34,23 +34,23 @@ const MODEL_KINDS = Set(["pwm", "pfm", "bamm", "sitega", "dimont", "slim"])
 # ── Model fingerprinting (for cache keys) ────────────────────────────────────
 
 """
-    model_fingerprint(model::AbstractMotifModel)
+    model_fingerprint(source::AbstractProfileSource)
 
-Return a hex-encoded SHA-256 fingerprint of a model's content for cache
+Return a hex-encoded SHA-256 fingerprint of a profile source's content for cache
 keying and null distribution compatibility tracking.
 """
-function model_fingerprint(model::AbstractMotifModel)
-    return content_fingerprint(model)
+function model_fingerprint(source::AbstractProfileSource)
+    return content_fingerprint(source)
 end
 
 """
-    model_collection_fingerprint(models::AbstractVector{<:AbstractMotifModel})
+    model_collection_fingerprint(sources::AbstractVector{<:AbstractProfileSource})
 
-Return a hex-encoded SHA-256 fingerprint of a collection of models,
+Return a hex-encoded SHA-256 fingerprint of a collection of profile sources,
 incorporating each model's individual fingerprint in sorted order.
 """
-function model_collection_fingerprint(models::AbstractVector{<:AbstractMotifModel})
-    fps = sort!([model_fingerprint(m) for m in models])
+function model_collection_fingerprint(sources::AbstractVector{<:AbstractProfileSource})
+    fps = sort!([model_fingerprint(source) for source in sources])
     return content_fingerprint(join(fps, "|"))
 end
 
@@ -340,6 +340,7 @@ _model_kind(::BaMM) = "bamm"
 _model_kind(::SiteGA) = "sitega"
 _model_kind(::Dimont) = "dimont"
 _model_kind(::Slim) = "slim"
+_model_kind(::ScoreProfile) = "score_profile"
 
 _model_array(model::PWM) = model.weights
 _model_array(model::PFM) = model.frequencies

@@ -619,7 +619,7 @@ function _read_model_collection(path::AbstractString, model_type::AbstractString
             throw(CLIError("unsupported model type for directory: $(model_type)"))
         end
         isempty(files) && throw(CLIError("no $(model_type) files found in $(path)."))
-        models = AbstractMotifModel[]
+        models = AbstractProfileSource[]
         for f in files
             push!(models, _read_typed_model(f, model_type))
         end
@@ -628,7 +628,7 @@ function _read_model_collection(path::AbstractString, model_type::AbstractString
         # Single file: MEME can contain multiple motifs
         if model_type == "pwm"
             # Read all motifs from MEME
-            models = AbstractMotifModel[]
+            models = AbstractProfileSource[]
             idx = 0
             while true
                 try
@@ -646,7 +646,7 @@ function _read_model_collection(path::AbstractString, model_type::AbstractString
             isempty(models) && throw(CLIError("no motifs found in $(path)."))
             return models
         else
-            return AbstractMotifModel[_read_typed_model(path, model_type)]
+            return AbstractProfileSource[_read_typed_model(path, model_type)]
         end
     end
 end
@@ -820,7 +820,7 @@ function _print_inspect_help(io::IO)
     return nothing
 end
 
-function _model_info(model::AbstractMotifModel)
+function _model_info(model::AbstractProfileSource)
     info = Dict{String,Any}("name" => model.name, "type" => _model_kind(model))
     if model isa PWM
         info["width"] = length(model)

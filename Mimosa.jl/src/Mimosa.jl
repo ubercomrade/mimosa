@@ -16,11 +16,10 @@ include("errors.jl")
 include("parallel/parallel.jl")
 include("models/models.jl")
 include("sequences/sequences.jl")
-include("models/score_profile.jl")
 include("scanning/scanning.jl")
+include("profiles/profiles.jl")
 include("io/io.jl")
 include("comparison/comparison.jl")
-include("profiles/profiles.jl")
 include("sites/sites.jl")
 include("statistics/statistics.jl")
 include("cache/cache.jl")
@@ -44,7 +43,8 @@ export readmodel,
     to_dict,
     main
 export MimosaError, ModelFormatError, ModelDimensionError, InvariantError
-export AbstractMotifModel,
+export AbstractProfileSource,
+    AbstractMotifModel,
     AbstractMatrixMotif,
     AbstractHigherOrderMotif,
     PFM,
@@ -104,7 +104,7 @@ export ScoreProfile,
     window_size,
     scorematrix,
     scoretype
-export is_scannable, is_precomputed_profile
+export is_scannable
 
 # Sites and PFM reconstruction exports
 export SiteSelector,
