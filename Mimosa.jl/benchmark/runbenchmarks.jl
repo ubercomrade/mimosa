@@ -473,8 +473,8 @@ function bench_pwm_scan!(results::Vector{BenchResult}, config::BenchConfig)
 
             # Forward scan
             dest = Vector{Float32}(undef, n_pos)
-            scan_forward!(dest, pwm.weights, enc, n_pos)  # warm up
-            b = BenchmarkTools.@benchmark scan_forward!($dest, $(pwm.weights), $enc, $n_pos)
+            scan_forward!(dest, pwm, enc, n_pos)  # warm up
+            b = BenchmarkTools.@benchmark scan_forward!($dest, $pwm, $enc, $n_pos)
             println(
                 @sprintf(
                     "  scan_forward!  w=%d len=%d  median=%.3f μs  allocs=%d",
@@ -497,8 +497,8 @@ function bench_pwm_scan!(results::Vector{BenchResult}, config::BenchConfig)
             )
 
             # Best strand
-            scan_best!(dest, pwm.weights, enc, n_pos)
-            b = BenchmarkTools.@benchmark scan_best!($dest, $(pwm.weights), $enc, $n_pos)
+            scan_best!(dest, pwm, enc, n_pos)
+            b = BenchmarkTools.@benchmark scan_best!($dest, $pwm, $enc, $n_pos)
             println(
                 @sprintf(
                     "  scan_best!     w=%d len=%d  median=%.3f μs  allocs=%d",
@@ -776,10 +776,8 @@ function bench_higher_order_scan!(results::Vector{BenchResult}, config::BenchCon
         n_pos = max(length(enc) - win + 1, 0)
         dest = Vector{Float32}(undef, n_pos)
 
-        Mimosa._ho_scan_forward!(dest, model.representation, kmer, ctx, width, enc, n_pos)  # warmup
-        b = BenchmarkTools.@benchmark Mimosa._ho_scan_forward!(
-            $dest, $(model.representation), $kmer, $ctx, $width, $enc, $n_pos
-        )
+        scan_forward!(dest, model, enc, n_pos)  # warmup
+        b = BenchmarkTools.@benchmark scan_forward!($dest, $model, $enc, $n_pos)
         println(
             @sprintf(
                 "  BaMM order=%d  kmer=%d  rows=%5d  median=%.3f μs  allocs=%d",
@@ -827,10 +825,8 @@ function bench_higher_order_scan!(results::Vector{BenchResult}, config::BenchCon
             continue
         end
         dest = Vector{Float32}(undef, n_pos)
-        Mimosa._ho_scan_forward!(dest, model.representation, kmer, ctx, width, enc, n_pos)  # warmup
-        b = BenchmarkTools.@benchmark Mimosa._ho_scan_forward!(
-            $dest, $(model.representation), $kmer, $ctx, $width, $enc, $n_pos
-        )
+        scan_forward!(dest, model, enc, n_pos)  # warmup
+        b = BenchmarkTools.@benchmark scan_forward!($dest, $model, $enc, $n_pos)
         println(
             @sprintf(
                 "  %-15s  order=%d  width=%d  rows=%5d  median=%.3f μs  allocs=%d",
@@ -1159,6 +1155,13 @@ end
 
 Benchmark model storage (bundle write/read round-trip).
 """
+function _write_benchmark_model!(
+    tmpdir::String, prefix::String, model::AbstractMotifModel, counter::Base.RefValue{Int}
+)
+    counter[] += 1
+    return writemodel(joinpath(tmpdir, "$(prefix)_$(counter[])"), model)
+end
+
 function bench_storage!(results::Vector{BenchResult}, config::BenchConfig)
     println("\n=== Storage (bundle write/read) ===")
 
@@ -1167,9 +1170,14 @@ function bench_storage!(results::Vector{BenchResult}, config::BenchConfig)
 
     tmpdir = mktempdir()
 
+    # Bundles reject overwrites, so each benchmark sample needs a unique target.
+    write_counter = Ref(0)
+
     # PWM write
     writemodel(joinpath(tmpdir, "pwm_bundle"), pwm)
-    b = BenchmarkTools.@benchmark writemodel(joinpath($tmpdir, "pwm_bundle"), $pwm)
+    b = BenchmarkTools.@benchmark _write_benchmark_model!(
+        $tmpdir, "pwm_write", $pwm, $write_counter
+    )
     println(
         @sprintf(
             "  writemodel PWM     median=%.3f μs  allocs=%d",
@@ -1193,7 +1201,9 @@ function bench_storage!(results::Vector{BenchResult}, config::BenchConfig)
 
     # BaMM write
     writemodel(joinpath(tmpdir, "bamm_bundle"), bamm)
-    b = BenchmarkTools.@benchmark writemodel(joinpath($tmpdir, "bamm_bundle"), $bamm)
+    b = BenchmarkTools.@benchmark _write_benchmark_model!(
+        $tmpdir, "bamm_write", $bamm, $write_counter
+    )
     println(
         @sprintf(
             "  writemodel BaMM    median=%.3f μs  allocs=%d",
