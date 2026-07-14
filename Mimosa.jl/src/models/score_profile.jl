@@ -15,6 +15,10 @@ struct ScoreProfile <: AbstractMotifModel
     scores::RaggedArray{Float32}
 end
 
+is_precomputed_profile(::ScoreProfile) = true
+motif_length(::ScoreProfile) = throw(ArgumentError("ScoreProfile has no motif length."))
+window_size(::ScoreProfile) = throw(ArgumentError("ScoreProfile has no motif window."))
+
 Base.length(model::ScoreProfile) = nrows(model.scores)
 function Base.show(io::IO, model::ScoreProfile)
     return print(io, "ScoreProfile(\"$(model.name)\", $(nrows(model.scores)) rows)")

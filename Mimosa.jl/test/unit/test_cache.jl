@@ -16,6 +16,21 @@ using SHA
     @test disabled.enabled == false
 end
 
+@testset "Cache key contract and orphan cleanup" begin
+    dir = mktempdir()
+    cache = Cache(dir)
+    @test_throws ArgumentError cache_set(cache, "human key", UInt8[1])
+    cache_set(cache, "keep-key", UInt8[1, 2, 3])
+    stage = joinpath(dir, ".mimosa-cache-stage-orphan")
+    mkpath(stage)
+    write(joinpath(stage, "partial"), UInt8[9])
+    sentinel = joinpath(dir, "notes.txt")
+    write(sentinel, "keep")
+    @test clearcache(cache) == 1
+    @test !ispath(stage)
+    @test isfile(sentinel)
+end
+
 @testset "Cache set/get/has" begin
     dir = mktempdir()
     cache = Cache(dir)

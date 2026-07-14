@@ -22,6 +22,12 @@ end
 
 npositions(model::PWM, seq_len::Int) = npositions(seq_len, motif_length(model))
 
+function scan(model::PFM, args...; kwargs...)
+    return throw(
+        ArgumentError("PFM is not directly scannable; convert it with pwm_from_pfm first.")
+    )
+end
+
 # Public scan entry points accept raw vectors, so validate once before entering
 # the @inbounds kernels. Batch containers are already validated at construction.
 function _validate_scan_input(seq::AbstractVector{UInt8}, n_pos::Int, width::Int, dests...)
@@ -31,15 +37,15 @@ function _validate_scan_input(seq::AbstractVector{UInt8}, n_pos::Int, width::Int
     end
     n_pos < 0 && throw(ArgumentError("n_pos must be non-negative, got $n_pos."))
     width < 1 && throw(ArgumentError("scan width must be positive."))
-    n_pos > npositions(length(seq), width) && throw(
-        ArgumentError("n_pos=$n_pos exceeds sequence geometry for width=$width."),
-    )
+    n_pos > npositions(length(seq), width) &&
+        throw(ArgumentError("n_pos=$n_pos exceeds sequence geometry for width=$width."))
     any(code -> code > N_CODE, seq) && throw(
-        ArgumentError("sequence contains an invalid encoded DNA code; valid codes are 0x00..0x04."),
+        ArgumentError(
+            "sequence contains an invalid encoded DNA code; valid codes are 0x00..0x04."
+        ),
     )
-    any(length(dest) < n_pos for dest in dests) && throw(
-        ArgumentError("destination is shorter than n_pos=$n_pos."),
-    )
+    any(length(dest) < n_pos for dest in dests) &&
+        throw(ArgumentError("destination is shorter than n_pos=$n_pos."))
     return nothing
 end
 
@@ -161,9 +167,8 @@ function scan_both!(
 ) where {T<:AbstractFloat}
     W = size(weights, 2)
     size(weights, 1) == 5 || throw(ArgumentError("PWM weights must have 5 rows."))
-    Base.mightalias(fwd, rev) && throw(
-        ArgumentError("forward and reverse destinations must not alias."),
-    )
+    Base.mightalias(fwd, rev) &&
+        throw(ArgumentError("forward and reverse destinations must not alias."))
     _validate_scan_input(seq, n_pos, W, fwd, rev)
     # Invariant: same as scan_forward! and scan_reverse! above.
     @inbounds for pos in 1:n_pos
@@ -198,7 +203,8 @@ Sequences shorter than the motif width return an empty score vector.
 function scan(model::PWM, seq::AbstractVector{UInt8}; strands::StrandPolicy=ForwardOnly())
     W = length(model)
     n_pos = npositions(length(seq), W)
-    return _scan_single(strands, model.weights, seq, n_pos)
+    weights = eltype(model.weights) === Float32 ? model.weights : Float32.(model.weights)
+    return _scan_single(strands, weights, seq, n_pos)
 end
 
 function _scan_single(
@@ -317,8 +323,8 @@ function _scan_batch(
 )
     n = nsequences(batch)
     W = length(model)
-    weights = model.weights
-    T = eltype(weights)
+    weights = eltype(model.weights) === Float32 ? model.weights : Float32.(model.weights)
+    T = Float32
     offsets = _scan_offsets(batch, W)
     data = Vector{T}(undef, offsets[end] - 1)
     for i in 1:n
@@ -335,8 +341,8 @@ function _scan_batch(
 )
     n = nsequences(batch)
     W = length(model)
-    weights = model.weights
-    T = eltype(weights)
+    weights = eltype(model.weights) === Float32 ? model.weights : Float32.(model.weights)
+    T = Float32
 
     offsets = _scan_offsets(batch, W)
     data = Vector{T}(undef, offsets[end] - 1)
@@ -374,8 +380,8 @@ function _scan_batch(
 )
     n = nsequences(batch)
     W = length(model)
-    weights = model.weights
-    T = eltype(weights)
+    weights = eltype(model.weights) === Float32 ? model.weights : Float32.(model.weights)
+    T = Float32
 
     offsets = _scan_offsets(batch, W)
     fwd = Vector{T}(undef, offsets[end] - 1)
@@ -399,8 +405,8 @@ function _scan_batch(
 )
     n = nsequences(batch)
     W = length(model)
-    weights = model.weights
-    T = eltype(weights)
+    weights = eltype(model.weights) === Float32 ? model.weights : Float32.(model.weights)
+    T = Float32
 
     offsets = _scan_offsets(batch, W)
     fwd = Vector{T}(undef, offsets[end] - 1)

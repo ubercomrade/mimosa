@@ -21,6 +21,11 @@ Abstract supertype of higher-order motif models (BaMM, SiteGA, Dimont, Slim).
 """
 abstract type AbstractHigherOrderMotif <: AbstractMotifModel end
 
+"""Return whether `model` has a direct sequence-scanning implementation."""
+is_scannable(::AbstractMotifModel) = false
+"""Return whether `model` is a precomputed score profile."""
+is_precomputed_profile(::AbstractMotifModel) = false
+
 """
     PFM{T,M}
 
@@ -138,6 +143,7 @@ end
 
 Base.length(model::PFM) = size(model.frequencies, 2)
 Base.length(model::PWM) = size(model.weights, 2)
+is_scannable(::PWM) = true
 
 """
     motif_length(model::AbstractMotifModel)

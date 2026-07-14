@@ -104,6 +104,7 @@ export ScoreProfile,
     window_size,
     scorematrix,
     scoretype
+export is_scannable, is_precomputed_profile
 
 # Sites and PFM reconstruction exports
 export SiteSelector,

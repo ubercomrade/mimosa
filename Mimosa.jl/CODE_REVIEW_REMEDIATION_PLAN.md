@@ -87,12 +87,12 @@ root Python fixtures; fixture suite либо проходит на утверж�
   пути, `/`, `\\`, NUL, `.`/`..` и platform drive prefixes.
 - [x] После построения пути проверять нормализованный/real path containment под
   cache root; не полагаться только на regex.
-- [ ] Решить, является ли публичным контрактом произвольный человекочитаемый
+- [x] Решить, является ли публичным контрактом произвольный человекочитаемый
   key. Предпочтительно ввести внутренний `CacheKey` либо ограниченный ASCII
   key, сохранив текущие тестовые имена без traversal components.
 - [x] `clearcache(cache)` должен удалять только распознанные Mimosa entries и
   оставлять unrelated files и directories без изменений.
-- [ ] CLI `cache clear` должен отклонять подозрительный cache root и сообщать
+- [x] CLI `cache clear` должен отклонять подозрительный cache root и сообщать
   число удаленных entries, а не число произвольных файлов.
 
 Обязательные тесты: `../`, абсолютный путь, backslash, symlink escape, NUL,
@@ -145,7 +145,7 @@ malformed CSR offsets, invalid strand/code, overflow-oriented large integers и
   `size`.
 - [x] Либо выполнить настоящий fsync temp file и parent directory, либо убрать
   вводящее в заблуждение имя `_fsync_and_rename` и обещание durability.
-- [ ] Добавить recovery/cleanup policy для orphan stages без удаления валидной
+- [x] Добавить recovery/cleanup policy для orphan stages без удаления валидной
   entry.
 
 ### 6.3. Content fingerprints
@@ -154,9 +154,9 @@ malformed CSR offsets, invalid strand/code, overflow-oriented large integers и
   kind, name, score data, offsets, dtype и layout marker.
 - [x] Общий fallback для неизвестного `AbstractMotifModel` должен бросать
   явную ошибку, а не хешировать только type/name.
-- [ ] Канонизировать integer/float byte order и integer width, если fingerprints
+- [x] Канонизировать integer/float byte order и integer width, если fingerprints
   заявлены переносимыми между архитектурами.
-- [ ] Зафиксировать, должна ли конкретная matrix wrapper type влиять на
+- [x] Зафиксировать, должна ли конкретная matrix wrapper type влиять на
   fingerprint семантически одинаковой модели.
 - [x] Добавить collision tests для одинаковых имен и разных score data/offsets.
 
@@ -198,19 +198,19 @@ specification. Текущий `NULL_FORMAT_VERSION = 2` нельзя менят�
   alignment.
 - [x] Убрать или валидировать публичный трехаргументный конструктор
   `PreparedProfile`, позволяющий создать несовместимые bundle/anchors.
-- [ ] Разделить `AbstractMotifModel` на возможности или ввести четкий dispatch:
+- [x] Разделить `AbstractMotifModel` на возможности или ввести четкий dispatch:
   scannable motif, matrix requiring PWM conversion и precomputed profile.
 - [x] Определить поддерживаемую семантику mixed `ScoreProfile`/motif comparison.
   Либо реализовать ее через общую normalization pipeline, либо отклонять на
   parse/API boundary и убрать комбинацию из CLI help.
-- [ ] Явно определить поддержку PFM: автоматическая конверсия в PWM или
+- [x] Явно определить поддержку PFM: автоматическая конверсия в PWM или
   документированный запрет прямого scan/compare.
-- [ ] Устранить неоднозначную семантику `length(ScoreProfile)` против motif
+- [x] Устранить неоднозначную семантику `length(ScoreProfile)` против motif
   length; generic code должен использовать именованные accessors.
 - [x] Higher-order generic methods должны использовать `scorematrix`,
   `motif_length`, `window_size` и geometry accessors, а не предполагать поля
   `representation`, `span` и `motif_length`.
-- [ ] Решение о каноническом Float32 scan output принять в рамках раздела 3.1
+- [x] Решение о каноническом Float32 scan output принять в рамках раздела 3.1
   `ARCHITECTURE_REFACTORING_PLAN.md`, затем закрепить constructor/API tests.
 
 ## 9. Этап 5. Усилить parsers и relation input
@@ -280,11 +280,11 @@ allocations в benchmark GEV fit.
   arguments стабильно давали exit code 1.
 - [x] Исправить global `--quiet`/`--verbose` перед command и проверять точное
   число positional arguments.
-- [ ] Удалить или реализовать `build-null --cache-dir`, аргумент `pattern` и
+- [x] Удалить или реализовать `build-null --cache-dir`, аргумент `pattern` и
   неиспользуемый parser parameter.
 - [ ] Объединить JSON writer CLI с `serialization.jl`, сохранив stdout/stderr и
   schema contract.
-- [ ] Получать CLI/provenance version из package version, не дублировать
+- [x] Получать CLI/provenance version из package version, не дублировать
   строку `0.1.0` в нескольких файлах.
 
 ## 12. Этап 8. Удалить мертвый код и очевидные аллокации
@@ -303,7 +303,7 @@ allocations в benchmark GEV fit.
   проверяемую семантику.
 - [x] Валидировать/реализовать `writemodel(...; format)` либо удалить keyword с
   deprecation period.
-- [ ] Строить `make_random_sequences`, batch reverse complement и
+- [x] Строить `make_random_sequences`, batch reverse complement и
   `from_padded` сразу в flat buffers без `Vector{Vector}` staging.
 - [ ] После разделения ответственности разбить `cli.jl`, `alignment.jl` и
   `sites.jl` по назначению, не создавая отдельный Julia module на каждый файл.

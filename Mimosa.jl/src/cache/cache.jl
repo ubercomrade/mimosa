@@ -22,6 +22,7 @@ using TOML
 const CACHE_FORMAT_VERSION = 2
 const _CACHE_DATA_NAME = "data.bin"
 const _CACHE_META_NAME = "meta.toml"
+const _CACHE_KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
 
 # Algorithm version tags: bump when the algorithm changes so stale caches
 # are automatically invalidated.
@@ -91,8 +92,11 @@ Return a hex-encoded SHA-256 fingerprint of an integer vector (e.g. offsets).
 """
 function content_fingerprint(data::AbstractVector{<:Integer})
     io = IOBuffer()
+    write(io, "integer-vector|")
     for x in data
-        write(io, x)
+        # Textual canonicalization makes width and signedness explicit and is
+        # independent of host byte order.
+        write(io, string(typeof(x)), ":", string(x), ";")
     end
     return content_fingerprint(take!(io))
 end
@@ -122,9 +126,9 @@ function content_fingerprint(arr::AbstractArray{T}) where {T<:AbstractFloat}
         write(io, ",")
     end
     write(io, ";")
-    # Write raw bytes in a canonical order (column-major = Julia native)
+    # Preserve the exact value and width without depending on host endianness.
     for x in arr
-        write(io, reinterpret(UInt8, [Float64(x)]))
+        write(io, bitstring(x), ";")
     end
     return content_fingerprint(take!(io))
 end
@@ -244,6 +248,9 @@ function _validate_cache_key(key::AbstractString)
         throw(ArgumentError("cache key must not contain path separators."))
     occursin(r"^[A-Za-z]:", value) &&
         throw(ArgumentError("cache key must not contain a drive prefix."))
+    occursin(_CACHE_KEY_PATTERN, value) || throw(
+        ArgumentError("cache key must be 1-128 ASCII letters, digits, '.', '_' or '-'.")
+    )
     return value
 end
 
@@ -421,6 +428,7 @@ function clearcache(cache::Cache)
     !cache.enabled && return 0
     isdir(cache.directory) || return 0
     count = 0
+    _cleanup_orphan_stages!(cache)
     for key in readdir(cache.directory)
         try
             _validate_cache_key(key)
@@ -436,6 +444,22 @@ function clearcache(cache::Cache)
         end
     end
     return count
+end
+
+function _cleanup_orphan_stages!(cache::Cache)
+    isdir(cache.directory) || return 0
+    removed = 0
+    for entry in readdir(cache.directory; join=true)
+        name = basename(entry)
+        if startswith(name, ".mimosa-cache-stage-") && isdir(entry)
+            rm(entry; recursive=true, force=true)
+            removed += 1
+        elseif occursin(r"\.backup-[0-9]+$", name) && isdir(entry)
+            rm(entry; recursive=true, force=true)
+            removed += 1
+        end
+    end
+    return removed
 end
 
 """

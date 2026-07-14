@@ -24,6 +24,14 @@ extended PWM (A, C, G, T, N), with the N row as per-column minimum.
 
 ### PFM (Position Frequency Matrix)
 
+`PFM` is a matrix representation and is not directly scannable. Convert it
+explicitly with `pwm_from_pfm(pfm)` before calling `scan`; this keeps the
+background and pseudocount choice visible at the API boundary.
+
+`ScoreProfile` is a precomputed profile, not a motif. Its `length` is the
+number of profile rows for compatibility; use `nrows(profile.scores)` for
+that value. It intentionally has no `motif_length` or `window_size`.
+
 Simple whitespace-separated frequency matrix with 4 rows (A, C, G, T).
 
 ### BaMM `.ihbcp`

@@ -11,7 +11,7 @@
 #
 # JSON output goes to stdout only. Logs and errors go to stderr only.
 
-const CLI_VERSION = "0.1.0"
+const CLI_VERSION = string(Base.pkgversion(@__MODULE__))
 
 const MODEL_TYPES = ["pwm", "bamm", "sitega", "dimont", "slim"]
 const PROFILE_MODEL_TYPES = ["scores", MODEL_TYPES...]
@@ -62,7 +62,6 @@ const BUILD_NULL_OPTIONS = Dict{String,Bool}(
     "min-null-targets" => true,
     "threads" => true,
     "jobs" => true,
-    "cache-dir" => true,
 )
 const BUILD_NULL_FLAGS = Set(["ignore-missing", "strict", "quiet", "verbose"])
 
@@ -605,9 +604,7 @@ function _print_build_null_help(io::IO)
     return nothing
 end
 
-function _read_model_collection(
-    path::AbstractString, model_type::AbstractString; pattern=nothing
-)
+function _read_model_collection(path::AbstractString, model_type::AbstractString)
     if isdir(path)
         # Directory: load all matching files
         if model_type == "pwm"
@@ -793,6 +790,12 @@ function _run_cache(parsed::CLIParsed)
     end
 
     cache_dir = get(parsed.options, "cache-dir", ".mimosa-cache")
+    root = abspath(cache_dir)
+    (root == dirname(root) || root == homedir()) &&
+        throw(CLIError("--cache-dir points to a dangerously broad directory."))
+    ispath(root) &&
+        (!isdir(root) || islink(root)) &&
+        throw(CLIError("--cache-dir must be a real directory, not a file or symlink."))
     cache = Cache(cache_dir)
     removed = clearcache(cache)
     "quiet" in parsed.flags ||

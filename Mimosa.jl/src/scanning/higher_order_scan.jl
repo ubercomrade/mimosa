@@ -366,6 +366,7 @@ function npositions_ho(seq_len::Int, model::AbstractHigherOrderMotif)
 end
 
 motif_length(model::AbstractHigherOrderMotif) = model.motif_length
+is_scannable(::AbstractHigherOrderMotif) = true
 npositions(model::AbstractHigherOrderMotif, seq_len::Int) = npositions_ho(seq_len, model)
 scorematrix(model::AbstractHigherOrderMotif) = model.representation
 scoretype(model::AbstractHigherOrderMotif) = eltype(scorematrix(model))
@@ -458,9 +459,8 @@ function scan_both!(
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
-    Base.mightalias(fwd, rev) && throw(
-        ArgumentError("forward and reverse destinations must not alias."),
-    )
+    Base.mightalias(fwd, rev) &&
+        throw(ArgumentError("forward and reverse destinations must not alias."))
     _validate_scan_input(seq, n_pos, window_size(model), fwd, rev)
     return _ho_scan_both!(
         fwd,

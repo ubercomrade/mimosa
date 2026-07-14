@@ -203,30 +203,19 @@ provide explicit FASTA for scientific reproducibility across languages.
 function make_random_sequences(rng::AbstractRNG, n::Int, len::Int)
     n < 0 && throw(ArgumentError("n must be non-negative, got $n."))
     len < 0 && throw(ArgumentError("len must be non-negative, got $len."))
-    rows = Vector{Vector{UInt8}}(undef, n)
-    for i in 1:n
-        row = Vector{UInt8}(undef, len)
-        for j in 1:len
-            idx = floor(Int, rand(rng) * 4.0) + 1
-            row[j] = _BASE_LOOKUP[idx]
-        end
-        rows[i] = row
-    end
-    # All codes are drawn from _BASE_LOOKUP (0..3), so skip validation.
-    # Build flat data and offsets directly for the unsafe constructor.
+    total = Base.Checked.checked_mul(n, len)
+    flat_data = Vector{UInt8}(undef, total)
     offsets = Vector{Int}(undef, n + 1)
     offsets[1] = 1
     for i in 1:n
-        offsets[i + 1] = offsets[i] + length(rows[i])
-    end
-    flat_data = Vector{UInt8}(undef, offsets[end] - 1)
-    for i in 1:n
-        r = rows[i]
-        dest_start = offsets[i]
-        for j in eachindex(r)
-            flat_data[dest_start + j - 1] = r[j]
+        start = offsets[i]
+        for j in 1:len
+            idx = floor(Int, rand(rng) * 4.0) + 1
+            flat_data[start + j - 1] = _BASE_LOOKUP[idx]
         end
+        offsets[i + 1] = start + len
     end
+    # All codes are drawn from _BASE_LOOKUP (0..3), so skip validation.
     return _unsafe_encoded_batch(flat_data, offsets)
 end
 
@@ -315,11 +304,14 @@ Return a new [`EncodedSequenceBatch`](@ref) where every sequence is reverse-comp
 """
 function reverse_complement(batch::EncodedSequenceBatch)
     n = nsequences(batch)
-    rows = Vector{Vector{UInt8}}(undef, n)
+    data = Vector{UInt8}(undef, length(batch.data))
+    offsets = copy(batch.offsets)
     for i in 1:n
-        rows[i] = reverse_complement(sequence(batch, i))
+        reverse_complement!(
+            @view(data[offsets[i]:(offsets[i + 1] - 1)]), sequence(batch, i)
+        )
     end
-    return EncodedSequenceBatch(rows)
+    return _unsafe_encoded_batch(data, offsets)
 end
 
 # Padded conversion helpers for compatibility with oracle fixtures and
@@ -364,15 +356,27 @@ function from_padded(
         InvariantError("padding must be in 0..N_CODE, got 0x$(string(padding, base=16))."),
     )
     n = length(lengths)
-    rows = Vector{Vector{UInt8}}(undef, n)
+    n == size(values, 1) ||
+        throw(ArgumentError("lengths has $n rows, but values has $(size(values, 1))."))
+    total = 0
     for i in 1:n
         len = lengths[i]
         len < 0 && throw(ArgumentError("lengths must be non-negative, got $len at row $i."))
         len > size(values, 2) && throw(
             ArgumentError("length $len exceeds matrix width $(size(values, 2)) at row $i."),
         )
-        rows[i] = collect(@view values[i, 1:len])
+        total = Base.Checked.checked_add(total, len)
     end
-    # EncodedSequenceBatch(rows) validates all codes.
-    return EncodedSequenceBatch(rows)
+    data = Vector{UInt8}(undef, total)
+    offsets = Vector{Int}(undef, n + 1)
+    offsets[1] = 1
+    for i in 1:n
+        len = lengths[i]
+        start = offsets[i]
+        @inbounds for j in 1:len
+            data[start + j - 1] = values[i, j]
+        end
+        offsets[i + 1] = start + len
+    end
+    return EncodedSequenceBatch(data, offsets)
 end

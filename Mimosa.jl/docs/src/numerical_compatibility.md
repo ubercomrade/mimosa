@@ -8,7 +8,7 @@ only to make a regression pass.
 
 Encoded bytes, offsets, lengths, shapes, indices, counts, result order, pair
 order, site coordinates, comparison offsets/orientations, and schema fields are
-exact. Current schema versions are model 1, null 2, cache 1, and annotated
+exact. Current schema versions are model 1, null 3, cache 2, and annotated
 result 1.
 
 ## Floating-Point Contracts
@@ -57,3 +57,9 @@ Serial and threaded execution preserve ordering and exact discrete fields.
 Julia and NumPy RNG streams are intentionally different; cross-language
 historical comparisons use explicit FASTA or frozen encoded data. Stable
 fingerprints use SHA-256 rather than Julia's `hash()`.
+
+### Scan result dtype
+
+Allocating `scan` methods return `Float32` scores for every scannable model
+family, including PWM inputs whose matrix storage uses another float type.
+The in-place API preserves the element type of its destination.

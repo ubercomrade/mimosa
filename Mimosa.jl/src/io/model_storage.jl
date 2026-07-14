@@ -94,7 +94,9 @@ function writemodel(path::AbstractString, model::AbstractMotifModel; format::Sym
             "shape" => shape,
             "layout" => "row_major",
             "convention" => "axes: (base, position) for matrix models, (context_code, position) for higher-order",
-            "provenance" => Dict{String,Any}("tool" => "Mimosa.jl", "version" => "0.1.0"),
+            "provenance" => Dict{String,Any}(
+                "tool" => "Mimosa.jl", "version" => string(Base.pkgversion(@__MODULE__))
+            ),
             "arrays" => Dict{String,Any}(
                 arr_name => Dict{String,Any}(
                     "file" => "data/$(arr_name).npy",
