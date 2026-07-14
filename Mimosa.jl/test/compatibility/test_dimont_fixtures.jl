@@ -70,7 +70,7 @@ end
         @test fwd_md["kmer"] == model.span + 1
 
         for i in 1:nsequences(batch)
-            n_pos = Mimosa.npositions_dimont(seqlength(batch, i), model)
+            n_pos = npositions(model, seqlength(batch, i))
             if n_pos > 0
                 julia_row = row(fwd_scores, i)
                 expected_row = fwd_expected[i, 1:n_pos]
@@ -84,7 +84,7 @@ end
         rev_expected = read_npy(joinpath(FIXTURE_COMPAT, "$(rev_id)__values.npy"))
 
         for i in 1:nsequences(batch)
-            n_pos = Mimosa.npositions_dimont(seqlength(batch, i), model)
+            n_pos = npositions(model, seqlength(batch, i))
             if n_pos > 0
                 julia_row = row(rev_scores, i)
                 expected_row = rev_expected[i, 1:n_pos]

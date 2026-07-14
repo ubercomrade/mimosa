@@ -126,7 +126,7 @@ end
     m = read_dimont(path)
 
     seq = UInt8[0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3]
-    n_pos = Mimosa.npositions_dimont(length(seq), m)
+    n_pos = npositions(m, length(seq))
     # window = motif_length + span = 5 + 3 = 8
     @test n_pos == 20 - 8 + 1  # 13
 

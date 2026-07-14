@@ -118,7 +118,7 @@ end
     m = read_slim(path)
 
     seq = UInt8[0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0]
-    n_pos = Mimosa.npositions_slim(length(seq), m)
+    n_pos = npositions(m, length(seq))
     # window = motif_length + span = 15 + 5 = 20
     @test n_pos == length(seq) - 20 + 1
 

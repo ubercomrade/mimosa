@@ -98,7 +98,7 @@ end
 
     # Create a test sequence (longer than window_size = motif_length = 12)
     seq = UInt8[0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3]
-    n_pos = Mimosa.npositions_sitega(length(seq), m)
+    n_pos = npositions(m, length(seq))
     @test n_pos == 20 - 12 + 1  # seq_len - window_size + 1
 
     # Forward scan

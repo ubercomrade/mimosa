@@ -39,11 +39,7 @@ src/
 ├── scanning/           # Scanning interface, validation, and kernels
 │   ├── strands.jl       # Strand policies
 │   ├── pwm_scan.jl     # Checked PWM boundary and kernels
-│   ├── higher_order_scan.jl  # Shared HO kernel
-│   ├── bamm_scan.jl    # BaMM scanning (delegates to HO kernel)
-│   ├── sitega_scan.jl  # SiteGA scanning
-│   ├── dimont_scan.jl  # Dimont scanning
-│   └── slim_scan.jl    # Slim scanning
+│   └── higher_order_scan.jl  # Shared higher-order kernels and adapter
 ├── comparison/         # Profile comparison
 │   ├── results.jl      # ComparisonResult, compare()
 │   └── profile_comparison.jl  # Profile alignment

@@ -85,10 +85,6 @@ export scan,
     scan_best!,
     scan_both!,
     npositions,
-    npositions_bamm,
-    npositions_sitega,
-    npositions_dimont,
-    npositions_slim,
     scan_result_lengths
 
 # Model exports

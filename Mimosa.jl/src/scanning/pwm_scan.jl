@@ -21,6 +21,9 @@ function npositions(seq_len::Int, motif_width::Int)
 end
 
 npositions(model::PWM, seq_len::Int) = npositions(seq_len, motif_length(model))
+kmer(::PWM) = 1
+context_length(::PWM) = 0
+scan_width(model::PWM) = motif_length(model)
 
 function scan(model::PFM, args...; kwargs...)
     return throw(
@@ -201,39 +204,29 @@ Returns:
 Sequences shorter than the motif width return an empty score vector.
 """
 function scan(model::PWM, seq::AbstractVector{UInt8}; strands::StrandPolicy=ForwardOnly())
-    W = length(model)
-    n_pos = npositions(length(seq), W)
-    weights = eltype(model.weights) === Float32 ? model.weights : Float32.(model.weights)
-    return _scan_single(strands, weights, seq, n_pos)
+    n_pos = npositions(model, length(seq))
+    return _scan_single(strands, model, seq, n_pos)
 end
 
-function _scan_single(
-    ::ForwardOnly, weights::AbstractMatrix{T}, seq::AbstractVector{UInt8}, n_pos::Int
-) where {T<:AbstractFloat}
-    dest = Vector{T}(undef, n_pos)
-    return scan_forward!(dest, weights, seq, n_pos)
+function _scan_single(::ForwardOnly, model::PWM, seq::AbstractVector{UInt8}, n_pos::Int)
+    dest = Vector{Float32}(undef, n_pos)
+    return scan_forward!(dest, model, seq, n_pos)
 end
 
-function _scan_single(
-    ::ReverseOnly, weights::AbstractMatrix{T}, seq::AbstractVector{UInt8}, n_pos::Int
-) where {T<:AbstractFloat}
-    dest = Vector{T}(undef, n_pos)
-    return scan_reverse!(dest, weights, seq, n_pos)
+function _scan_single(::ReverseOnly, model::PWM, seq::AbstractVector{UInt8}, n_pos::Int)
+    dest = Vector{Float32}(undef, n_pos)
+    return scan_reverse!(dest, model, seq, n_pos)
 end
 
-function _scan_single(
-    ::BestStrand, weights::AbstractMatrix{T}, seq::AbstractVector{UInt8}, n_pos::Int
-) where {T<:AbstractFloat}
-    dest = Vector{T}(undef, n_pos)
-    return scan_best!(dest, weights, seq, n_pos)
+function _scan_single(::BestStrand, model::PWM, seq::AbstractVector{UInt8}, n_pos::Int)
+    dest = Vector{Float32}(undef, n_pos)
+    return scan_best!(dest, model, seq, n_pos)
 end
 
-function _scan_single(
-    ::BothStrands, weights::AbstractMatrix{T}, seq::AbstractVector{UInt8}, n_pos::Int
-) where {T<:AbstractFloat}
-    fwd = Vector{T}(undef, n_pos)
-    rev = Vector{T}(undef, n_pos)
-    scan_both!(fwd, rev, weights, seq, n_pos)
+function _scan_single(::BothStrands, model::PWM, seq::AbstractVector{UInt8}, n_pos::Int)
+    fwd = Vector{Float32}(undef, n_pos)
+    rev = Vector{Float32}(undef, n_pos)
+    scan_both!(fwd, rev, model, seq, n_pos)
     return StrandPair(fwd, rev)
 end
 
@@ -255,36 +248,35 @@ function scan!(
     seq::AbstractVector{UInt8};
     strands::StrandPolicy=ForwardOnly(),
 ) where {T<:AbstractFloat}
-    W = length(model)
-    n_pos = npositions(length(seq), W)
+    n_pos = npositions(model, length(seq))
     if length(dest) < n_pos
         throw(
             ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
         )
     end
-    return _scan_inplace!(strands, dest, model.weights, seq, n_pos)
+    return _scan_inplace!(strands, dest, model, seq, n_pos)
 end
 
 function _scan_inplace!(
-    ::ForwardOnly, dest::AbstractVector{T}, weights::AbstractMatrix{T}, seq, n_pos
+    ::ForwardOnly, dest::AbstractVector{T}, model::PWM, seq, n_pos
 ) where {T<:AbstractFloat}
-    return scan_forward!(dest, weights, seq, n_pos)
+    return scan_forward!(dest, model, seq, n_pos)
 end
 
 function _scan_inplace!(
-    ::ReverseOnly, dest::AbstractVector{T}, weights::AbstractMatrix{T}, seq, n_pos
+    ::ReverseOnly, dest::AbstractVector{T}, model::PWM, seq, n_pos
 ) where {T<:AbstractFloat}
-    return scan_reverse!(dest, weights, seq, n_pos)
+    return scan_reverse!(dest, model, seq, n_pos)
 end
 
 function _scan_inplace!(
-    ::BestStrand, dest::AbstractVector{T}, weights::AbstractMatrix{T}, seq, n_pos
+    ::BestStrand, dest::AbstractVector{T}, model::PWM, seq, n_pos
 ) where {T<:AbstractFloat}
-    return scan_best!(dest, weights, seq, n_pos)
+    return scan_best!(dest, model, seq, n_pos)
 end
 
 function _scan_inplace!(
-    ::BothStrands, dest::AbstractVector{T}, weights::AbstractMatrix{T}, seq, n_pos
+    ::BothStrands, dest::AbstractVector{T}, model::PWM, seq, n_pos
 ) where {T<:AbstractFloat}
     return throw(
         ArgumentError(
@@ -315,7 +307,7 @@ function scan(
     strands::StrandPolicy=ForwardOnly(),
     execution::ExecutionPolicy=SerialExecution(),
 )
-    return _scan_batch(strands, model, batch, execution)
+    return _scan_model_batch(model, batch; strands=strands, execution=execution)
 end
 
 function _scan_batch(

@@ -131,7 +131,7 @@ end
     rep .= 0.0
     model = BaMM("test", rep, 0, 3)
     seq = UInt8[0, 1, 2, 3, 0, 1, 2, 3]
-    n_pos = npositions_bamm(length(seq), model)
+    n_pos = npositions(model, length(seq))
 
     dest = Vector{Float32}(undef, n_pos)
     @test_nowarn Mimosa._ho_scan_forward!(dest, model.representation, 1, 0, 3, seq, n_pos)
@@ -148,6 +148,65 @@ end
     @test_throws ArgumentError Mimosa._ho_scan_forward!(
         dest, model.representation, 1, 0, 3, seq, -1
     )
+end
+
+@testset "B2: rolling higher-order codes preserve raw scan results" begin
+    models = AbstractHigherOrderMotif[
+        BaMM("bamm", reshape(Float32.(1:75), 25, 3), 1, 3),
+        SiteGA("sitega", reshape(Float32.(1:100), 25, 4), 4),
+        Dimont("dimont", reshape(Float32.(1:75), 25, 3), 1, 3),
+        Slim("slim", reshape(Float32.(1:75), 25, 3), 1, 3),
+    ]
+    seq = UInt8[4, 0, 1, 2, 3, 0, 4, 2, 1]
+
+    for model in models
+        n_pos = npositions(model, length(seq))
+        forward = Vector{Float32}(undef, n_pos)
+        reverse = similar(forward)
+        Mimosa._ho_scan_forward!(
+            forward,
+            model.representation,
+            Mimosa.kmer(model),
+            Mimosa.context_length(model),
+            Mimosa.scan_width(model),
+            seq,
+            n_pos,
+        )
+        Mimosa._ho_scan_reverse!(
+            reverse,
+            model.representation,
+            Mimosa.kmer(model),
+            Mimosa.window_size(model),
+            Mimosa.scan_width(model),
+            seq,
+            n_pos,
+        )
+
+        @test scan(model, seq; strands=ForwardOnly()) == forward
+        @test scan(model, seq; strands=ReverseOnly()) == reverse
+        @test scan(model, seq; strands=BestStrand()) == max.(forward, reverse)
+        both = scan(model, seq; strands=BothStrands())
+        @test both.forward == forward
+        @test both.reverse == reverse
+    end
+end
+
+@testset "B2: universal model scan preserves raw PWM results" begin
+    weights = reshape(Float32.(1:20), 5, 4)
+    model = PWM("pwm", weights, (0.25f0, 0.25f0, 0.25f0, 0.25f0))
+    seq = UInt8[4, 0, 1, 2, 3, 0, 4]
+    n_pos = npositions(model, length(seq))
+    forward = Vector{Float32}(undef, n_pos)
+    reverse = similar(forward)
+    scan_forward!(forward, weights, seq, n_pos)
+    scan_reverse!(reverse, weights, seq, n_pos)
+
+    @test scan(model, seq; strands=ForwardOnly()) == forward
+    @test scan(model, seq; strands=ReverseOnly()) == reverse
+    @test scan(model, seq; strands=BestStrand()) == max.(forward, reverse)
+    both = scan(model, seq; strands=BothStrands())
+    @test both.forward == forward
+    @test both.reverse == reverse
 end
 
 @testset "scanning geometry and flat container interfaces" begin

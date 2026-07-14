@@ -121,7 +121,7 @@ end
 
     # Create a simple test sequence (longer than window_size = 14 + 1 = 15)
     seq = UInt8[0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3]
-    n_pos = Mimosa.npositions_bamm(length(seq), m1)
+    n_pos = npositions(m1, length(seq))
     @test n_pos == 20 - 15 + 1  # seq_len - window_size + 1
 
     # Forward scan

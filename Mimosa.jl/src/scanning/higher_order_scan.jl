@@ -225,6 +225,153 @@ function _ho_scan_both!(
     return (fwd, rev)
 end
 
+# ── Rolling k-mer code preparation ──────────────────────────────────────────
+
+@inline function _ho_oriented_base(
+    seq::AbstractVector{UInt8}, index::Int, reverse_complement::Bool
+)
+    if !(0 <= index < length(seq))
+        return 4
+    end
+    sequence_index = reverse_complement ? length(seq) - index : index + 1
+    base = Int(@inbounds seq[sequence_index])
+    return reverse_complement && base != 4 ? 3 - base : base
+end
+
+"""
+    _ho_kmer_codes(seq, kmer_val, first_start, n_codes; reverse_complement=false)
+
+Build `n_codes` consecutive 5-ary k-mer codes beginning at zero-based
+`first_start`. Out-of-range bases are N-coded, which is equivalent to scanning
+an N-padded sequence. Each subsequent code is derived by removing its leading
+base-5 digit and appending the next base.
+"""
+function _ho_kmer_codes(
+    seq::AbstractVector{UInt8},
+    kmer_val::Int,
+    first_start::Int,
+    n_codes::Int;
+    reverse_complement::Bool=false,
+)
+    kmer_val > 0 || throw(ArgumentError("k-mer size must be positive."))
+    n_codes >= 0 || throw(ArgumentError("number of k-mer codes must be non-negative."))
+    codes = Vector{Int}(undef, n_codes)
+    n_codes == 0 && return codes
+
+    code = 0
+    @inbounds for offset in 0:(kmer_val - 1)
+        code = 5 * code + _ho_oriented_base(seq, first_start + offset, reverse_complement)
+    end
+    codes[1] = code
+
+    leading_weight = 5^(kmer_val - 1)
+    @inbounds for i in 2:n_codes
+        start = first_start + i - 2
+        code =
+            5 *
+            (code - _ho_oriented_base(seq, start, reverse_complement) * leading_weight) +
+            _ho_oriented_base(seq, start + kmer_val, reverse_complement)
+        codes[i] = code
+    end
+    return codes
+end
+
+function _ho_scan_forward_codes!(
+    dest::AbstractVector{T},
+    rep::AbstractMatrix,
+    codes::Vector{Int},
+    n_terms::Int,
+    n_pos::Int,
+) where {T<:AbstractFloat}
+    @inbounds for pos in 1:n_pos
+        total = zero(T)
+        for term in 0:(n_terms - 1)
+            # The code table starts at the original zero-based scan source.
+            total += rep[codes[pos + term] + 1, term + 1]
+        end
+        dest[pos] = total
+    end
+    return dest
+end
+
+function _ho_scan_reverse_codes!(
+    dest::AbstractVector{T},
+    rep::AbstractMatrix,
+    codes::Vector{Int},
+    n_terms::Int,
+    n_pos::Int,
+) where {T<:AbstractFloat}
+    @inbounds for pos in 1:n_pos
+        total = zero(T)
+        for term in 0:(n_terms - 1)
+            # Reverse-complement starts move left as the forward scan moves right.
+            total += rep[codes[n_pos - pos + term + 1] + 1, term + 1]
+        end
+        dest[pos] = total
+    end
+    return dest
+end
+
+function _ho_scan_best_codes!(
+    dest::AbstractVector{T},
+    rep::AbstractMatrix,
+    forward_codes::Vector{Int},
+    reverse_codes::Vector{Int},
+    n_terms::Int,
+    n_pos::Int,
+) where {T<:AbstractFloat}
+    @inbounds for pos in 1:n_pos
+        forward_total = zero(T)
+        reverse_total = zero(T)
+        for term in 0:(n_terms - 1)
+            forward_total += rep[forward_codes[pos + term] + 1, term + 1]
+            reverse_total += rep[reverse_codes[n_pos - pos + term + 1] + 1, term + 1]
+        end
+        dest[pos] = max(forward_total, reverse_total)
+    end
+    return dest
+end
+
+function _ho_scan_both_codes!(
+    forward::AbstractVector{T},
+    reverse::AbstractVector{T},
+    rep::AbstractMatrix,
+    forward_codes::Vector{Int},
+    reverse_codes::Vector{Int},
+    n_terms::Int,
+    n_pos::Int,
+) where {T<:AbstractFloat}
+    @inbounds for pos in 1:n_pos
+        forward_total = zero(T)
+        reverse_total = zero(T)
+        for term in 0:(n_terms - 1)
+            forward_total += rep[forward_codes[pos + term] + 1, term + 1]
+            reverse_total += rep[reverse_codes[n_pos - pos + term + 1] + 1, term + 1]
+        end
+        forward[pos] = forward_total
+        reverse[pos] = reverse_total
+    end
+    return (forward, reverse)
+end
+
+function _ho_forward_codes(
+    model::AbstractMotifModel, seq::AbstractVector{UInt8}, n_pos::Int
+)
+    n_pos == 0 && return Int[]
+    return _ho_kmer_codes(
+        seq, kmer(model), -context_length(model), n_pos + scan_width(model) - 1
+    )
+end
+
+function _ho_reverse_codes(
+    model::AbstractMotifModel, seq::AbstractVector{UInt8}, n_pos::Int
+)
+    n_pos == 0 && return Int[]
+    return _ho_kmer_codes(
+        seq, kmer(model), 0, n_pos + scan_width(model) - 1; reverse_complement=true
+    )
+end
+
 # ── Generic parallel batch scan helpers ─────────────────────────────────────
 #
 # These helpers are used by all higher-order models (BaMM, SiteGA, Dimont, Slim)
@@ -346,28 +493,25 @@ end
 #
 # The following methods provide a single generic implementation of the scan
 # adapter layer for all AbstractHigherOrderMotif subtypes (BaMM, SiteGA, Dimont,
-# Slim). They replace the per-model boilerplate that previously existed in
-# bamm_scan.jl, dimont_scan.jl, slim_scan.jl, and sitega_scan.jl.
+# Slim).
 #
 # Each model provides the geometry via the trait functions:
 #   kmer(model), context_length(model), window_size(model), scan_width(model)
 # and stores its scoring matrix in the `representation` field.
-# The inner kernels (_ho_scan_forward!, _ho_scan_reverse!, etc.) remain shared
-# and type-stable because the `representation` matrix is passed as an argument.
+# Score loops use precomputed rolling k-mer codes; the raw kernels above remain
+# as a reference implementation for validation tests.
 
 """
-    npositions_ho(seq_len::Int, model::AbstractHigherOrderMotif)
+    npositions(model::AbstractHigherOrderMotif, seq_len::Int)
 
 Return the number of scanning positions for a higher-order model.
-This is the generic version of the per-model `npositions_*` functions.
 """
-function npositions_ho(seq_len::Int, model::AbstractHigherOrderMotif)
+function npositions(model::AbstractHigherOrderMotif, seq_len::Int)
     return max(seq_len - window_size(model) + 1, 0)
 end
 
 motif_length(model::AbstractHigherOrderMotif) = model.motif_length
 is_scannable(::AbstractHigherOrderMotif) = true
-npositions(model::AbstractHigherOrderMotif, seq_len::Int) = npositions_ho(seq_len, model)
 scorematrix(model::AbstractHigherOrderMotif) = model.representation
 scoretype(model::AbstractHigherOrderMotif) = eltype(scorematrix(model))
 
@@ -381,19 +525,17 @@ Generic method for all higher-order models.
 """
 function scan_forward!(
     dest::AbstractVector{T},
-    model::AbstractHigherOrderMotif,
+    model::AbstractMotifModel,
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
+    is_scannable(model) ||
+        throw(ArgumentError("$(typeof(model)) is not directly scannable."))
     _validate_scan_input(seq, n_pos, window_size(model), dest)
-    return _ho_scan_forward!(
-        dest,
-        model.representation,
-        kmer(model),
-        context_length(model),
-        scan_width(model),
-        seq,
-        n_pos,
+    n_pos == 0 && return dest
+    codes = _ho_forward_codes(model, seq, n_pos)
+    return _ho_scan_forward_codes!(
+        dest, scorematrix(model), codes, scan_width(model), n_pos
     )
 end
 
@@ -405,19 +547,17 @@ Generic method for all higher-order models.
 """
 function scan_reverse!(
     dest::AbstractVector{T},
-    model::AbstractHigherOrderMotif,
+    model::AbstractMotifModel,
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
+    is_scannable(model) ||
+        throw(ArgumentError("$(typeof(model)) is not directly scannable."))
     _validate_scan_input(seq, n_pos, window_size(model), dest)
-    return _ho_scan_reverse!(
-        dest,
-        model.representation,
-        kmer(model),
-        window_size(model),
-        scan_width(model),
-        seq,
-        n_pos,
+    n_pos == 0 && return dest
+    codes = _ho_reverse_codes(model, seq, n_pos)
+    return _ho_scan_reverse_codes!(
+        dest, scorematrix(model), codes, scan_width(model), n_pos
     )
 end
 
@@ -429,20 +569,18 @@ Generic method for all higher-order models.
 """
 function scan_best!(
     dest::AbstractVector{T},
-    model::AbstractHigherOrderMotif,
+    model::AbstractMotifModel,
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
+    is_scannable(model) ||
+        throw(ArgumentError("$(typeof(model)) is not directly scannable."))
     _validate_scan_input(seq, n_pos, window_size(model), dest)
-    return _ho_scan_best!(
-        dest,
-        model.representation,
-        kmer(model),
-        context_length(model),
-        window_size(model),
-        scan_width(model),
-        seq,
-        n_pos,
+    n_pos == 0 && return dest
+    forward_codes = _ho_forward_codes(model, seq, n_pos)
+    reverse_codes = _ho_reverse_codes(model, seq, n_pos)
+    return _ho_scan_best_codes!(
+        dest, scorematrix(model), forward_codes, reverse_codes, scan_width(model), n_pos
     )
 end
 
@@ -455,23 +593,20 @@ Generic method for all higher-order models.
 function scan_both!(
     fwd::AbstractVector{T},
     rev::AbstractVector{T},
-    model::AbstractHigherOrderMotif,
+    model::AbstractMotifModel,
     seq::AbstractVector{UInt8},
     n_pos::Int,
 ) where {T<:AbstractFloat}
     Base.mightalias(fwd, rev) &&
         throw(ArgumentError("forward and reverse destinations must not alias."))
+    is_scannable(model) ||
+        throw(ArgumentError("$(typeof(model)) is not directly scannable."))
     _validate_scan_input(seq, n_pos, window_size(model), fwd, rev)
-    return _ho_scan_both!(
-        fwd,
-        rev,
-        model.representation,
-        kmer(model),
-        context_length(model),
-        window_size(model),
-        scan_width(model),
-        seq,
-        n_pos,
+    n_pos == 0 && return (fwd, rev)
+    forward_codes = _ho_forward_codes(model, seq, n_pos)
+    reverse_codes = _ho_reverse_codes(model, seq, n_pos)
+    return _ho_scan_both_codes!(
+        fwd, rev, scorematrix(model), forward_codes, reverse_codes, scan_width(model), n_pos
     )
 end
 
@@ -492,7 +627,7 @@ function scan(
     seq::AbstractVector{UInt8};
     strands::StrandPolicy=ForwardOnly(),
 )
-    n_pos = npositions_ho(length(seq), model)
+    n_pos = npositions(model, length(seq))
     return _scan_single_ho(strands, model, seq, n_pos)
 end
 
@@ -540,7 +675,7 @@ function scan!(
     seq::AbstractVector{UInt8};
     strands::StrandPolicy=ForwardOnly(),
 ) where {T<:AbstractFloat}
-    n_pos = npositions_ho(length(seq), model)
+    n_pos = npositions(model, length(seq))
     if length(dest) < n_pos
         throw(
             ArgumentError("destination has $(length(dest)) elements, need at least $n_pos.")
@@ -591,8 +726,8 @@ Under `ThreadedExecution`, sequences are processed in parallel at the
  top level. Inner scanning kernels remain serial.
 Generic method for all AbstractHigherOrderMotif subtypes.
 """
-function scan(
-    model::AbstractHigherOrderMotif,
+function _scan_model_batch(
+    model::AbstractMotifModel,
     batch::EncodedSequenceBatch;
     strands::StrandPolicy=ForwardOnly(),
     execution::ExecutionPolicy=SerialExecution(),
@@ -620,6 +755,15 @@ function scan(
     )
 end
 
+function scan(
+    model::AbstractHigherOrderMotif,
+    batch::EncodedSequenceBatch;
+    strands::StrandPolicy=ForwardOnly(),
+    execution::ExecutionPolicy=SerialExecution(),
+)
+    return _scan_model_batch(model, batch; strands=strands, execution=execution)
+end
+
 # ── Generic scan result lengths ─────────────────────────────────────────
 
 """
@@ -629,5 +773,5 @@ Return a `Vector{Int}` with the number of scan positions for each sequence.
 Generic method for all AbstractHigherOrderMotif subtypes.
 """
 function scan_result_lengths(model::AbstractHigherOrderMotif, batch::EncodedSequenceBatch)
-    return [npositions_ho(seqlength(batch, i), model) for i in 1:nsequences(batch)]
+    return [npositions(model, seqlength(batch, i)) for i in 1:nsequences(batch)]
 end
