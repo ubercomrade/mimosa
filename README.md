@@ -56,16 +56,17 @@ statistical significance, and references.
 
 ## Installation
 
-Mimosa requires Python 3.12 or newer.
+Mimosa requires Python 3.12 or newer. It is published on
+[PyPI](https://pypi.org/project/mimosa-tool/) as `mimosa-tool`.
+
+```bash
+python -m pip install mimosa-tool
+```
+
+For development from a source checkout:
 
 ```bash
 uv sync
-```
-
-For a regular local installation:
-
-```bash
-python -m pip install .
 ```
 
 ## CLI
@@ -73,7 +74,7 @@ python -m pip install .
 Compare two PWM models on a FASTA batch:
 
 ```bash
-uv run mimosa profile examples/foxa2.meme examples/gata2.meme \
+mimosa profile examples/foxa2.meme examples/gata2.meme \
   --model1-type pwm --model2-type pwm \
   --fasta examples/foreground.fa --metric co
 ```
@@ -81,18 +82,18 @@ uv run mimosa profile examples/foxa2.meme examples/gata2.meme \
 Compare precomputed score profiles:
 
 ```bash
-uv run mimosa profile examples/scores_1.fasta examples/scores_2.fasta \
+mimosa profile examples/scores_1.fasta examples/scores_2.fasta \
   --model1-type scores --model2-type scores --metric cosine
 ```
 
 Build and use an empirical null distribution:
 
 ```bash
-uv run mimosa build-null examples/ \
+mimosa build-null examples/ \
   --model-type pwm --output output/null_bundle \
   --fasta examples/foreground.fa --num-samples 2000 --seed 127
 
-uv run mimosa profile examples/foxa2.meme examples/gata2.meme \
+mimosa profile examples/foxa2.meme examples/gata2.meme \
   --model1-type pwm --model2-type pwm \
   --fasta examples/foreground.fa \
   --pvalue --null-distribution output/null_bundle
@@ -101,11 +102,11 @@ uv run mimosa profile examples/foxa2.meme examples/gata2.meme \
 Manage the optional prepared-profile cache:
 
 ```bash
-uv run mimosa cache clear --cache-dir .mimosa-cache
+mimosa cache clear --cache-dir .mimosa-cache
 ```
 
 Successful `profile` results are JSON on `stdout`. Diagnostics and errors are
-written to `stderr`. Run `uv run mimosa --help` for the complete CLI reference.
+written to `stderr`. Run `mimosa --help` for the complete CLI reference.
 
 ## Python API
 
