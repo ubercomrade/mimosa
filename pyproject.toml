@@ -1,100 +1,26 @@
 [project]
-name = "mimosa-tool"
-version = "1.3.4"
-description = "Model-Independent Motif Similarity Assessment tool"
-authors = [{name = "Anton Tsukanov", email = "tsukanov@bionet.nsc.ru"}]
+name = "mimosa"
+version = "0.1.0"
+description = "Add your description here"
 readme = "README.md"
-license = "MIT"
-license-files = ["LICENSE"]
-requires-python = ">=3.10"
-classifiers = [
-    "Intended Audience :: Science/Research",
-    "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Topic :: Scientific/Engineering :: Bio-Informatics",
-    "Topic :: Software Development :: Libraries :: Python Modules"
+authors = [
+    { name = "Anton Tsukanov", email = "ubercomrade@gmail.com" }
 ]
+requires-python = ">=3.12"
 dependencies = [
-    "numpy>=2.0,<2.4",
-    "scipy>=1.14.1",
-    "pandas>=2.2.3",
-    "joblib>=1.5.3",
-    "numba>=0.65.0",
-    "tqdm"
+    "numba>=0.66.0",
+    "numpy>=2.4.6",
+    "tqdm>=4.70.0",
 ]
-
-[project.urls]
-Homepage = "https://github.com/ubercomrade/mimosa"
-Repository = "https://github.com/ubercomrade/mimosa"
-Documentation = "https://github.com/ubercomrade/mimosa#readme"
-
 
 [project.scripts]
-mimosa = "mimosa.cli:main_cli"
+mimosa = "mimosa.cli:main"
 
 [build-system]
-requires = ["setuptools>=77", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools.packages.find]
-where = ["src"]
+requires = ["uv_build>=0.10.9,<0.11.0"]
+build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
-    "mypy>=1.10",
-    "pyscn>=0.1",
-    "pytest>=8.0",
-    "pytest-cov>=5.0",
-    "ruff>=0.3.0",
-    "vulture>=2.16",
-]
-test = [
-    "pytest>=8.0",
-]
-
-[tool.ruff]
-line-length = 120
-target-version = "py310"
-extend-exclude = [".hocomoco", "dist", "build", ".venv"]
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "B", "C90", "PLR", "SIM", "RET", "ARG"]
-ignore = []
-
-[tool.ruff.lint.per-file-ignores]
-"src/mimosa/api.py" = ["PLR0913"]
-"src/mimosa/comparison/profile.py" = ["PLR0913"]
-"src/mimosa/comparison/runner.py" = ["PLR0913"]
-"src/mimosa/functions/scanning.py" = ["PLR0913"]
-"src/mimosa/models.py" = ["PLR0913"]
-"src/mimosa/sites.py" = ["PLR0913"]
-"examples/*.py" = ["PLR0913"]
-"tests/*.py" = ["ARG001", "C901", "PLR0913", "PLR2004"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-addopts = "-v"
-
-[tool.coverage.run]
-source = ["src/mimosa"]
-
-[tool.coverage.report]
-show_missing = true
-
-[tool.mypy]
-python_version = "3.10"
-warn_unused_ignores = true
-warn_redundant_casts = true
-warn_return_any = false
-check_untyped_defs = false
-ignore_missing_imports = true
-exclude = [
-    "^\\.hocomoco/",
-    "^\\.venv/",
-    "^dist/",
-    "^build/",
+    "pytest>=9.1.1",
 ]
