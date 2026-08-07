@@ -8,6 +8,12 @@ import shutil
 import struct
 import tempfile
 import tomllib
+from contextlib import contextmanager
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 import numpy as np
 
@@ -78,6 +84,29 @@ def _cache_entry_dir(cache, key):
     if os.path.islink(path):
         raise ValueError("cache entry path must not be a symlink.")
     return path
+
+
+@contextmanager
+def _cache_lock(root):
+    lock_path = os.path.join(root, _CACHE_LOCK_NAME)
+    with open(lock_path, "a+b") as lock:
+        if os.name == "nt":
+            lock.seek(0, os.SEEK_END)
+            if lock.tell() == 0:
+                lock.write(b"\0")
+                lock.flush()
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def _cache_file_path(cache, key, name):
@@ -287,31 +316,30 @@ def cache_set(cache, key, data, metadata=None):
             meta[name] = value
     root = _cache_root(cache)
     os.makedirs(root, exist_ok=True)
-    lock_path = os.path.join(root, _CACHE_LOCK_NAME)
-    with open(lock_path, "a"):
-        pass
-    stage = tempfile.mkdtemp(prefix=".mimosa-cache-stage-", dir=root)
-    entry_stage = os.path.join(stage, _validate_cache_key(key))
-    os.makedirs(entry_stage)
-    try:
-        with open(os.path.join(entry_stage, _CACHE_DATA_NAME), "wb") as f:
-            f.write(data)
-        with open(os.path.join(entry_stage, _CACHE_META_NAME), "w", encoding="utf-8") as f:
-            for k in sorted(meta):
-                v = meta[k]
-                if isinstance(v, str):
-                    f.write(f'{k} = "{v}"\n')
-                elif isinstance(v, bool):
-                    f.write(f"{k} = {'true' if v else 'false'}\n")
-                else:
-                    f.write(f"{k} = {v}\n")
-        target = _cache_entry_dir(cache, key)
-        if os.path.exists(target):
-            shutil.rmtree(target)
-        os.rename(entry_stage, target)
-        return path
-    finally:
-        shutil.rmtree(stage, ignore_errors=True)
+    # ponytail: one cache-wide lock; per-key locks only if write contention matters.
+    with _cache_lock(root):
+        stage = tempfile.mkdtemp(prefix=".mimosa-cache-stage-", dir=root)
+        entry_stage = os.path.join(stage, _validate_cache_key(key))
+        os.makedirs(entry_stage)
+        try:
+            with open(os.path.join(entry_stage, _CACHE_DATA_NAME), "wb") as f:
+                f.write(data)
+            with open(os.path.join(entry_stage, _CACHE_META_NAME), "w", encoding="utf-8") as f:
+                for k in sorted(meta):
+                    v = meta[k]
+                    if isinstance(v, str):
+                        f.write(f'{k} = "{v}"\n')
+                    elif isinstance(v, bool):
+                        f.write(f"{k} = {'true' if v else 'false'}\n")
+                    else:
+                        f.write(f"{k} = {v}\n")
+            target = _cache_entry_dir(cache, key)
+            if os.path.exists(target):
+                shutil.rmtree(target)
+            os.rename(entry_stage, target)
+            return path
+        finally:
+            shutil.rmtree(stage, ignore_errors=True)
 
 
 def clearcache(cache, key=None):
@@ -320,25 +348,26 @@ def clearcache(cache, key=None):
     root = _cache_root(cache)
     if not os.path.isdir(root):
         return 0
-    if key is not None:
-        entry = _cache_entry_dir(cache, key)
-        if os.path.isdir(entry):
-            shutil.rmtree(entry)
-            return 1
-        return 0
-    count = 0
-    for name in os.listdir(root):
-        entry = os.path.join(root, name)
-        if name.startswith(".mimosa-cache-stage-") or ".backup-" in name:
-            shutil.rmtree(entry, ignore_errors=True)
-            continue
-        if os.path.isdir(entry) and not os.path.islink(entry):
-            if os.path.isfile(os.path.join(entry, _CACHE_DATA_NAME)) or os.path.isfile(
-                os.path.join(entry, _CACHE_META_NAME)
-            ):
+    with _cache_lock(root):
+        if key is not None:
+            entry = _cache_entry_dir(cache, key)
+            if os.path.isdir(entry):
                 shutil.rmtree(entry)
-                count += 1
-    return count
+                return 1
+            return 0
+        count = 0
+        for name in os.listdir(root):
+            entry = os.path.join(root, name)
+            if name.startswith(".mimosa-cache-stage-") or ".backup-" in name:
+                shutil.rmtree(entry, ignore_errors=True)
+                continue
+            if os.path.isdir(entry) and not os.path.islink(entry):
+                if os.path.isfile(os.path.join(entry, _CACHE_DATA_NAME)) or os.path.isfile(
+                    os.path.join(entry, _CACHE_META_NAME)
+                ):
+                    shutil.rmtree(entry)
+                    count += 1
+        return count
 
 
 def _cached_prepared_profile(cache, source, sequences, background, threshold, normalization):

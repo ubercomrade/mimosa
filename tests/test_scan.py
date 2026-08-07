@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from mimosa import PWM, EncodedSequences, pwm_from_pfm, scan
+from mimosa.arrays import reverse_complement_batch
 from mimosa.io.models import read_meme
 
 
@@ -96,6 +97,3 @@ class TestScan:
     def test_invalid_strand_policy(self, pwm, batch):
         with pytest.raises(ValueError):
             scan(pwm, batch, strands="diagonal")
-
-
-from mimosa.arrays import reverse_complement_batch

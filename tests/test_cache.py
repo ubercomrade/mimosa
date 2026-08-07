@@ -1,4 +1,5 @@
 import os
+import multiprocessing
 
 import numpy as np
 import pytest
@@ -8,6 +9,21 @@ from mimosa.io.fasta import read_fasta
 from mimosa.io.models import read_meme
 from mimosa.models import pwm_from_pfm
 from mimosa.profiles.prepared import prepare_profile
+
+
+def _hold_cache_lock(directory, ready, release):
+    from mimosa.cache import _cache_lock
+
+    with _cache_lock(directory):
+        ready.set()
+        release.wait(5)
+
+
+def _wait_for_cache_lock(directory, acquired):
+    from mimosa.cache import _cache_lock
+
+    with _cache_lock(directory):
+        acquired.set()
 
 
 class TestCache:
@@ -48,6 +64,33 @@ class TestCache:
             cache_set(cache, "../escape", b"x")
         with pytest.raises(ValueError):
             cache_set(cache, "a/b", b"x")
+
+    def test_lock_serializes_processes(self, tmp_path):
+        context = multiprocessing.get_context("spawn")
+        ready = context.Event()
+        release = context.Event()
+        acquired = context.Event()
+        holder = context.Process(target=_hold_cache_lock, args=(str(tmp_path), ready, release))
+        waiter = None
+        holder.start()
+        try:
+            assert ready.wait(5)
+            waiter = context.Process(target=_wait_for_cache_lock, args=(str(tmp_path), acquired))
+            waiter.start()
+            assert not acquired.wait(0.2)
+            release.set()
+            assert acquired.wait(5)
+        finally:
+            release.set()
+            holder.join(5)
+            if waiter is not None:
+                waiter.join(5)
+            if holder.is_alive():
+                holder.terminate()
+            if waiter is not None and waiter.is_alive():
+                waiter.terminate()
+        assert holder.exitcode == 0
+        assert waiter is not None and waiter.exitcode == 0
 
 class TestPreparedProfileCache:
     @pytest.fixture

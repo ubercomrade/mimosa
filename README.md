@@ -118,12 +118,6 @@ Run the test suite with:
 uv run pytest -q
 ```
 
-Run the benchmark with:
-
-```bash
-uv run python benchmark/bench.py --fasta examples/foreground.fa
-```
-
 ## License
 
 MIT. See [LICENSE](LICENSE).

@@ -10,8 +10,8 @@ Mimosa compares models by their behavior on a shared sequence batch.
 4. Align site-centered profile windows over the configured shifts and strand orientations.
 5. Select the best result and report its score, offset, orientation, and contributing site count.
 
-The four orientation labels are `++`, `+-`, `-+`, and `--`. Offset is the query
-displacement relative to the target; positive values move the query right.
+The four orientation labels are `++`, `+-`, `-+`, and `--`. Offset is the target
+displacement relative to the query; positive values move the target right.
 Final ties are resolved by larger score, larger `n_sites`, smaller absolute
 offset, and orientation rank in the order listed above. Within an orientation,
 shifts are visited from most negative to most positive.

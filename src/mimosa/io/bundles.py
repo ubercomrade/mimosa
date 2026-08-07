@@ -671,6 +671,8 @@ def read_model_bundle(path):
 # ── Null bundle write/read ───────────────────────────────────────────────────
 
 def write_null_bundle(path, dist):
+    if dist.n_null <= 0:
+        raise InvariantError("null distribution n_null must be positive.")
     if dist.n_null != len(dist.raw_scores):
         raise InvariantError("null distribution n_null does not match raw_scores length.")
     if len(dist.pairs) != dist.n_null:
@@ -769,7 +771,7 @@ def read_null_bundle(path):
     if strategy != "profile":
         raise _bundle_error(path, f"unsupported null strategy '{strategy}'.")
     metric = _required_manifest_string(manifest, "metric", path, "null manifest")
-    n_null = _required_manifest_int(manifest, "n_null", path, "null manifest", minimum=0, maximum=MAX_BUNDLE_ELEMENTS)
+    n_null = _required_manifest_int(manifest, "n_null", path, "null manifest", minimum=1, maximum=MAX_BUNDLE_ELEMENTS)
     n_models = _required_manifest_int(manifest, "n_models", path, "null manifest", minimum=2, maximum=MAX_BUNDLE_ELEMENTS)
     model_type = _required_manifest_string(manifest, "model_type", path, "null manifest")
     shuffle = _required_manifest_bool(manifest, "shuffle", path, "null manifest")

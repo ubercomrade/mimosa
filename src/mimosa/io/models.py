@@ -19,7 +19,6 @@ MAX_BAMM_ORDER = 10
 MAX_BAMM_FILE_BYTES = 256 * 1024**2
 MAX_BAMM_LINE_LENGTH = 1_000_000
 MAX_BAMM_REPRESENTATION_ELEMENTS = 100_000_000
-BAMM_NORMALIZATION_TOLERANCE = 1e-3
 BAMM_EPSILON = 1e-10
 
 MAX_SITEGA_LENGTH = 10_000
@@ -230,8 +229,8 @@ def _parse_bamm_blocks(path):
                 row.append(v)
             if not all(math.isfinite(v) for v in row):
                 raise ModelFormatError(path, "non-finite values in BaMM data.")
-            if any(v < 0 or v > 1 for v in row):
-                raise ModelFormatError(path, "BaMM probabilities must be in the range [0, 1].")
+            if any(v < 0 for v in row):
+                raise ModelFormatError(path, "BaMM values must be non-negative.")
             current_block.append(row)
     if current_block:
         if len(blocks) >= MAX_BAMM_POSITIONS:
@@ -254,16 +253,6 @@ def _parse_bamm_blocks(path):
                     path,
                     f"BaMM order {k - 1} width in block {pos_idx}: expected {expected_width}, got {len(arr)}.",
                 )
-    for pos_idx, block in enumerate(blocks):
-        for order_index, arr in enumerate(block):
-            for context_start in range(0, len(arr), 4):
-                total = sum(arr[context_start : context_start + 4])
-                if not math.isclose(total, 1.0, abs_tol=BAMM_NORMALIZATION_TOLERANCE, rel_tol=0):
-                    raise ModelFormatError(
-                        path,
-                        f"BaMM probabilities are not normalized in block {pos_idx}, "
-                        f"order {order_index - 1}, context {context_start // 4 + 1}.",
-                    )
     return blocks
 
 

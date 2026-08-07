@@ -66,7 +66,7 @@ from .statistics import (
 )
 from .io import ModelReader, read_fasta, read_model, read_scores, read_sequences, write_model
 
-__version__ = "0.1.0"
+__version__ = "1.4.0"
 
 __all__ = [
     "EncodedSequences",

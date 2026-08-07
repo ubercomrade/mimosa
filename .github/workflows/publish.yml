@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - v*
-  workflow_dispatch:
 
 jobs:
   build_dist:
@@ -18,6 +17,17 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Verify release tag version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          project_version="$(uv version --short)"
+          test "$tag_version" = "$project_version" || {
+            echo "Tag version $tag_version does not match project version $project_version."
+            exit 1
+          }
+
       - name: Build wheel and sdist
         run: uv build
 
@@ -29,9 +39,9 @@ jobs:
           uv venv test_env
           source test_env/bin/activate
           uv pip install dist/*.tar.gz
-          uv pip install pytest numpy numba scipy pandas joblib
+          uv pip install pytest
           python -c "import mimosa; print(mimosa.__all__)"
-          pytest tests
+          pytest -q tests
 
       - uses: actions/upload-artifact@v4
         with:

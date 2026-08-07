@@ -40,8 +40,8 @@ class NullDistribution:
     contract: dict
 
     def __post_init__(self):
-        if self.n_null < 0:
-            raise ValueError("null distribution n_null must be non-negative.")
+        if self.n_null <= 0:
+            raise ValueError("null distribution n_null must be positive.")
         if self.n_null != len(self.raw_scores):
             raise ValueError("null distribution n_null does not match raw_scores length.")
         if self.n_models < 2:

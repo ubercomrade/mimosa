@@ -101,6 +101,10 @@ class TestNullDistribution:
             NullDistribution(
                 "profile", "co", np.array([1.0]), [], 1, 2, "pwm", True, 0, "v", None, "s", "n", {}
             )
+        with pytest.raises(ValueError, match="must be positive"):
+            NullDistribution(
+                "profile", "co", np.array([]), [], 0, 2, "pwm", True, 0, "v", None, "s", "n", {}
+            )
 
     def test_build_null_reproducible(self, pwm_models, batch):
         d1 = build_null(pwm_models, sequences=batch, n_samples=30, seed=42)
@@ -134,6 +138,10 @@ class TestNullDistribution:
     def test_build_null_requires_two(self, pwm_models, batch):
         with pytest.raises(ValueError):
             build_null(pwm_models[:1], sequences=batch)
+
+    def test_build_null_requires_positive_samples(self, pwm_models, batch):
+        with pytest.raises(ValueError, match="must be positive"):
+            build_null(pwm_models[:2], sequences=batch, n_samples=0)
 
     def test_build_null_duplicate_names(self, pwm_models, batch):
         from mimosa import PWM

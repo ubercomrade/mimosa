@@ -159,28 +159,43 @@ class TestBammReader:
         m = read_bamm(bamm_path, order=100)
         assert m.order == 4
 
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "examples/foxa2.ihbcp",
+            "examples/gata2.ihbcp",
+            "examples/gata4.ihbcp",
+            "examples/myog.ihbcp",
+        ],
+    )
+    def test_read_official_bamm_examples(self, path):
+        model = read_bamm(path)
+        assert model.order == 4
+        assert model.motif_length > 0
+        assert np.all(np.isfinite(model.weights))
+
     def test_read_bamm_bad_range(self, tmp_path):
         p = tmp_path / "bad.ihbcp"
         p.write_text("0.25 0.25 -0.1 0.85\n")
         with pytest.raises(ModelFormatError):
             read_bamm(str(p))
 
-    def test_read_bamm_bad_normalization(self, tmp_path):
+    def test_read_bamm_bad_width(self, tmp_path):
         p = tmp_path / "bad.ihbcp"
-        p.write_text("0.2 0.2 0.2 0.2\n")
+        p.write_text("0.2 0.2 0.2\n")
         with pytest.raises(ModelFormatError):
             read_bamm(str(p))
 
 
 class TestSitega:
     def test_read(self):
-        m = read_sitega("test/fixtures/sitega.mat")
+        m = read_sitega("tests/fixtures/sitega.mat")
         assert m.name == "Bootatrap"
         assert m.motif_length == 12
         assert m.weights.shape == (25, 12)
 
     def test_write_roundtrip(self, tmp_path):
-        m = read_sitega("test/fixtures/sitega.mat")
+        m = read_sitega("tests/fixtures/sitega.mat")
         out = str(tmp_path / "out.mat")
         write_sitega(out, m)
         m2 = read_sitega(out)
@@ -202,13 +217,13 @@ class TestSitega:
 
 class TestXmlReaders:
     def test_read_dimont(self):
-        m = read_dimont("test/fixtures/stat_dimont-model-1.xml")
+        m = read_dimont("tests/fixtures/stat_dimont-model-1.xml")
         assert m.order == 3
         assert m.motif_length == 5
         assert m.weights.shape == (625, 5)
 
     def test_read_slim(self):
-        m = read_slim("test/fixtures/slim/example-model-1.xml")
+        m = read_slim("tests/fixtures/slim/example-model-1.xml")
         assert m.order == 5
         assert m.motif_length == 15
         assert m.weights.shape == (15625, 15)
@@ -302,7 +317,7 @@ class TestModelBundle:
         return read_bamm(str(p))
 
     def test_roundtrip_sitega(self, tmp_path):
-        m = read_sitega("test/fixtures/sitega.mat")
+        m = read_sitega("tests/fixtures/sitega.mat")
         path = str(tmp_path / "s")
         write_model(path, m)
         m2 = read_model_bundle(path)
@@ -310,7 +325,7 @@ class TestModelBundle:
         np.testing.assert_array_equal(m2.weights, m.weights)
 
     def test_roundtrip_dimont(self, tmp_path):
-        m = read_dimont("test/fixtures/stat_dimont-model-1.xml")
+        m = read_dimont("tests/fixtures/stat_dimont-model-1.xml")
         path = str(tmp_path / "d")
         write_model(path, m)
         m2 = read_model_bundle(path)
@@ -319,7 +334,7 @@ class TestModelBundle:
         np.testing.assert_array_equal(m2.weights, m.weights)
 
     def test_roundtrip_slim(self, tmp_path):
-        m = read_slim("test/fixtures/slim/example-model-1.xml")
+        m = read_slim("tests/fixtures/slim/example-model-1.xml")
         path = str(tmp_path / "sl")
         write_model(path, m)
         m2 = read_model_bundle(path)
@@ -398,6 +413,17 @@ class TestNullBundle:
             f.seek(-1, 1)
             f.write(bytes([b[0] ^ 0xFF]))
         with pytest.raises(ModelFormatError):
+            read_null_bundle(path)
+
+    def test_rejects_empty_null_distribution(self, tmp_path, dist):
+        path = str(tmp_path / "null")
+        write_null_bundle(path, dist)
+        manifest = os.path.join(path, "manifest.toml")
+        with open(manifest) as f:
+            content = f.read()
+        with open(manifest, "w") as f:
+            f.write(content.replace("n_null = 20", "n_null = 0"))
+        with pytest.raises(ModelFormatError, match="n_null"):
             read_null_bundle(path)
 
     def test_rejects_non_finite(self, tmp_path, dist):

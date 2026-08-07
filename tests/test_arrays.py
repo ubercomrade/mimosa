@@ -3,7 +3,6 @@ import pytest
 
 from mimosa import (
     EncodedSequences,
-    N_CODE,
     RaggedArray,
     StrandPair,
     encode_base,

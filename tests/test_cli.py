@@ -3,8 +3,6 @@ import os
 import subprocess
 import sys
 
-import pytest
-
 MIMOSA = [sys.executable, "-m", "mimosa.cli"]
 
 

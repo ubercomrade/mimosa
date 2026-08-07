@@ -1,7 +1,7 @@
 [project]
-name = "mimosa"
-version = "0.1.0"
-description = "Add your description here"
+name = "mimosa-tool"
+version = "1.4.0"
+description = "Model-independent motif similarity assessment tool"
 readme = "README.md"
 authors = [
     { name = "Anton Tsukanov", email = "ubercomrade@gmail.com" }
@@ -20,7 +20,17 @@ mimosa = "mimosa.cli:main"
 requires = ["uv_build>=0.10.9,<0.11.0"]
 build-backend = "uv_build"
 
+[tool.uv.build-backend]
+module-name = "mimosa"
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "ruff>=0.9.0",
 ]

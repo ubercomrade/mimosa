@@ -6,9 +6,7 @@ import pytest
 from mimosa import (
     BestPerSequence,
     MotifModel,
-    PWM,
     compare,
-    prepare_profile,
     reconstruct_pfm,
     select_sites,
 )
@@ -41,8 +39,6 @@ class ShiftedPWM(MotifModel):
         return 0
 
     def scan_into(self, sequence, forward, reverse, /):
-        import numpy as np
-
         w = self._weights
         n_pos = forward.shape[0]
         for pos in range(n_pos):
