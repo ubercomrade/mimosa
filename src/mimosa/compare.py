@@ -111,16 +111,15 @@ def compare_many(query, targets, sequences=None, *, background=None, metric="co"
     if min_logerr is not None and np.float32(min_logerr) != query.min_logerr:
         _check_threshold(np.float32(min_logerr), query)
     threshold = query.min_logerr
-    norm = query.normalization
+    norm = query.normalization if normalization is None else normalization
     config = ProfileConfig(metric=parse_profile_metric(metric), search_range=search_range, window_radius=window_radius, realign_window=realign_window, min_logerr=threshold)
-    prepared_targets = [_prepare_side(t, sequences, background, threshold, norm, cache) for t in targets]
 
     from .parallel import use_process_pool
 
-    total = len(prepared_targets)
-    if not use_process_pool(total):
+    if not use_process_pool(len(targets)):
+        prepared_targets = [_prepare_side(t, sequences, background, threshold, norm, cache) for t in targets]
         return _compare_many_serial(query, prepared_targets, config, on_progress)
-    return _compare_many_parallel(query, prepared_targets, config, on_progress)
+    return _compare_many_parallel(query, targets, config, sequences, background, norm, cache, on_progress)
 
 
 def _compare_many_serial(query, prepared_targets, config, on_progress):
@@ -138,24 +137,25 @@ def _compare_many_serial(query, prepared_targets, config, on_progress):
     return results
 
 
-def _compare_many_parallel(query, prepared_targets, config, on_progress):
+def _compare_many_parallel(query, targets, config, sequences, background, normalization, cache, on_progress):
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor, as_completed
 
-    from ._worker import _compare_target, _init_worker
+    from ._worker import _init_worker, _prepare_and_compare
 
-    total = len(prepared_targets)
-    ctx = mp.get_context("spawn")
+    cache_dir = cache.directory if cache is not None else None
+    total = len(targets)
     results = [None] * total
     if on_progress is not None:
         on_progress(("compare", 0, total, ""))
+    ctx = mp.get_context("spawn")
     with ProcessPoolExecutor(
         max_workers=mp.cpu_count(),
         initializer=_init_worker,
-        initargs=(query, config),
+        initargs=(query, config, sequences, background, cache_dir, normalization),
         mp_context=ctx,
     ) as ex:
-        futures = {ex.submit(_compare_target, t): i for i, t in enumerate(prepared_targets)}
+        futures = {ex.submit(_prepare_and_compare, t): i for i, t in enumerate(targets)}
         done = 0
         for fut in as_completed(futures):
             idx = futures[fut]

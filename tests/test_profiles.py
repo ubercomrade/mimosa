@@ -165,6 +165,18 @@ class TestCompare:
         for s, p in zip(serial, parallel):
             assert s == p
 
+    def test_compare_many_parallel_with_cache(self, pwm_pair, batch, tmp_path):
+        from mimosa.cache import Cache
+
+        m1, m2 = pwm_pair
+        cache = Cache(str(tmp_path / "cache"))
+        query = prepare_profile(m1, batch, cache=cache)
+        targets = [m2] * 70
+        serial = compare_many(query, list(targets), batch, cache=cache)
+        parallel = compare_many(query, targets, batch, cache=cache)
+        for s, p in zip(serial, parallel):
+            assert s == p
+
     def test_prepared_profile_picklable(self, pwm_pair, batch):
         import pickle
 
