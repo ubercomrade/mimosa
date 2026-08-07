@@ -41,7 +41,7 @@ from .profiles.normalization import (
     normalization_fingerprint,
 )
 from .profiles.prepared import PreparedProfile, ScoreProfile, prepare_profile
-from .scan import scan, scan_result_lengths
+from .scan import scan
 from .sites import (
     BestPerSequence,
     SiteCollection,
@@ -63,9 +63,9 @@ from .statistics import (
     empirical_upper_tail_pvalue,
     evalue,
 )
-from .io import ModelReader, read_fasta, read_model, read_scores, read_sequences, write_model
+from .io import ModelReader, read_fasta, read_model, read_scores, write_model
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"
 
 __all__ = [
     "EncodedSequences",
@@ -104,7 +104,6 @@ __all__ = [
     "ScoreProfile",
     "prepare_profile",
     "scan",
-    "scan_result_lengths",
     "BestPerSequence",
     "SiteCollection",
     "ThresholdHits",
@@ -125,7 +124,6 @@ __all__ = [
     "ModelReader",
     "read_model",
     "write_model",
-    "read_sequences",
     "read_fasta",
     "read_scores",
 ]

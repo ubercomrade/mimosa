@@ -100,29 +100,68 @@ def compare(query, target, sequences=None, *, background=None, metric="co", sear
 
 
 def compare_many(query, targets, sequences=None, *, background=None, metric="co", search_range=10, window_radius=10, realign_window=3, min_logerr=None, normalization=None, cache=None, on_progress=None):
-    """Compare one query against targets in stable order."""
+    """Compare one query against targets in stable order.
+
+    Targets below MIN_PARALLEL_TARGETS run in a serial loop; larger batches
+    spread across processes (one serial numba thread per worker).
+    """
     if not isinstance(query, PreparedProfile):
         query = prepare_profile(query, sequences, background=background, min_logerr=0.0 if min_logerr is None else min_logerr, normalization=normalization, cache=cache)
+
+    if min_logerr is not None and np.float32(min_logerr) != query.min_logerr:
+        _check_threshold(np.float32(min_logerr), query)
+    threshold = query.min_logerr
+    norm = query.normalization
+    config = ProfileConfig(metric=parse_profile_metric(metric), search_range=search_range, window_radius=window_radius, realign_window=realign_window, min_logerr=threshold)
+    prepared_targets = [_prepare_side(t, sequences, background, threshold, norm, cache) for t in targets]
+
+    from .parallel import use_process_pool
+
+    total = len(prepared_targets)
+    if not use_process_pool(total):
+        return _compare_many_serial(query, prepared_targets, config, on_progress)
+    return _compare_many_parallel(query, prepared_targets, config, on_progress)
+
+
+def _compare_many_serial(query, prepared_targets, config, on_progress):
+    total = len(prepared_targets)
     results = []
-    total = len(targets)
     if on_progress is not None:
         on_progress(("compare", 0, total, ""))
-    for i, target in enumerate(targets):
-        results.append(
-            compare(
-                query,
-                target,
-                sequences,
-                background=background,
-                metric=metric,
-                search_range=search_range,
-                window_radius=window_radius,
-                realign_window=realign_window,
-                min_logerr=min_logerr,
-                normalization=normalization,
-                cache=cache,
-            )
+    for i, target in enumerate(prepared_targets):
+        score, shift, orientation, n_sites, metric_str = profile_compare(
+            query.bundle, query.anchors, target.bundle, target.anchors, config
         )
+        results.append(ComparisonResult(query.name, target.name, score, shift, orientation, metric_str, n_sites))
         if on_progress is not None:
-            on_progress(("compare", i + 1, total, getattr(target, "name", "")))
+            on_progress(("compare", i + 1, total, target.name))
+    return results
+
+
+def _compare_many_parallel(query, prepared_targets, config, on_progress):
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    from ._worker import _compare_target, _init_worker
+
+    total = len(prepared_targets)
+    ctx = mp.get_context("spawn")
+    results = [None] * total
+    if on_progress is not None:
+        on_progress(("compare", 0, total, ""))
+    with ProcessPoolExecutor(
+        max_workers=mp.cpu_count(),
+        initializer=_init_worker,
+        initargs=(query, config),
+        mp_context=ctx,
+    ) as ex:
+        futures = {ex.submit(_compare_target, t): i for i, t in enumerate(prepared_targets)}
+        done = 0
+        for fut in as_completed(futures):
+            idx = futures[fut]
+            name, score, shift, orientation, n_sites, metric_str = fut.result()
+            results[idx] = ComparisonResult(query.name, name, score, shift, orientation, metric_str, n_sites)
+            done += 1
+            if on_progress is not None:
+                on_progress(("compare", done, total, name))
     return results

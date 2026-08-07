@@ -73,10 +73,6 @@ def read_fasta(path, max_sequences=MAX_FASTA_SEQUENCES):
     return EncodedSequences(encoded, offsets), tuple(names)
 
 
-def read_sequences(path, **kwargs):
-    return read_fasta(path, **kwargs)
-
-
 def read_scores(path):
     file = str(path)
     rows = []

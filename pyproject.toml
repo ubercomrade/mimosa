@@ -1,6 +1,6 @@
 [project]
 name = "mimosa-tool"
-version = "1.4.0"
+version = "1.4.1"
 description = "Model-independent motif similarity assessment tool"
 readme = "README.md"
 authors = [

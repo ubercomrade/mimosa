@@ -113,13 +113,4 @@ def scan(model, sequences, *, strands="forward"):
         )
     if not isinstance(sequences, EncodedSequences):
         raise TypeError("sequences must be an EncodedSequences batch.")
-    if strands == "both":
-        return _scan_batch_into(model, sequences, "both")
     return _scan_batch_into(model, sequences, strands)
-
-
-def scan_result_lengths(model, sequences):
-    return np.array(
-        [n_positions(model, len(sequences[i])) for i in range(len(sequences))],
-        dtype=np.int64,
-    )

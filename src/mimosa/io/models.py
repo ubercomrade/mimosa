@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..errors import InvariantError, ModelFormatError
+from ..errors import ModelFormatError
 from ..models import BaMM, Dimont, SiteGA, Slim
 
 MAX_MEME_MOTIF_LENGTH = 10_000
@@ -384,48 +384,6 @@ def read_sitega(path):
     if not np.all(np.isfinite(rep)):
         raise ModelFormatError(path, "representation contains non-finite values.")
     return SiteGA(name, rep, motif_length)
-
-
-def write_sitega(path, model):
-    if not isinstance(model, SiteGA):
-        raise InvariantError(
-            f"write_sitega requires a SiteGA model, got {type(model).__name__}."
-        )
-    rep = model.weights
-    motif_length = model.motif_length
-    mn = float(rep.min(axis=0).sum())
-    mx = float(rep.max(axis=0).sum())
-    segments = []
-    for nuc1 in range(4):
-        for nuc2 in range(4):
-            row_code = nuc1 * 5 + nuc2
-            row_data = rep[row_code]
-            if np.all(np.abs(row_data) <= SITEGA_EPSILON):
-                continue
-            dinucleotide = DINUC_LIST[nuc1 * 4 + nuc2]
-            pos = 0
-            while pos < motif_length:
-                while pos < motif_length and abs(row_data[pos]) <= SITEGA_EPSILON:
-                    pos += 1
-                if pos >= motif_length:
-                    break
-                start_pos = pos
-                current_val = row_data[pos]
-                while pos + 1 < motif_length and abs(row_data[pos + 1] - current_val) < SITEGA_EPSILON:
-                    pos += 1
-                segments.append((start_pos, pos, float(current_val), dinucleotide))
-                pos += 1
-    dinuc_index = {d: i for i, d in enumerate(DINUC_LIST)}
-    with open(path, "w", encoding="ascii") as f:
-        f.write(f"{model.name}\n")
-        f.write(f"{len(segments)}\tLPD count\n")
-        f.write(f"{motif_length}\tModel length\n")
-        f.write(f"{mn:.12f}\tMinimum\n")
-        f.write(f"{mx:.12f}\tRazmah\n")
-        for start, stop, val, dinuc in segments:
-            range_length = stop - start + 1
-            total_value = val * range_length
-            f.write(f"{start}\t{stop}\t{total_value:.12f}\t{dinuc_index[dinuc]}\t{dinuc}\n")
 
 
 # ── Dimont ───────────────────────────────────────────────────────────────────

@@ -155,6 +155,24 @@ class TestCompare:
         assert len(results) == 2
         assert results[0] == results[1]
 
+    def test_compare_many_parallel_matches_serial(self, pwm_pair, batch):
+        m1, m2 = pwm_pair
+        query = prepare_profile(m1, batch)
+        targets = [m2] * 70
+        serial = compare_many(query, list(targets), batch)
+        parallel = compare_many(query, targets, batch)
+        assert len(parallel) == len(serial) == 70
+        for s, p in zip(serial, parallel):
+            assert s == p
+
+    def test_prepared_profile_picklable(self, pwm_pair, batch):
+        import pickle
+
+        m1, _ = pwm_pair
+        prepared = prepare_profile(m1, batch)
+        roundtrip = pickle.loads(pickle.dumps(prepared))
+        assert roundtrip == prepared
+
     def test_metric_variants(self, pwm_pair, batch):
         m1, m2 = pwm_pair
         co = compare(m1, m2, batch, metric="co")

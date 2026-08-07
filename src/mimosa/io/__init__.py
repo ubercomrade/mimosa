@@ -13,7 +13,7 @@ from .bundles import (
     write_model,
     write_null_bundle,
 )
-from .fasta import read_fasta, read_scores, read_sequences
+from .fasta import read_fasta, read_scores
 from .readers import ModelReader, read_model
 from .models import (
     read_bamm,
@@ -22,7 +22,6 @@ from .models import (
     read_pfm,
     read_sitega,
     read_slim,
-    write_sitega,
 )
 
 __all__ = [
@@ -43,12 +42,10 @@ __all__ = [
     "read_model",
     "read_fasta",
     "read_scores",
-    "read_sequences",
     "read_bamm",
     "read_dimont",
     "read_meme",
     "read_pfm",
     "read_sitega",
     "read_slim",
-    "write_sitega",
 ]

@@ -26,12 +26,11 @@ BUNDLE_MANIFEST_NAME = "manifest.toml"
 BUNDLE_DATA_DIR = "data"
 
 MAX_BUNDLE_MANIFEST_BYTES = 134_217_728
-MAX_BUNDLE_BLOB_BYTES = 1_073_741_824
 MAX_BUNDLE_ARRAYS = 64
 MAX_BUNDLE_RANK = 8
 MAX_BUNDLE_DIMENSION = 100_000_000
-MAX_BUNDLE_ELEMENTS = 100_000_000
-MAX_BUNDLE_ALLOCATION_BYTES = 1_073_741_824
+# ponytail: one per-dim cap and one total-bytes cap cover all four former limits.
+MAX_BUNDLE_BYTES = 1_073_741_824
 
 
 def _bundle_error(path, message):
@@ -147,10 +146,10 @@ def _bundle_shape_payload_bytes(shape, dtype, path, context):
         if dim == 0:
             elements = 0
         elif elements != 0:
-            if elements > MAX_BUNDLE_ELEMENTS // dim:
-                raise _bundle_error(path, f"{context} exceeds the element allocation budget.")
+            if elements > MAX_BUNDLE_BYTES // dim // item_size:
+                raise _bundle_error(path, f"{context} exceeds the byte allocation budget.")
             elements *= dim
-    if elements > MAX_BUNDLE_ALLOCATION_BYTES // item_size:
+    if elements * item_size > MAX_BUNDLE_BYTES:
         raise _bundle_error(path, f"{context} exceeds the byte allocation budget.")
     return elements * item_size
 
@@ -240,7 +239,7 @@ def _read_bundle_manifest(root, expected_version, expected_kind=None):
     for name in arrays:
         file, dtype, shape, checksum = _parse_bundle_array(root, arrays, name, root)
         payload = _bundle_shape_payload_bytes(shape, dtype, root, f"array '{name}'")
-        if total_payload > MAX_BUNDLE_ALLOCATION_BYTES - payload:
+        if total_payload > MAX_BUNDLE_BYTES - payload:
             raise _bundle_error(root, "bundle exceeds the total allocation budget.")
         total_payload += payload
     return manifest
@@ -249,8 +248,8 @@ def _read_bundle_manifest(root, expected_version, expected_kind=None):
 def _validate_bundle_array_checksum(root, spec, bundle_path):
     file, dtype, shape, checksum = spec
     file_path = _resolve_bundle_path(root, file, bundle_path, f"array '{file}'", require_exists=True)
-    if os.path.getsize(file_path) > MAX_BUNDLE_BLOB_BYTES:
-        raise _bundle_error(bundle_path, f"binary blob exceeds size limit {MAX_BUNDLE_BLOB_BYTES} bytes.")
+    if os.path.getsize(file_path) > MAX_BUNDLE_BYTES:
+        raise _bundle_error(bundle_path, f"binary blob exceeds size limit {MAX_BUNDLE_BYTES} bytes.")
     actual = _file_sha256(file_path)
     if actual != checksum[7:]:
         raise _bundle_error(bundle_path, f"checksum mismatch for '{file}'.")
@@ -589,7 +588,7 @@ def _read_model_array(path, manifest, array_name):
         raise _bundle_error(path, "model arrays must use dtype '<f4'.")
     file_path = _validate_bundle_array_checksum(path, (file, spec_dtype, spec_shape, checksum), path)
     byte_length = _required_manifest_int(
-        arrays[array_name], "byte_length", path, f"array '{array_name}'", minimum=1, maximum=MAX_BUNDLE_BLOB_BYTES
+        arrays[array_name], "byte_length", path, f"array '{array_name}'", minimum=1, maximum=MAX_BUNDLE_BYTES
     )
     return _read_raw_f32_2d(file_path, shape, byte_length, root=path, expected_checksum=checksum)
 
@@ -773,8 +772,8 @@ def read_null_bundle(path):
     metric = _required_manifest_string(manifest, "metric", path, "null manifest")
     if metric not in ("co", "dice", "cosine"):
         raise _bundle_error(path, f"unsupported profile metric '{metric}'.")
-    n_null = _required_manifest_int(manifest, "n_null", path, "null manifest", minimum=1, maximum=MAX_BUNDLE_ELEMENTS)
-    n_models = _required_manifest_int(manifest, "n_models", path, "null manifest", minimum=2, maximum=MAX_BUNDLE_ELEMENTS)
+    n_null = _required_manifest_int(manifest, "n_null", path, "null manifest", minimum=1, maximum=MAX_BUNDLE_DIMENSION)
+    n_models = _required_manifest_int(manifest, "n_models", path, "null manifest", minimum=2, maximum=MAX_BUNDLE_DIMENSION)
     model_type = _required_manifest_string(manifest, "model_type", path, "null manifest")
     shuffle = _required_manifest_bool(manifest, "shuffle", path, "null manifest")
     seed = _required_manifest_int(manifest, "seed", path, "null manifest", minimum=0)

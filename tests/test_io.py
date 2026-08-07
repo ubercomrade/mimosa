@@ -15,7 +15,7 @@ from mimosa.io.bundles import (
     write_null_bundle,
 )
 from mimosa.io.fasta import read_fasta, read_scores
-from mimosa.io.models import read_bamm, read_dimont, read_meme, read_pfm, read_sitega, read_slim, write_sitega
+from mimosa.io.models import read_bamm, read_dimont, read_meme, read_pfm, read_sitega, read_slim
 from mimosa.models import pwm_from_pfm
 from mimosa.statistics import NullDistribution, build_null
 
@@ -194,25 +194,11 @@ class TestSitega:
         assert m.motif_length == 12
         assert m.weights.shape == (25, 12)
 
-    def test_write_roundtrip(self, tmp_path):
-        m = read_sitega("tests/fixtures/sitega.mat")
-        out = str(tmp_path / "out.mat")
-        write_sitega(out, m)
-        m2 = read_sitega(out)
-        assert m2.name == m.name
-        assert m2.motif_length == m.motif_length
-        np.testing.assert_allclose(m2.weights, m.weights, atol=1e-6)
-
     def test_malformed(self, tmp_path):
         p = tmp_path / "bad.mat"
         p.write_text("name\n0\tLPD\n")
         with pytest.raises(ModelFormatError):
             read_sitega(str(p))
-
-    def test_writer_rejects_other_model(self, tmp_path):
-        _, pfm = read_meme("examples/foxa2.meme")
-        with pytest.raises(InvariantError):
-            write_sitega(str(tmp_path / "bad.mat"), pwm_from_pfm(pfm, name="pwm"))
 
 
 class TestXmlReaders:
