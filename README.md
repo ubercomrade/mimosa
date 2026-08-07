@@ -1,13 +1,47 @@
 # Mimosa
 
-Mimosa is a Python package and command-line tool for comparing DNA motif models
-through the score profiles they produce on the same sequences. It supports PWM,
-BaMM, SiteGA, Dimont, Slim, and precomputed score profiles without converting
-all models to a common matrix representation.
+Mimosa is a Python 3.12+ package and command-line tool for DNA motif comparison.
+It supports PWM/PFM, BaMM, SiteGA, Dimont, Slim, and precomputed score profiles.
+Mimosa compares heterogeneous motif models through their behavior on the same
+DNA sequences rather than by forcing their internal representations into a
+common matrix.
 
-The library is built on NumPy and Numba and provides model I/O, scanning,
-profile normalization and alignment, site extraction, PFM reconstruction,
-empirical null distributions, and a prepared-profile cache.
+## Background
+
+Transcription factors (TFs) are key regulators of gene expression. They bind
+specific DNA sequences, termed transcription factor binding sites (TFBSs),
+located in gene regulatory regions. Because TFBSs are highly variable, they are
+typically described using motifs, which capture the nucleotide preferences of a
+TF across a range of binding sites. The position weight matrix (PWM) is the de
+facto standard motif model, assuming independence between positions and
+additive nucleotide contributions. However, numerous studies have demonstrated
+the presence of dependencies between positions within TFBSs. To account for
+such dependencies, alternative models have been proposed, including
+Markov-based approaches (BaMM, InMoDe, Dimont, Slim, MODER2), discriminative
+methods (SiteGA), and deep learning models (DeepBind, DeepGRN, BERT-TFBS).
+However, a mature ecosystem of databases and tools has been developed primarily
+for PWMs, including motif comparison methods that are critical for result
+interpretation. Comparison of alternative motif models usually requires their
+conversion into PWMs, which inevitably leads to loss of information about
+positional dependencies. At present, no universal tool exists for their direct
+comparison. Mimosa (Model-Independent Motif Similarity Assessment) addresses
+this gap by evaluating motif similarity based on functional behavior, namely
+the scores models assign to DNA sequences rather than their internal parameters.
+
+Mimosa uses the following profile comparison pipeline:
+
+1. Scan sequences by motifs to obtain score profiles.
+2. Convert raw scores to empirical `-log10(ERR)` values, where ERR is the
+   expectation recognition rate, optionally using a separate background sequence
+   set for calibration.
+3. Select one strict best anchor per non-empty sequence when `min_logerr <= 0`,
+   or all anchors with `-log10(ERR) >= min_logerr` for a positive threshold.
+4. Compare site-centered windows over shifts and the four strand orientations.
+5. Return the highest-scoring alignment, its offset, orientation, and number of
+   contributing sites.
+
+See [Method and Statistics](docs/python/method.md) for metric definitions,
+statistical significance, and references.
 
 ## Supported Models
 
