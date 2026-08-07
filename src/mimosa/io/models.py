@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import numpy as np
 
@@ -23,16 +24,11 @@ BAMM_EPSILON = 1e-10
 
 MAX_SITEGA_LENGTH = 10_000
 SITEGA_EPSILON = 1e-9
-DINUC_MAP = {
-    "aa": (0, 0), "ac": (0, 1), "ag": (0, 2), "at": (0, 3),
-    "ca": (1, 0), "cc": (1, 1), "cg": (1, 2), "ct": (1, 3),
-    "ga": (2, 0), "gc": (2, 1), "gg": (2, 2), "gt": (2, 3),
-    "ta": (3, 0), "tc": (3, 1), "tg": (3, 2), "tt": (3, 3),
-}
 DINUC_LIST = [
     "aa", "ac", "ag", "at", "ca", "cc", "cg", "ct",
     "ga", "gc", "gg", "gt", "ta", "tc", "tg", "tt",
 ]
+DINUC_MAP = {value: (index // 4, index % 4) for index, value in enumerate(DINUC_LIST)}
 
 DIMONT_MAX_LENGTH = 10_000
 DIMONT_MAX_SPAN = 10
@@ -40,12 +36,6 @@ LOG_UNIFORM_BASE = math.log(4.0)
 
 SLIM_MAX_LENGTH = 10_000
 SLIM_MAX_SPAN = 10
-
-
-def _basename_without_extension(path):
-    base = str(path).rsplit("/", 1)[-1]
-    dot = base.rfind(".")
-    return base if dot < 0 else base[:dot]
 
 
 def _validate_probability_rows(rows, path, label):
@@ -181,7 +171,7 @@ def read_pfm(path):
         raise ModelFormatError(path, "motif length must be positive.")
     if not np.all(np.isfinite(pfm)):
         raise ModelFormatError(path, "matrix contains non-finite values.")
-    return _basename_without_extension(path), pfm
+    return Path(path).stem, pfm
 
 
 # ── BaMM ─────────────────────────────────────────────────────────────────────
@@ -314,7 +304,7 @@ def read_bamm(path, order=None):
     if target_order < 0:
         raise ModelFormatError(path, f"order must be non-negative, got {order}.")
     rep = _build_bamm_representation(blocks, target_order, n_positions, path)
-    return BaMM(_basename_without_extension(path), rep, target_order, n_positions)
+    return BaMM(Path(path).stem, rep, target_order, n_positions)
 
 
 # ── SiteGA ───────────────────────────────────────────────────────────────────
@@ -636,7 +626,7 @@ def read_dimont(path):
                 current = current.children[ctx_val]
             context_scores[ctx] = [s + LOG_UNIFORM_BASE for s in current.scores]
         _build_position_column(context_scores, span, pos_idx, rep)
-    return Dimont(_basename_without_extension(path), rep, span, length_val)
+    return Dimont(Path(path).stem, rep, span, length_val)
 
 
 # ── Slim ─────────────────────────────────────────────────────────────────────
@@ -818,4 +808,4 @@ def read_slim(path):
                 _slim_symbol_log_probs(position, symbol, ctx, params, path) for symbol in range(4)
             ]
         _build_position_column(context_scores, span, position, rep)
-    return Slim(_basename_without_extension(path), rep, span, length_val)
+    return Slim(Path(path).stem, rep, span, length_val)

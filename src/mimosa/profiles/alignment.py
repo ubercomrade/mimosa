@@ -19,10 +19,6 @@ _METRIC_KINDS = {
 }
 
 
-def metric_name(metric):
-    return parse_profile_metric(metric)
-
-
 def parse_profile_metric(name):
     name = str(name)
     if name not in _METRIC_KINDS:
@@ -30,10 +26,6 @@ def parse_profile_metric(name):
             f"profile metric must be one of: {tuple(_METRIC_KINDS)}, got '{name}'."
         )
     return name
-
-
-def _resolve_profile_metric(metric):
-    return parse_profile_metric(metric)
 
 
 def _metric_kind(metric):
@@ -154,7 +146,7 @@ class ProfileConfig:
             raise ValueError("realign_window must be non-negative.")
         if not np.isfinite(min_logerr):
             raise ValueError("min_logerr must be finite.")
-        self.metric = _resolve_profile_metric(metric)
+        self.metric = parse_profile_metric(metric)
         self.search_range = int(search_range)
         self.window_radius = int(window_radius)
         self.realign_window = int(realign_window)
@@ -204,4 +196,4 @@ def profile_compare(query_bundle, query_anchors, target_bundle, target_anchors, 
             best_orientation = label
             best_rank = rank
 
-    return best_score, best_shift, best_orientation, best_n_sites, metric_name(metric)
+    return best_score, best_shift, best_orientation, best_n_sites, parse_profile_metric(metric)

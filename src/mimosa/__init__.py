@@ -45,7 +45,6 @@ from .scan import scan, scan_result_lengths
 from .sites import (
     BestPerSequence,
     SiteCollection,
-    SiteSelector,
     ThresholdHits,
     TopFractionHits,
     build_pcm,
@@ -108,7 +107,6 @@ __all__ = [
     "scan_result_lengths",
     "BestPerSequence",
     "SiteCollection",
-    "SiteSelector",
     "ThresholdHits",
     "TopFractionHits",
     "build_pcm",

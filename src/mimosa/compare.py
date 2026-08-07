@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .models import MotifModel
-from .profiles.alignment import ProfileConfig, _resolve_profile_metric, profile_compare
+from .profiles.alignment import ProfileConfig, parse_profile_metric, profile_compare
 from .profiles.prepared import PreparedProfile, ScoreProfile, prepare_profile
 
 
@@ -59,7 +59,7 @@ def compare(query, target, sequences=None, *, background=None, metric="co", sear
     (PreparedProfile, MotifModel, sequences), (MotifModel, MotifModel, sequences),
     or (ScoreProfile, ScoreProfile).
     """
-    m = _resolve_profile_metric(metric)
+    m = parse_profile_metric(metric)
 
     q_prepared = isinstance(query, PreparedProfile)
     t_prepared = isinstance(target, PreparedProfile)

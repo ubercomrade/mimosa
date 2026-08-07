@@ -34,11 +34,7 @@ class HybridLogTailTable:
         self.exact_tail = exact_tail
 
 
-class AbstractNormalizationStrategy:
-    pass
-
-
-class EmpiricalLogTail(AbstractNormalizationStrategy):
+class EmpiricalLogTail:
     def __eq__(self, other):
         return isinstance(other, EmpiricalLogTail)
 
@@ -46,7 +42,7 @@ class EmpiricalLogTail(AbstractNormalizationStrategy):
         return hash("EmpiricalLogTail")
 
 
-class HybridEmpiricalLogTail(AbstractNormalizationStrategy):
+class HybridEmpiricalLogTail:
     def __init__(self, bins=65_536):
         if not (256 <= bins <= 1_048_576):
             raise ValueError("hybrid normalization bins must be in 256:1_048_576.")
@@ -121,27 +117,12 @@ def fit(strategy, scores, *, tail_logerr=0.0):
     return HybridLogTailTable(lo, width, histogram_log_tail, exact)
 
 
-def _lower_bound_desc(scores, target):
-    n = scores.size
-    if n <= 1:
-        return 0
-    if target >= scores[0]:
-        return 0
-    if target <= scores[-1]:
-        return n - 1
-    lo, hi = 0, n
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if scores[mid] > target:
-            lo = mid + 1
-        else:
-            hi = mid
-    return lo
-
-
 def lookup_score(table, score):
     if isinstance(table, LogTailTable):
-        idx = _lower_bound_desc(table.scores, score)
+        idx = min(
+            int(np.searchsorted(-table.scores, -score, side="left")),
+            table.scores.size - 1,
+        )
         return table.log_tail[idx]
     if isinstance(table, HybridLogTailTable):
         if table.exact_tail.scores.size and score >= table.exact_tail.scores[-1]:

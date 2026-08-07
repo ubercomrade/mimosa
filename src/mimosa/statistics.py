@@ -14,7 +14,7 @@ from .io.bundles import (
     sequence_fingerprint,
 )
 from .models import PWM
-from .profiles.alignment import _resolve_profile_metric, metric_name
+from .profiles.alignment import parse_profile_metric
 from .profiles.normalization import HybridEmpiricalLogTail, normalization_fingerprint
 from .profiles.prepared import prepare_profile
 
@@ -276,8 +276,7 @@ def build_null(
         raise ValueError("seed must be non-negative.")
     if normalization is None:
         normalization = HybridEmpiricalLogTail()
-    m = _resolve_profile_metric(metric)
-    metric_str = metric_name(m)
+    metric_str = parse_profile_metric(metric)
 
     rng = np.random.default_rng(seed)
     shuffled_models = [

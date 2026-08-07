@@ -38,17 +38,7 @@ _CACHE_DATA_NAME = "data.bin"
 _CACHE_META_NAME = "meta.toml"
 _CACHE_LOCK_NAME = ".mimosa-cache.lock"
 
-ALGORITHM_VERSIONS = {
-    "pwm_scan": "1",
-    "bamm_scan": "1",
-    "sitega_scan": "1",
-    "dimont_scan": "1",
-    "slim_scan": "1",
-    "motif_compare": "1",
-    "profile_compare": "1",
-    "prepared_profile": "2",
-    "null_build": "1",
-}
+ALGORITHM_VERSIONS = {"prepared_profile": "2"}
 
 
 class Cache:

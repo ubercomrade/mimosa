@@ -14,20 +14,16 @@ from .scan import _scan_batch_into
 NUCLEOTIDE_CARDINALITY = 4
 
 
-class SiteSelector:
+class BestPerSequence:
     pass
 
 
-class BestPerSequence(SiteSelector):
-    pass
-
-
-class ThresholdHits(SiteSelector):
+class ThresholdHits:
     def __init__(self, threshold):
         self.threshold = np.float32(threshold)
 
 
-class TopFractionHits(SiteSelector):
+class TopFractionHits:
     def __init__(self, fraction, base=None):
         value = float(fraction)
         if not (np.isfinite(value) and 0.0 < value <= 1.0):

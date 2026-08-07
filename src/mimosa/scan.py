@@ -15,7 +15,7 @@ from ._kernels import (
     batch_scan_reverse_parallel,
     best_strand_reduce,
 )
-from .arrays import N_CODE, EncodedSequences, RaggedArray, StrandPair
+from .arrays import EncodedSequences, RaggedArray, StrandPair
 from .errors import ModelInterfaceError
 from .models import (
     BaMM,
@@ -37,19 +37,6 @@ def _validate_strand_policy(strands):
         raise ValueError(
             f"unsupported strand policy: {strands!r}; expected one of {STRAND_POLICIES}."
         )
-
-
-def _validate_scan_input(seq, n_pos, width, *dests):
-    expected = n_positions(width, len(seq))
-    if n_pos != expected:
-        raise ValueError(
-            f"n_pos={n_pos} does not match sequence geometry; expected {expected} for width={width}."
-        )
-    if np.any(seq > N_CODE):
-        raise ValueError("invalid encoded DNA code.")
-    for dest in dests:
-        if dest.size < n_pos:
-            raise ValueError("destination is too short.")
 
 
 def _scan_offsets(batch, model):
