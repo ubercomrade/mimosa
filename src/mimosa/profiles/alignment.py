@@ -14,10 +14,8 @@ ORIENTATION_RANK = {"++": 0, "+-": 1, "-+": 2, "--": 3}
 
 _METRIC_KINDS = {
     "co": (0, False),
-    "co_rowwise": (1, False),
     "dice": (0, True),
-    "dice_rowwise": (1, True),
-    "cosine": (2, False),
+    "cosine": (1, False),
 }
 
 

@@ -334,25 +334,7 @@ def _realign_query_position(r, expected, radius):
 
 
 @njit(cache=True)
-def _accumulate_pooled(r1, r2, pos1, shift, window_radius):
-    pos2 = pos1 + shift
-    sum1 = 0.0
-    sum2 = 0.0
-    intersection = 0.0
-    for offset in range(-window_radius, window_radius + 1):
-        v1 = r1[pos1 + offset]
-        v2 = r2[pos2 + offset]
-        sum1 += v1
-        sum2 += v2
-        if v1 < v2:
-            intersection += v1
-        else:
-            intersection += v2
-    return sum1, sum2, intersection
-
-
-@njit(cache=True)
-def _accumulate_rowwise_overlap(r1, r2, pos1, shift, window_radius, use_dice):
+def _accumulate_overlap(r1, r2, pos1, shift, window_radius, use_dice):
     pos2 = pos1 + shift
     sum1 = 0.0
     sum2 = 0.0
@@ -397,14 +379,11 @@ def _score_shift_csr(
     query_positions, query_offsets,
     target_positions, target_offsets,
     shift, window_radius, realign_window,
-    metric_kind,  # 0=pooled, 1=rowwise, 2=cosine
+    metric_kind,  # 0=rowwise, 1=cosine
     use_dice, seen, candidates,
     out_score, out_sites,
 ):
     n_rows = scores1_offsets.shape[0] - 1
-    total_sum1 = 0.0
-    total_sum2 = 0.0
-    total_intersection = 0.0
     total_row_score = 0.0
     total_finite = 0
     total_sites = 0
@@ -448,22 +427,14 @@ def _score_shift_csr(
 
         for c in range(count):
             pos1 = candidates[c]
-            pos2 = pos1 + shift
-            if metric_kind == 0:
-                s1, s2, inter = _accumulate_pooled(
-                    scores1_data[r1_start:r1_start + len1], scores2_data[r2_start:r2_start + len2], pos1, shift, window_radius
-                )
-                total_sum1 += s1
-                total_sum2 += s2
-                total_intersection += inter
-            elif metric_kind == 2:
+            if metric_kind == 1:
                 s_sum, f_count = _accumulate_cosine(
                     scores1_data[r1_start:r1_start + len1], scores2_data[r2_start:r2_start + len2], pos1, shift, window_radius
                 )
                 total_row_score += s_sum
                 total_finite += f_count
             else:
-                s_sum, f_count = _accumulate_rowwise_overlap(
+                s_sum, f_count = _accumulate_overlap(
                     scores1_data[r1_start:r1_start + len1], scores2_data[r2_start:r2_start + len2], pos1, shift, window_radius, use_dice
                 )
                 total_row_score += s_sum
@@ -474,15 +445,7 @@ def _score_shift_csr(
         out_sites[0] = 0
         return
 
-    if metric_kind == 0:
-        if use_dice:
-            denom = total_sum1 + total_sum2
-            score = 2.0 * total_intersection / denom if denom > 1e-6 else 0.0
-        else:
-            denom = total_sum1 if total_sum1 < total_sum2 else total_sum2
-            score = total_intersection / denom if denom > 1e-6 else 0.0
-    else:
-        score = 0.0 if total_finite == 0 else total_row_score / total_finite
+    score = 0.0 if total_finite == 0 else total_row_score / total_finite
 
     out_score[0] = score
     out_sites[0] = total_sites
@@ -499,9 +462,6 @@ def _score_shift_best(
     out_score, out_sites,
 ):
     n_rows = scores1_offsets.shape[0] - 1
-    total_sum1 = 0.0
-    total_sum2 = 0.0
-    total_intersection = 0.0
     total_row_score = 0.0
     total_finite = 0
     total_sites = 0
@@ -529,33 +489,23 @@ def _score_shift_best(
 
         if query_pos >= 0:
             total_sites += 1
-            if metric_kind == 0:
-                s1, s2, inter = _accumulate_pooled(r1, r2, query_pos, shift, window_radius)
-                total_sum1 += s1
-                total_sum2 += s2
-                total_intersection += inter
-            elif metric_kind == 2:
+            if metric_kind == 1:
                 s_sum, f_count = _accumulate_cosine(r1, r2, query_pos, shift, window_radius)
                 total_row_score += s_sum
                 total_finite += f_count
             else:
-                s_sum, f_count = _accumulate_rowwise_overlap(r1, r2, query_pos, shift, window_radius, use_dice)
+                s_sum, f_count = _accumulate_overlap(r1, r2, query_pos, shift, window_radius, use_dice)
                 total_row_score += s_sum
                 total_finite += f_count
 
         if target_pos >= 0 and target_pos != query_pos:
             total_sites += 1
-            if metric_kind == 0:
-                s1, s2, inter = _accumulate_pooled(r1, r2, target_pos, shift, window_radius)
-                total_sum1 += s1
-                total_sum2 += s2
-                total_intersection += inter
-            elif metric_kind == 2:
+            if metric_kind == 1:
                 s_sum, f_count = _accumulate_cosine(r1, r2, target_pos, shift, window_radius)
                 total_row_score += s_sum
                 total_finite += f_count
             else:
-                s_sum, f_count = _accumulate_rowwise_overlap(r1, r2, target_pos, shift, window_radius, use_dice)
+                s_sum, f_count = _accumulate_overlap(r1, r2, target_pos, shift, window_radius, use_dice)
                 total_row_score += s_sum
                 total_finite += f_count
 
@@ -564,15 +514,7 @@ def _score_shift_best(
         out_sites[0] = 0
         return
 
-    if metric_kind == 0:
-        if use_dice:
-            denom = total_sum1 + total_sum2
-            score = 2.0 * total_intersection / denom if denom > 1e-6 else 0.0
-        else:
-            denom = total_sum1 if total_sum1 < total_sum2 else total_sum2
-            score = total_intersection / denom if denom > 1e-6 else 0.0
-    else:
-        score = 0.0 if total_finite == 0 else total_row_score / total_finite
+    score = 0.0 if total_finite == 0 else total_row_score / total_finite
 
     out_score[0] = score
     out_sites[0] = total_sites

@@ -32,21 +32,20 @@ required by the contract.
 
 ## Similarity metrics
 
-For non-negative aligned windows `x` and `y`, pooled continuous overlap is:
+For each contributing aligned row, continuous overlap is:
 
 ```text
 CO(x, y) = sum(min(x, y)) / min(sum(x), sum(y))
 ```
 
-Dice similarity is:
+Dice similarity is calculated for each contributing row as:
 
 ```text
 Dice(x, y) = 2 * sum(min(x, y)) / (sum(x) + sum(y))
 ```
 
-`co_rowwise` and `dice_rowwise` calculate their metric per contributing row and
-average the finite values. `cosine` calculates a per-row cosine similarity and
-averages it.
+`co` and `dice` average the finite per-row values. `cosine` calculates a
+per-row cosine similarity and averages it.
 
 ## Sites and PFMs
 

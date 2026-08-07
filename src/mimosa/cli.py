@@ -60,7 +60,7 @@ def _make_progress(args):
 
 MODEL_TYPES = ["pwm", "bamm", "sitega", "dimont", "slim"]
 PROFILE_MODEL_TYPES = ["scores", *MODEL_TYPES]
-PROFILE_METRICS = ["co", "co_rowwise", "dice", "dice_rowwise", "cosine"]
+PROFILE_METRICS = ["co", "dice", "cosine"]
 MODEL_TYPE_MAP = {
     "pwm": PWM,
     "bamm": BaMM,

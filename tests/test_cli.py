@@ -51,7 +51,7 @@ class TestProfileCommand:
         assert r.returncode == 0, r.stderr
         d = json.loads(r.stdout)
         assert d["query"] == "MA0047.3"
-        assert d["n_sites"] == 200
+        assert d["n_sites"] == 199
 
     def test_stdout_only_json(self):
         r = run_cli(
@@ -111,6 +111,21 @@ class TestProfileCommand:
         )
         assert r.returncode == 0, r.stderr
         assert json.loads(r.stdout)["metric"] == "cosine"
+
+    def test_removed_rowwise_metric_names(self):
+        for metric in ("co_rowwise", "dice_rowwise"):
+            r = run_cli(
+                "profile",
+                "examples/scores_1.fasta",
+                "examples/scores_2.fasta",
+                "--model1-type",
+                "scores",
+                "--model2-type",
+                "scores",
+                "--metric",
+                metric,
+            )
+            assert r.returncode != 0
 
 
 class TestBuildNullCommand:

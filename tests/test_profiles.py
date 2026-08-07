@@ -118,10 +118,10 @@ class TestCompare:
         assert isinstance(result, ComparisonResult)
         assert result.query == "MA0047.3"
         assert result.target == "MA0036.2"
-        assert result.orientation == "+-"
-        assert result.offset == 2
-        assert result.n_sites == 200
-        assert abs(float(result.score) - 0.61160374) < 1e-5
+        assert result.orientation == "++"
+        assert result.offset == -3
+        assert result.n_sites == 199
+        assert abs(float(result.score) - 0.71147388) < 1e-5
 
     def test_compare_score_profiles(self):
         s1 = read_scores("examples/scores_1.fasta")
@@ -130,7 +130,9 @@ class TestCompare:
         assert result.offset == -6
         assert result.orientation == "++"
         assert result.n_sites == 1719
-        assert abs(float(result.score) - 0.48087642) < 1e-5
+        assert abs(float(result.score) - 0.55700350) < 1e-5
+        dice = compare(s1, s2, metric="dice")
+        assert abs(float(dice.score) - 0.47674134) < 1e-5
 
     def test_compare_self_is_perfect(self, pwm_pair, batch):
         m1, _ = pwm_pair
@@ -162,6 +164,12 @@ class TestCompare:
         assert dice.metric == "dice"
         assert cos.metric == "cosine"
         assert 0 <= float(dice.score) <= 1
+
+    def test_removed_rowwise_metric_names(self, pwm_pair, batch):
+        m1, m2 = pwm_pair
+        for metric in ("co_rowwise", "dice_rowwise"):
+            with pytest.raises(ValueError):
+                compare(m1, m2, batch, metric=metric)
 
     def test_min_logerr_threshold_mode(self, pwm_pair, batch):
         m1, m2 = pwm_pair

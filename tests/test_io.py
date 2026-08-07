@@ -402,6 +402,28 @@ class TestNullBundle:
         assert d["pairs"][0][0] == dist.pairs[0][0]
         assert d["contract"]["raw_scores_fingerprint"] == dist.contract["raw_scores_fingerprint"]
 
+    def test_rejects_previous_format_version(self, tmp_path, dist):
+        path = str(tmp_path / "null")
+        write_null_bundle(path, dist)
+        manifest = os.path.join(path, "manifest.toml")
+        with open(manifest) as f:
+            content = f.read()
+        with open(manifest, "w") as f:
+            f.write(content.replace("format_version = 8", "format_version = 7"))
+        with pytest.raises(ModelFormatError):
+            read_null_bundle(path)
+
+    def test_rejects_removed_metric(self, tmp_path, dist):
+        path = str(tmp_path / "null")
+        write_null_bundle(path, dist)
+        manifest = os.path.join(path, "manifest.toml")
+        with open(manifest) as f:
+            content = f.read()
+        with open(manifest, "w") as f:
+            f.write(content.replace('metric = "co"', 'metric = "co_rowwise"'))
+        with pytest.raises(ModelFormatError):
+            read_null_bundle(path)
+
     def test_raw_fingerprint_validated(self, tmp_path, dist):
         path = str(tmp_path / "null")
         write_null_bundle(path, dist)

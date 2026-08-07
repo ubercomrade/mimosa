@@ -1,7 +1,7 @@
 """Portable bundle storage: TOML manifest + raw Float32 blobs (models) and NPY (nulls).
 
-Reproduces the Julia v2 model bundle and v7 null bundle layouts byte-for-byte,
-including the `bitstring` fingerprint canonicalization.
+Reproduces the Julia v2 model bundle layout and the Mimosa v8 null bundle layout
+byte-for-byte, including the `bitstring` fingerprint canonicalization.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from ..errors import InvariantError, ModelFormatError
 from ..models import BaMM, Dimont, PWM, SiteGA, Slim
 
 MODEL_FORMAT_VERSION = 2
-NULL_FORMAT_VERSION = 7
+NULL_FORMAT_VERSION = 8
 BUNDLE_MANIFEST_NAME = "manifest.toml"
 BUNDLE_DATA_DIR = "data"
 
@@ -689,7 +689,7 @@ def write_null_bundle(path, dist):
         raise InvariantError("null distribution strategy/metric must not be empty.")
     if dist.strategy != "profile":
         raise InvariantError("only profile null distributions are supported.")
-    if dist.metric not in ("co", "co_rowwise", "dice", "dice_rowwise", "cosine"):
+    if dist.metric not in ("co", "dice", "cosine"):
         raise InvariantError(f"unsupported profile metric '{dist.metric}'.")
     if not np.all(np.isfinite(dist.raw_scores)):
         raise InvariantError("null distribution raw_scores contain non-finite values.")
@@ -771,6 +771,8 @@ def read_null_bundle(path):
     if strategy != "profile":
         raise _bundle_error(path, f"unsupported null strategy '{strategy}'.")
     metric = _required_manifest_string(manifest, "metric", path, "null manifest")
+    if metric not in ("co", "dice", "cosine"):
+        raise _bundle_error(path, f"unsupported profile metric '{metric}'.")
     n_null = _required_manifest_int(manifest, "n_null", path, "null manifest", minimum=1, maximum=MAX_BUNDLE_ELEMENTS)
     n_models = _required_manifest_int(manifest, "n_models", path, "null manifest", minimum=2, maximum=MAX_BUNDLE_ELEMENTS)
     model_type = _required_manifest_string(manifest, "model_type", path, "null manifest")

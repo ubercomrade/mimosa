@@ -54,9 +54,9 @@ result = compare(
 print(result.to_dict())
 ```
 
-Available metrics are `co`, `co_rowwise`, `dice`, `dice_rowwise`, and
-`cosine`. A separate FASTA batch can be passed as `background=` when score
-normalization needs a separate calibration set.
+Available metrics are `co`, `dice`, and `cosine`. The `co` and `dice` metrics
+average their score per contributing row. A separate FASTA batch can be passed
+as `background=` when score normalization needs a separate calibration set.
 
 ## Reuse Prepared Profiles
 

@@ -17,7 +17,7 @@ uv run mimosa profile MODEL1 MODEL2 \
 ```
 
 Model types are `scores`, `pwm`, `bamm`, `sitega`, `dimont`, and `slim`.
-Metrics are `co`, `co_rowwise`, `dice`, `dice_rowwise`, and `cosine`.
+Metrics are `co`, `dice`, and `cosine`.
 
 Important options:
 
