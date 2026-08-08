@@ -17,7 +17,7 @@ from .profiles.prepared import (
 )
 from .parallel import MIN_PARALLEL_TARGETS
 
-_TARGET_BATCH_SIZE = 256
+_TARGET_BATCH_SIZE = 32
 
 
 @dataclass(frozen=True)
@@ -211,7 +211,14 @@ def _compare_many_serial(query, prepared_targets, config, on_progress):
     return results
 
 
-def _compare_many_prepared_parallel(query, prepared_targets, config, cache, on_progress):
+def _compare_many_prepared_parallel(
+    query,
+    prepared_targets,
+    config,
+    cache,
+    on_progress,
+    phase_timings=None,
+):
     """Compare prepared targets with one packed Numba target-parallel kernel."""
     total = len(prepared_targets)
     if on_progress is not None:
@@ -230,12 +237,10 @@ def _compare_many_prepared_parallel(query, prepared_targets, config, cache, on_p
     )
 
     def pack(strand):
-        data_parts = []
-        position_parts = []
         score_offsets = np.empty((total, n_rows + 1), dtype=np.int64)
         anchor_offsets = np.empty((total, n_rows + 1), dtype=np.int64)
-        data_cursor = 0
-        position_cursor = 0
+        data_size = 0
+        position_size = 0
         for index, target in enumerate(targets):
             if strand == 1 and target_shared[index]:
                 score_offsets[index] = 0
@@ -243,22 +248,36 @@ def _compare_many_prepared_parallel(query, prepared_targets, config, cache, on_p
                 continue
             scores = target.bundle.forward if strand == 0 else target.bundle.reverse
             anchors = target.anchors[0] if strand == 0 else target.anchors[1]
+            data_size += scores.data.size
+            position_size += anchors.positions.size
+        data = np.empty(data_size, dtype=np.float32)
+        positions = np.empty(position_size, dtype=np.int64)
+        data_cursor = 0
+        position_cursor = 0
+        for index, target in enumerate(targets):
+            if strand == 1 and target_shared[index]:
+                continue
+            scores = target.bundle.forward if strand == 0 else target.bundle.reverse
+            anchors = target.anchors[0] if strand == 0 else target.anchors[1]
             score_offsets[index] = scores.offsets + data_cursor
             anchor_offsets[index] = anchors.offsets + position_cursor
-            data_parts.append(scores.data)
-            position_parts.append(anchors.positions)
+            np.copyto(data[data_cursor : data_cursor + scores.data.size], scores.data)
+            np.copyto(
+                positions[position_cursor : position_cursor + anchors.positions.size],
+                anchors.positions,
+            )
             data_cursor += scores.data.size
             position_cursor += anchors.positions.size
-        data = np.concatenate(data_parts) if data_parts else np.empty(0, dtype=np.float32)
-        positions = (
-            np.concatenate(position_parts)
-            if position_parts
-            else np.empty(0, dtype=np.int64)
-        )
         return data, score_offsets, positions, anchor_offsets
 
+    if phase_timings is not None:
+        import time
+
+        pack_started = time.perf_counter()
     target_fwd = pack(0)
     target_rev = pack(1)
+    if phase_timings is not None:
+        phase_timings["packing"] = time.perf_counter() - pack_started
     query_shared = query.bundle.forward is query.bundle.reverse
     max_row_length = (
         int(np.max(np.diff(query.bundle.forward.offsets)))
@@ -280,6 +299,8 @@ def _compare_many_prepared_parallel(query, prepared_targets, config, cache, on_p
     metric_kind = 1 if config.metric == "cosine" else 0
     use_dice = config.metric == "dice"
 
+    if phase_timings is not None:
+        kernel_started = time.perf_counter()
     batch_profile_compare(
         query.bundle.forward.data,
         query.bundle.forward.offsets,
@@ -314,6 +335,8 @@ def _compare_many_prepared_parallel(query, prepared_targets, config, cache, on_p
         out_orientations,
         out_sites,
     )
+    if phase_timings is not None:
+        phase_timings["alignment_kernel"] = time.perf_counter() - kernel_started
     orientations = ("++", "+-", "-+", "--")
     results = []
     for index, target in enumerate(targets):

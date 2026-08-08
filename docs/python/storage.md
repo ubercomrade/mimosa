@@ -49,14 +49,25 @@ stored = read_null_bundle("output/null_bundle")
 
 ## Prepared-profile cache
 
-The optional cache stores prepared profiles as trusted Python pickle payloads:
+The optional cache stores prepared profiles in a versioned binary payload with
+separate score, offset, and anchor sections:
 
 ```python
 from mimosa.cache import Cache
 from mimosa import prepare_profile
 
-prepared = prepare_profile(model, sequences, cache=Cache(".mimosa-cache"))
+prepared = prepare_profile(
+    model,
+    sequences,
+    cache=Cache(".mimosa-cache", memory_budget_bytes=1 << 30),
+)
 ```
+
+Disk hits verify the payload checksum once per cache instance and expose the
+numeric sections through read-only memory maps. The in-process LRU is limited by
+backing-array bytes rather than profile count. Entries written by older
+versions use the legacy pickle fallback and should only be opened from a
+trusted cache directory.
 
 Cache keys include the model or score-profile fingerprint, sequence and
 background fingerprints, the Float32 `min_logerr` bit pattern, normalization
@@ -67,5 +78,6 @@ a cache miss. Clear entries with:
 uv run mimosa cache clear --cache-dir .mimosa-cache
 ```
 
-The cache directory must be trusted because loading prepared profiles uses
-`pickle`. Cache checksums still detect accidental corruption before loading.
+The cache directory must be trusted when it contains legacy entries because
+their fallback loader uses `pickle`. Cache checksums still detect accidental
+corruption before loading.

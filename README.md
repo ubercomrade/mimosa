@@ -153,6 +153,15 @@ Run the test suite with:
 uv run pytest -q
 ```
 
+Run the production-path performance benchmark with:
+
+```bash
+uv run python benchmarks/benchmark_performance.py
+```
+
+Benchmark scan group dispatch separately with
+`uv run python benchmarks/benchmark_scan_dispatch.py`.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

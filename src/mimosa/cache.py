@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import pickle
 import shutil
@@ -25,10 +26,13 @@ from .io.bundles import (
     score_profile_fingerprint,
     sequence_fingerprint,
 )
+from .profiles.anchors import AnchorCSR
 from .profiles.normalization import (
+    EmpiricalLogTail,
     HybridEmpiricalLogTail,
     normalization_fingerprint,
 )
+from .arrays import RaggedArray, StrandPair
 from .profiles.prepared import PreparedProfile, ScoreProfile
 
 CACHE_FORMAT_VERSION = 2
@@ -36,8 +40,20 @@ _CACHE_DATA_NAME = "data.bin"
 _CACHE_META_NAME = "meta.toml"
 _CACHE_LOCK_NAME = ".mimosa-cache.lock"
 
-ALGORITHM_VERSIONS = {"prepared_profile": "3"}
-_MEMORY_CACHE_MAX_PROFILES = 256
+PREPARED_PROFILE_CACHE_FORMAT_VERSION = 4
+_PREPARED_PROFILE_BINARY_MAGIC = b"MIMOSA-PREP-MMAP-1\0"
+_PREPARED_PROFILE_SECTION_NAMES = (
+    "forward_scores",
+    "reverse_scores",
+    "forward_score_offsets",
+    "reverse_score_offsets",
+    "forward_anchor_positions",
+    "reverse_anchor_positions",
+    "forward_anchor_offsets",
+    "reverse_anchor_offsets",
+)
+ALGORITHM_VERSIONS = {"prepared_profile": "4"}
+DEFAULT_MEMORY_CACHE_BYTES = 1 << 30
 
 
 @dataclass(frozen=True)
@@ -47,10 +63,17 @@ class _PreparationContext:
 
 
 class Cache:
-    def __init__(self, directory, enabled=True):
+    def __init__(self, directory, enabled=True, memory_budget_bytes=DEFAULT_MEMORY_CACHE_BYTES):
+        if isinstance(memory_budget_bytes, bool) or not isinstance(memory_budget_bytes, (int, np.integer)):
+            raise TypeError("memory_budget_bytes must be a non-negative integer.")
+        if memory_budget_bytes < 0:
+            raise ValueError("memory_budget_bytes must be non-negative.")
         self.directory = str(directory)
         self.enabled = bool(enabled)
+        self.memory_budget_bytes = int(memory_budget_bytes)
         self._prepared_profiles = OrderedDict()
+        self._prepared_profiles_bytes = 0
+        self._verified_entries = set()
 
     def __repr__(self):
         return f"Cache({self.directory!r}, enabled={self.enabled})"
@@ -184,8 +207,77 @@ def _prepared_profile_cache_key(
     )
 
 
+def _prepared_profile_sections(profile):
+    forward = profile.bundle.forward
+    reverse = profile.bundle.reverse
+    forward_anchors, reverse_anchors = profile.anchors
+    sections = {
+        "forward_scores": (forward.data, "<f4"),
+        "forward_score_offsets": (forward.offsets, "<i8"),
+        "forward_anchor_positions": (forward_anchors.positions, "<i8"),
+        "forward_anchor_offsets": (forward_anchors.offsets, "<i8"),
+    }
+    if reverse is forward:
+        sections["reverse_scores"] = sections["forward_scores"]
+        sections["reverse_score_offsets"] = sections["forward_score_offsets"]
+    else:
+        sections["reverse_scores"] = (reverse.data, "<f4")
+        sections["reverse_score_offsets"] = (reverse.offsets, "<i8")
+    if reverse_anchors is forward_anchors:
+        sections["reverse_anchor_positions"] = sections["forward_anchor_positions"]
+        sections["reverse_anchor_offsets"] = sections["forward_anchor_offsets"]
+    else:
+        sections["reverse_anchor_positions"] = (reverse_anchors.positions, "<i8")
+        sections["reverse_anchor_offsets"] = (reverse_anchors.offsets, "<i8")
+    return sections
+
+
+def _encode_prepared_profile_with_metadata(profile):
+    payload = bytearray(_PREPARED_PROFILE_BINARY_MAGIC)
+    specs = {}
+    written = {}
+    sections = _prepared_profile_sections(profile)
+    for name in _PREPARED_PROFILE_SECTION_NAMES:
+        array, dtype = sections[name]
+        identity = (id(array), dtype)
+        if identity in written:
+            specs[name] = written[identity]
+            continue
+        values = np.ascontiguousarray(array, dtype=np.dtype(dtype))
+        itemsize = values.dtype.itemsize
+        offset = (len(payload) + itemsize - 1) // itemsize * itemsize
+        payload.extend(b"\0" * (offset - len(payload)))
+        raw = values.astype(dtype, copy=False).tobytes(order="C")
+        payload.extend(raw)
+        spec = {
+            "offset": offset,
+            "count": int(values.size),
+            "dtype": dtype,
+        }
+        specs[name] = spec
+        written[identity] = spec
+    metadata = {
+        "format": "prepared_profile_mmap",
+        "algorithm": "prepared_profile",
+        "prepared_profile_format_version": PREPARED_PROFILE_CACHE_FORMAT_VERSION,
+        "name": profile.name,
+        "min_logerr": float(profile.min_logerr),
+        "normalization": normalization_fingerprint(profile.normalization),
+        "n_rows": len(profile.bundle.forward),
+        "shared_reverse_scores": profile.bundle.forward is profile.bundle.reverse,
+        "shared_reverse_anchors": profile.anchors[0] is profile.anchors[1],
+        "payload_size": len(payload),
+    }
+    for name, spec in specs.items():
+        metadata[f"{name}_offset"] = spec["offset"]
+        metadata[f"{name}_count"] = spec["count"]
+        metadata[f"{name}_dtype"] = spec["dtype"]
+    return bytes(payload), metadata
+
+
 def _encode_prepared_profile(profile):
-    return pickle.dumps(profile, protocol=pickle.HIGHEST_PROTOCOL)
+    data, _ = _encode_prepared_profile_with_metadata(profile)
+    return data
 
 
 def _decode_prepared_profile(data):
@@ -207,31 +299,257 @@ def _decode_prepared_profile(data):
         return None
 
 
+def _toml_value(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=True)
+    raise TypeError(f"unsupported cache metadata type {type(value).__name__}")
+
+
+def _read_cache_metadata(cache, key):
+    meta_path = _cache_file_path(cache, key, _CACHE_META_NAME)
+    with open(meta_path, "rb") as f:
+        meta = tomllib.load(f)
+    expected = meta.get("checksum", "")
+    if not (
+        isinstance(expected, str)
+        and len(expected) == 71
+        and expected.startswith("sha256:")
+    ):
+        return None
+    try:
+        int(expected[7:], 16)
+    except ValueError:
+        return None
+    return meta
+
+
+def _verify_cache_data(cache, key, path, meta):
+    expected = meta["checksum"][7:]
+    size = os.path.getsize(path)
+    declared_size = meta.get("size", size)
+    if isinstance(declared_size, bool) or not isinstance(declared_size, int) or declared_size != size:
+        return False
+    verification_key = (key, expected, size)
+    if verification_key not in cache._verified_entries:
+        with open(path, "rb") as f:
+            actual = hashlib.file_digest(f, "sha256").hexdigest()
+        if actual != expected:
+            return False
+        cache._verified_entries.add(verification_key)
+    return True
+
+
+def _normalization_from_fingerprint(value):
+    if value == "empirical-log-tail-v1":
+        return EmpiricalLogTail()
+    if not value.startswith("hybrid-log-tail-v2;"):
+        return None
+    fields = {}
+    for part in value.split(";")[1:]:
+        if "=" not in part:
+            return None
+        name, item = part.split("=", 1)
+        fields[name] = item
+    try:
+        return HybridEmpiricalLogTail(int(fields["bins"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _mapped_profile_section(path, meta, name, expected_dtype, file_size):
+    offset_key = f"{name}_offset"
+    count_key = f"{name}_count"
+    dtype_key = f"{name}_dtype"
+    offset = meta.get(offset_key)
+    count = meta.get(count_key)
+    dtype = meta.get(dtype_key)
+    if (
+        isinstance(offset, bool)
+        or not isinstance(offset, int)
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < 0
+        or dtype != expected_dtype
+    ):
+        raise ValueError(f"invalid prepared-profile section '{name}'.")
+    itemsize = np.dtype(expected_dtype).itemsize
+    if offset < len(_PREPARED_PROFILE_BINARY_MAGIC) or offset % itemsize:
+        raise ValueError(f"invalid prepared-profile section offset '{name}'.")
+    section_size = count * itemsize
+    if offset > file_size or section_size > file_size - offset:
+        raise ValueError(f"prepared-profile section '{name}' exceeds payload.")
+    if count == 0:
+        values = np.empty(0, dtype=np.dtype(expected_dtype))
+        values.setflags(write=False)
+        return values
+    return np.memmap(
+        path,
+        mode="r",
+        dtype=np.dtype(expected_dtype),
+        offset=offset,
+        shape=(count,),
+    )
+
+
+def _decode_mmap_prepared_profile(path, meta):
+    try:
+        if meta.get("format") != "prepared_profile_mmap":
+            return None
+        if meta.get("prepared_profile_format_version") != PREPARED_PROFILE_CACHE_FORMAT_VERSION:
+            return None
+        name = meta.get("name")
+        n_rows = meta.get("n_rows")
+        threshold = meta.get("min_logerr")
+        normalization_tag = meta.get("normalization")
+        if (
+            not isinstance(name, str)
+            or isinstance(n_rows, bool)
+            or not isinstance(n_rows, int)
+            or n_rows < 0
+            or isinstance(threshold, bool)
+            or not isinstance(threshold, (int, float))
+            or not np.isfinite(threshold)
+            or not isinstance(normalization_tag, str)
+        ):
+            return None
+        normalization = _normalization_from_fingerprint(normalization_tag)
+        if normalization is None or normalization_fingerprint(normalization) != normalization_tag:
+            return None
+        file_size = os.path.getsize(path)
+        payload_size = meta.get("payload_size", file_size)
+        if (
+            isinstance(payload_size, bool)
+            or not isinstance(payload_size, int)
+            or payload_size != file_size
+        ):
+            return None
+        with open(path, "rb") as f:
+            if f.read(len(_PREPARED_PROFILE_BINARY_MAGIC)) != _PREPARED_PROFILE_BINARY_MAGIC:
+                return None
+
+        forward_data = _mapped_profile_section(
+            path, meta, "forward_scores", "<f4", file_size
+        )
+        reverse_data = (
+            forward_data
+            if meta.get("shared_reverse_scores")
+            else _mapped_profile_section(path, meta, "reverse_scores", "<f4", file_size)
+        )
+        forward_offsets = _mapped_profile_section(
+            path, meta, "forward_score_offsets", "<i8", file_size
+        )
+        reverse_offsets = (
+            forward_offsets
+            if meta.get("shared_reverse_scores")
+            else _mapped_profile_section(
+                path, meta, "reverse_score_offsets", "<i8", file_size
+            )
+        )
+        forward_anchor_positions = _mapped_profile_section(
+            path, meta, "forward_anchor_positions", "<i8", file_size
+        )
+        reverse_anchor_positions = (
+            forward_anchor_positions
+            if meta.get("shared_reverse_anchors")
+            else _mapped_profile_section(
+                path, meta, "reverse_anchor_positions", "<i8", file_size
+            )
+        )
+        forward_anchor_offsets = _mapped_profile_section(
+            path, meta, "forward_anchor_offsets", "<i8", file_size
+        )
+        reverse_anchor_offsets = (
+            forward_anchor_offsets
+            if meta.get("shared_reverse_anchors")
+            else _mapped_profile_section(
+                path, meta, "reverse_anchor_offsets", "<i8", file_size
+            )
+        )
+        if (
+            forward_offsets.size != n_rows + 1
+            or reverse_offsets.size != n_rows + 1
+            or forward_anchor_offsets.size != n_rows + 1
+            or reverse_anchor_offsets.size != n_rows + 1
+        ):
+            return None
+        forward = RaggedArray(forward_data, forward_offsets)
+        reverse = (
+            forward
+            if meta.get("shared_reverse_scores")
+            else RaggedArray(reverse_data, reverse_offsets)
+        )
+        if not np.all(np.isfinite(forward.data)) or not np.all(np.isfinite(reverse.data)):
+            return None
+        forward_anchor = AnchorCSR(forward_anchor_positions, forward_anchor_offsets)
+        reverse_anchor = (
+            forward_anchor
+            if meta.get("shared_reverse_anchors")
+            else AnchorCSR(reverse_anchor_positions, reverse_anchor_offsets)
+        )
+        anchors = (forward_anchor, reverse_anchor)
+        return PreparedProfile(
+            name,
+            StrandPair(forward, reverse),
+            anchors,
+            np.float32(threshold),
+            normalization,
+        )
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _cached_mmap_prepared_profile(cache, key):
+    path = _cache_file_path(cache, key, _CACHE_DATA_NAME)
+    try:
+        meta = _read_cache_metadata(cache, key)
+        if meta is None or meta.get("format") != "prepared_profile_mmap":
+            return None
+        if not _verify_cache_data(cache, key, path, meta):
+            return None
+        return _decode_mmap_prepared_profile(path, meta)
+    except (OSError, TypeError, ValueError):
+        return None
+
+
 def cache_get(cache, key):
     if not cache.enabled:
         return None
     path = _cache_file_path(cache, key, _CACHE_DATA_NAME)
-    meta_path = _cache_file_path(cache, key, _CACHE_META_NAME)
     try:
-        with open(meta_path, "rb") as f:
-            meta = tomllib.load(f)
-        expected = meta.get("checksum", "")
-        if not (isinstance(expected, str) and expected.startswith("sha256:")):
+        meta = _read_cache_metadata(cache, key)
+        if meta is None:
             return None
         with open(path, "rb") as f:
             data = f.read()
-        if hashlib.sha256(data).hexdigest() != expected[7:]:
+        if hashlib.sha256(data).hexdigest() != meta["checksum"][7:]:
+            return None
+        if "size" in meta and meta["size"] != len(data):
             return None
         return data
     except Exception:
         return None
 
 
-def cache_set(cache, key, data):
+def cache_set(cache, key, data, metadata=None):
     if not cache.enabled:
         return None
     path = _cache_file_path(cache, key, _CACHE_DATA_NAME)
+    data = bytes(data)
     checksum = hashlib.sha256(data).hexdigest()
+    meta = {
+        "format_version": CACHE_FORMAT_VERSION,
+        "checksum": f"sha256:{checksum}",
+        "size": len(data),
+    }
+    for name, value in (metadata or {}).items():
+        if name not in ("format_version", "checksum", "size"):
+            meta[name] = value
     root = _cache_root(cache)
     os.makedirs(root, exist_ok=True)
     # ponytail: one cache-wide lock; per-key locks only if write contention matters.
@@ -243,11 +561,15 @@ def cache_set(cache, key, data):
             with open(os.path.join(entry_stage, _CACHE_DATA_NAME), "wb") as f:
                 f.write(data)
             with open(os.path.join(entry_stage, _CACHE_META_NAME), "w", encoding="utf-8") as f:
-                f.write(f'checksum = "sha256:{checksum}"\n')
+                for name in sorted(meta):
+                    f.write(f"{name} = {_toml_value(meta[name])}\n")
             target = _cache_entry_dir(cache, key)
             if os.path.exists(target):
                 shutil.rmtree(target)
             os.rename(entry_stage, target)
+            cache._verified_entries = {
+                item for item in cache._verified_entries if item[0] != key
+            }
             return path
         finally:
             shutil.rmtree(stage, ignore_errors=True)
@@ -258,10 +580,12 @@ def clearcache(cache):
         return 0
     root = _cache_root(cache)
     if not os.path.isdir(root):
-        cache._prepared_profiles.clear()
+        _clear_memory_cache(cache)
+        cache._verified_entries.clear()
         return 0
     with _cache_lock(root):
-        cache._prepared_profiles.clear()
+        _clear_memory_cache(cache)
+        cache._verified_entries.clear()
         count = 0
         for name in os.listdir(root):
             entry = os.path.join(root, name)
@@ -296,11 +620,44 @@ def _memory_cache_get(cache, key):
     return profile
 
 
+def _prepared_profile_nbytes(profile):
+    arrays = (
+        profile.bundle.forward.data,
+        profile.bundle.forward.offsets,
+        profile.bundle.reverse.data,
+        profile.bundle.reverse.offsets,
+        profile.anchors[0].positions,
+        profile.anchors[0].offsets,
+        profile.anchors[1].positions,
+        profile.anchors[1].offsets,
+    )
+    seen = set()
+    total = 0
+    for array in arrays:
+        identity = id(array)
+        if identity not in seen:
+            seen.add(identity)
+            total += int(array.nbytes)
+    return total
+
+
+def _clear_memory_cache(cache):
+    cache._prepared_profiles.clear()
+    cache._prepared_profiles_bytes = 0
+
+
 def _memory_cache_set(cache, key, profile):
-    cache._prepared_profiles.pop(key, None)
+    previous = cache._prepared_profiles.pop(key, None)
+    if previous is not None:
+        cache._prepared_profiles_bytes -= _prepared_profile_nbytes(previous)
+    size = _prepared_profile_nbytes(profile)
+    if size > cache.memory_budget_bytes:
+        return
     cache._prepared_profiles[key] = profile
-    while len(cache._prepared_profiles) > _MEMORY_CACHE_MAX_PROFILES:
-        cache._prepared_profiles.popitem(last=False)
+    cache._prepared_profiles_bytes += size
+    while cache._prepared_profiles_bytes > cache.memory_budget_bytes:
+        _, evicted = cache._prepared_profiles.popitem(last=False)
+        cache._prepared_profiles_bytes -= _prepared_profile_nbytes(evicted)
 
 
 def _cached_prepared_profile(
@@ -327,6 +684,10 @@ def _cached_prepared_profile(
     cached = _memory_cache_get(cache, key)
     if cached is not None:
         return key, cached
+    profile = _cached_mmap_prepared_profile(cache, key)
+    if profile is not None:
+        _memory_cache_set(cache, key, profile)
+        return key, profile
     data = cache_get(cache, key)
     if data is None:
         return key, None
@@ -339,10 +700,12 @@ def _cached_prepared_profile(
 def _store_prepared_profile(cache, key, profile):
     if cache is None or not cache.enabled or key is None:
         return profile
+    data, metadata = _encode_prepared_profile_with_metadata(profile)
     cache_set(
         cache,
         key,
-        _encode_prepared_profile(profile),
+        data,
+        metadata=metadata,
     )
     _memory_cache_set(cache, key, profile)
     return profile

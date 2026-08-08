@@ -1,6 +1,6 @@
 import os
 import multiprocessing
-import pickle
+import tomllib
 
 import numpy as np
 import pytest
@@ -169,12 +169,50 @@ class TestPreparedProfileCache:
         monkeypatch.setattr("mimosa.cache.cache_get", unexpected_disk_read)
         assert prepare_profile(pwm, batch, cache=cache) is prepared
 
-    def test_prepare_payload_is_pickle(self, pwm, batch, tmp_path):
+    def test_prepare_disk_hit_maps_read_only_arrays(self, pwm, batch, tmp_path):
+        cache = Cache(str(tmp_path))
+        expected = prepare_profile(pwm, batch, cache=cache)
+        loaded = prepare_profile(pwm, batch, cache=Cache(str(tmp_path)))
+        assert loaded == expected
+        assert not loaded.bundle.forward.data.flags.writeable
+        assert not loaded.bundle.forward.offsets.flags.writeable
+        assert loaded.bundle.forward.data.base is not None
+
+    def test_prepare_disk_hit_rejects_corrupt_payload(self, pwm, batch, tmp_path):
+        cache = Cache(str(tmp_path))
+        expected = prepare_profile(pwm, batch, cache=cache)
+        key = prepared_profile_cache_key(cache, pwm, batch)
+        data_path = tmp_path / key / "data.bin"
+        with open(data_path, "r+b") as f:
+            f.seek(-1, os.SEEK_END)
+            value = f.read(1)[0]
+            f.seek(-1, os.SEEK_END)
+            f.write(bytes([value ^ 0xFF]))
+        loaded = prepare_profile(pwm, batch, cache=Cache(str(tmp_path)))
+        assert loaded == expected
+
+    def test_prepare_legacy_pickle_fallback(self, pwm, batch, tmp_path):
+        import pickle
+
+        from mimosa.cache import cache_set
+
+        cache = Cache(str(tmp_path))
+        expected = prepare_profile(pwm, batch)
+        key = prepared_profile_cache_key(cache, pwm, batch)
+        cache_set(cache, key, pickle.dumps(expected, protocol=pickle.HIGHEST_PROTOCOL))
+        loaded = prepare_profile(pwm, batch, cache=Cache(str(tmp_path)))
+        assert loaded == expected
+
+    def test_prepare_payload_is_mmap_profile(self, pwm, batch, tmp_path):
         cache = Cache(str(tmp_path))
         prepared = prepare_profile(pwm, batch, cache=cache)
         key = prepared_profile_cache_key(cache, pwm, batch)
         with open(tmp_path / key / "data.bin", "rb") as f:
-            assert pickle.loads(f.read()) == prepared
+            assert f.read(19) == b"MIMOSA-PREP-MMAP-1\0"
+        with open(tmp_path / key / "meta.toml", "rb") as f:
+            metadata = tomllib.load(f)
+        assert metadata["format"] == "prepared_profile_mmap"
+        assert metadata["n_rows"] == len(prepared.bundle.forward)
 
     def test_prepare_miss_on_model_change(self, pwm, batch, tmp_path):
         from mimosa import PWM
@@ -186,3 +224,49 @@ class TestPreparedProfileCache:
         pwm2 = PWM(pwm.name, w, pwm.background)
         p2 = prepare_profile(pwm2, batch, cache=cache)
         assert not np.array_equal(p1.bundle.forward.data, p2.bundle.forward.data)
+
+    def test_memory_cache_eviction_uses_bytes(self, pwm, batch, tmp_path):
+        from mimosa.cache import (
+            _memory_cache_get,
+            _memory_cache_set,
+            _prepared_profile_nbytes,
+        )
+
+        p1 = prepare_profile(pwm, batch)
+        p2 = prepare_profile(pwm, batch, min_logerr=1.0)
+        budget = max(_prepared_profile_nbytes(p1), _prepared_profile_nbytes(p2))
+        cache = Cache(str(tmp_path), memory_budget_bytes=budget)
+        _memory_cache_set(cache, "one", p1)
+        _memory_cache_set(cache, "two", p2)
+        assert _memory_cache_get(cache, "one") is None
+        assert _memory_cache_get(cache, "two") is p2
+        assert cache._prepared_profiles_bytes == _prepared_profile_nbytes(p2)
+
+    def test_memory_cache_hit_updates_lru(self, pwm, batch, tmp_path):
+        from mimosa.cache import _memory_cache_get, _memory_cache_set, _prepared_profile_nbytes
+
+        profiles = [
+            prepare_profile(pwm, batch, min_logerr=value)
+            for value in (0.0, 1.0, 2.0)
+        ]
+        sizes = [_prepared_profile_nbytes(profile) for profile in profiles]
+        budget = max(sizes[0] + sizes[1], sizes[0] + sizes[2])
+        cache = Cache(str(tmp_path), memory_budget_bytes=budget)
+        _memory_cache_set(cache, "one", profiles[0])
+        _memory_cache_set(cache, "two", profiles[1])
+        assert _memory_cache_get(cache, "one") is profiles[0]
+        _memory_cache_set(cache, "three", profiles[2])
+        assert _memory_cache_get(cache, "two") is None
+        assert _memory_cache_get(cache, "one") is profiles[0]
+
+    def test_memory_cache_does_not_keep_oversized_entry(self, pwm, batch, tmp_path):
+        from mimosa.cache import _memory_cache_set, _prepared_profile_nbytes
+
+        profile = prepare_profile(pwm, batch)
+        cache = Cache(
+            str(tmp_path),
+            memory_budget_bytes=_prepared_profile_nbytes(profile) - 1,
+        )
+        _memory_cache_set(cache, "oversized", profile)
+        assert not cache._prepared_profiles
+        assert cache._prepared_profiles_bytes == 0

@@ -132,6 +132,50 @@ def _scan_batch_into(model, batch, strands):
     return RaggedArray(data, offsets)
 
 
+def _scan_builtin_model_into(
+    model,
+    batch,
+    forward_data,
+    forward_offsets,
+    reverse_data,
+    reverse_offsets,
+    model_index,
+    parallel,
+):
+    """Scan one built-in model into its row of the packed output."""
+    if isinstance(model, PWM):
+        forward_kernel = batch_scan_forward_parallel if parallel else batch_scan_forward
+        reverse_kernel = batch_scan_reverse_parallel if parallel else batch_scan_reverse
+        kernel_args = (model.motif_length,)
+    elif isinstance(model, (BaMM, Dimont, Slim)):
+        forward_kernel = batch_rolling_forward_parallel if parallel else batch_rolling_forward
+        reverse_kernel = batch_rolling_reverse_parallel if parallel else batch_rolling_reverse
+        kernel_args = (model.order + 1, model.motif_length)
+    elif isinstance(model, SiteGA):
+        forward_kernel = batch_rolling_forward_parallel if parallel else batch_rolling_forward
+        reverse_kernel = batch_rolling_reverse_parallel if parallel else batch_rolling_reverse
+        kernel_args = (2, model.motif_length - 1)
+    else:
+        raise TypeError(f"unsupported built-in scan model: {type(model).__name__}")
+
+    forward_kernel(
+        model.weights,
+        batch.data,
+        batch.offsets,
+        forward_data,
+        forward_offsets[model_index],
+        *kernel_args,
+    )
+    reverse_kernel(
+        model.weights,
+        batch.data,
+        batch.offsets,
+        reverse_data,
+        reverse_offsets[model_index],
+        *kernel_args,
+    )
+
+
 def _scan_models_batch(models, batch):
     """Scan built-in model groups into one packed forward/reverse batch."""
     if not isinstance(batch, EncodedSequences):
@@ -181,50 +225,73 @@ def _scan_models_batch(models, batch):
 
     for (kind, first, second), model_indices in groups.items():
         indices = np.asarray(model_indices, dtype=np.int64)
-        if kind == "pwm":
-            max_length = first
-            weights = np.stack([models[index].weights for index in model_indices])
-            lengths = np.full(len(model_indices), max_length, dtype=np.int64)
-            batch_pwm_models_forward(
-                weights,
-                lengths,
-                indices,
-                batch.data,
-                batch.offsets,
-                forward_data,
-                forward_offsets,
-            )
-            batch_pwm_models_reverse(
-                weights,
-                lengths,
-                indices,
-                batch.data,
-                batch.offsets,
-                reverse_data,
-                reverse_offsets,
-            )
+        model_items = int(
+            forward_offsets[model_indices[0], -1]
+            - forward_offsets[model_indices[0], 0]
+        )
+        model_parallel = use_parallel(
+            model_items,
+            rows=n_rows,
+            groups=len(model_indices),
+        )
+        if model_parallel:
+            if kind == "pwm":
+                max_length = first
+                weights = np.stack([models[index].weights for index in model_indices])
+                lengths = np.full(len(model_indices), max_length, dtype=np.int64)
+                batch_pwm_models_forward(
+                    weights,
+                    lengths,
+                    indices,
+                    batch.data,
+                    batch.offsets,
+                    forward_data,
+                    forward_offsets,
+                )
+                batch_pwm_models_reverse(
+                    weights,
+                    lengths,
+                    indices,
+                    batch.data,
+                    batch.offsets,
+                    reverse_data,
+                    reverse_offsets,
+                )
+            else:
+                weights = np.stack([models[index].weights for index in model_indices])
+                batch_rolling_models_forward(
+                    weights,
+                    indices,
+                    batch.data,
+                    batch.offsets,
+                    forward_data,
+                    forward_offsets,
+                    first,
+                    second,
+                )
+                batch_rolling_models_reverse(
+                    weights,
+                    indices,
+                    batch.data,
+                    batch.offsets,
+                    reverse_data,
+                    reverse_offsets,
+                    first,
+                    second,
+                )
         else:
-            weights = np.stack([models[index].weights for index in model_indices])
-            batch_rolling_models_forward(
-                weights,
-                indices,
-                batch.data,
-                batch.offsets,
-                forward_data,
-                forward_offsets,
-                first,
-                second,
-            )
-            batch_rolling_models_reverse(
-                weights,
-                indices,
-                batch.data,
-                batch.offsets,
-                reverse_data,
-                reverse_offsets,
-                first,
-                second,
-            )
+            row_parallel = use_parallel(model_items, rows=n_rows)
+            for model_index in model_indices:
+                _scan_builtin_model_into(
+                    models[model_index],
+                    batch,
+                    forward_data,
+                    forward_offsets,
+                    reverse_data,
+                    reverse_offsets,
+                    model_index,
+                    row_parallel,
+                )
 
     for model_index in custom:
         model = models[model_index]
