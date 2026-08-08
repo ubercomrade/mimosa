@@ -165,6 +165,40 @@ class TestCompare:
         for s, p in zip(serial, parallel):
             assert s == p
 
+    def test_compare_many_prepared_parallel_matches_serial(self, pwm_pair, batch):
+        m1, m2 = pwm_pair
+        query = prepare_profile(m1, batch)
+        target = prepare_profile(m2, batch)
+        prepared_targets = [target if i % 2 else query for i in range(70)]
+        config = ProfileConfig(metric="co")
+        from mimosa.compare import _compare_many_serial
+
+        serial = _compare_many_serial(query, prepared_targets, config, None)
+        parallel = compare_many(query, prepared_targets, batch)
+        assert len(parallel) == len(serial) == 70
+        for s, p in zip(serial, parallel):
+            assert s == p
+
+    def test_compare_many_prepared_pool_reuses_targets(self, pwm_pair, batch, tmp_path):
+        from mimosa.cache import Cache
+
+        m1, m2 = pwm_pair
+        query = prepare_profile(m1, batch)
+        target = prepare_profile(m2, batch)
+        targets = [target] * 70
+        cache = Cache(str(tmp_path))
+        try:
+            co = compare_many(query, targets, batch, metric="co", cache=cache)
+            dice = compare_many(query, targets, batch, metric="dice", cache=cache)
+            assert co[0] == compare(query, target, batch, metric="co")
+            assert dice[0] == compare(query, target, batch, metric="dice")
+            assert cache._prepared_target_pool is not None
+        finally:
+            pool = getattr(cache, "_prepared_target_pool", None)
+            if pool is not None:
+                pool.close()
+                delattr(cache, "_prepared_target_pool")
+
     def test_compare_many_parallel_with_cache(self, pwm_pair, batch, tmp_path):
         from mimosa.cache import Cache
 

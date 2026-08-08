@@ -14,6 +14,7 @@ _SEQUENCES = None
 _BACKGROUND = None
 _CACHE = None
 _NORMALIZATION = None
+_PREPARED_TARGETS = None
 
 
 def _init_worker(query, config, sequences, background, cache_dir, normalization):
@@ -25,6 +26,13 @@ def _init_worker(query, config, sequences, background, cache_dir, normalization)
     _BACKGROUND = background
     _CACHE = Cache(cache_dir) if cache_dir else None
     _NORMALIZATION = normalization
+
+
+def _init_prepared_targets_worker(prepared_targets):
+    """Initialize a persistent worker with a read-only prepared target batch."""
+    set_num_threads(1)
+    global _PREPARED_TARGETS
+    _PREPARED_TARGETS = prepared_targets
 
 
 def _prepare_and_compare(target):
@@ -47,3 +55,19 @@ def _prepare_and_compare(target):
         _CONFIG,
     )
     return (prepared.name, score, shift, orientation, n_sites, metric_str)
+
+
+def _compare_prepared_chunk(task):
+    query, config, indexes = task
+    results = []
+    for index in indexes:
+        target = _PREPARED_TARGETS[index]
+        score, shift, orientation, n_sites, metric_str = profile_compare(
+            query.bundle,
+            query.anchors,
+            target.bundle,
+            target.anchors,
+            config,
+        )
+        results.append((index, target.name, score, shift, orientation, n_sites, metric_str))
+    return results

@@ -49,7 +49,7 @@ stored = read_null_bundle("output/null_bundle")
 
 ## Prepared-profile cache
 
-The optional cache stores normalized ragged tracks and anchor data:
+The optional cache stores prepared profiles as trusted Python pickle payloads:
 
 ```python
 from mimosa.cache import Cache
@@ -67,5 +67,5 @@ a cache miss. Clear entries with:
 uv run mimosa cache clear --cache-dir .mimosa-cache
 ```
 
-The readers validate relative paths, shapes, dtypes, payload lengths,
-checksums, finite values, and allocation limits before constructing arrays.
+The cache directory must be trusted because loading prepared profiles uses
+`pickle`. Cache checksums still detect accidental corruption before loading.

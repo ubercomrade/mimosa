@@ -1,10 +1,17 @@
 import os
 import multiprocessing
+import pickle
 
 import numpy as np
 import pytest
 
-from mimosa.cache import Cache, cache_get, cache_set, clearcache, prepared_profile_cache_key
+from mimosa.cache import (
+    Cache,
+    cache_get,
+    cache_set,
+    clearcache,
+    prepared_profile_cache_key,
+)
 from mimosa.io.fasta import read_fasta
 from mimosa.io.models import read_meme
 from mimosa.models import pwm_from_pfm
@@ -135,6 +142,13 @@ class TestPreparedProfileCache:
         p1 = prepare_profile(pwm, batch, cache=cache)
         p2 = prepare_profile(pwm, batch, cache=cache)
         assert p1 == p2
+
+    def test_prepare_payload_is_pickle(self, pwm, batch, tmp_path):
+        cache = Cache(str(tmp_path))
+        prepared = prepare_profile(pwm, batch, cache=cache)
+        key = prepared_profile_cache_key(cache, pwm, batch)
+        with open(tmp_path / key / "data.bin", "rb") as f:
+            assert pickle.loads(f.read()) == prepared
 
     def test_prepare_miss_on_model_change(self, pwm, batch, tmp_path):
         from mimosa import PWM

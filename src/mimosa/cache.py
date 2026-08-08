@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import pickle
 import shutil
 import struct
 import tempfile
@@ -17,28 +18,24 @@ else:
 
 import numpy as np
 
-from .arrays import RaggedArray, StrandPair
 from .io.bundles import (
     model_fingerprint,
     score_profile_fingerprint,
     sequence_fingerprint,
 )
-from .profiles.anchors import AnchorCSR
 from .profiles.normalization import (
-    EmpiricalLogTail,
     HybridEmpiricalLogTail,
     normalization_fingerprint,
 )
 from .profiles.prepared import PreparedProfile, ScoreProfile
 
 CACHE_FORMAT_VERSION = 2
-PREPARED_PROFILE_CACHE_FORMAT_VERSION = 2
-_PREPARED_PROFILE_CACHE_MAGIC = b"MIMOSA-PREP-1"
+PREPARED_PROFILE_CACHE_FORMAT_VERSION = 3
 _CACHE_DATA_NAME = "data.bin"
 _CACHE_META_NAME = "meta.toml"
 _CACHE_LOCK_NAME = ".mimosa-cache.lock"
 
-ALGORITHM_VERSIONS = {"prepared_profile": "2"}
+ALGORITHM_VERSIONS = {"prepared_profile": "3"}
 
 
 class Cache:
@@ -152,127 +149,16 @@ def prepared_profile_cache_key(cache, source, sequences=None, *, background=None
     )
 
 
-def _write_cache_u64(f, value):
-    f.write(struct.pack("<Q", value))
-
-
-def _read_cache_u64(f):
-    data = f.read(8)
-    if len(data) != 8:
-        raise ValueError("truncated cached integer.")
-    return struct.unpack("<Q", data)[0]
-
-
-def _write_cache_string(f, value):
-    data = value.encode("utf-8")
-    _write_cache_u64(f, len(data))
-    f.write(data)
-
-
-def _read_cache_string(f):
-    count = _read_cache_u64(f)
-    data = f.read(count)
-    if len(data) != count:
-        raise ValueError("truncated cached string.")
-    return data.decode("utf-8")
-
-
-def _write_cache_f32(f, value):
-    f.write(struct.pack("<f", value))
-
-
-def _read_cache_f32(f):
-    data = f.read(4)
-    if len(data) != 4:
-        raise ValueError("truncated cached float.")
-    return struct.unpack("<f", data)[0]
-
-
-def _write_cache_int_vector(f, values):
-    values = np.asarray(values, dtype=np.int64)
-    _write_cache_u64(f, values.size)
-    f.write(values.astype("<i8").tobytes())
-
-
-def _read_cache_int_vector(f):
-    count = _read_cache_u64(f)
-    data = f.read(8 * count)
-    if len(data) != 8 * count:
-        raise ValueError("truncated cached integer vector.")
-    return np.frombuffer(data, dtype="<i8").copy()
-
-
-def _write_cache_ragged(f, ragged):
-    _write_cache_u64(f, ragged.data.size)
-    f.write(ragged.data.astype("<f4").tobytes())
-    _write_cache_int_vector(f, ragged.offsets)
-
-
-def _read_cache_ragged(f):
-    count = _read_cache_u64(f)
-    data = f.read(4 * count)
-    if len(data) != 4 * count:
-        raise ValueError("truncated cached score vector.")
-    values = np.frombuffer(data, dtype="<f4").copy()
-    if not np.all(np.isfinite(values)):
-        raise ValueError("cached scores must be finite.")
-    return RaggedArray(values, _read_cache_int_vector(f))
-
-
-def _write_cache_anchor_csr(f, csr):
-    _write_cache_int_vector(f, csr.positions)
-    _write_cache_int_vector(f, csr.offsets)
-
-
-def _read_cache_anchor_csr(f):
-    return AnchorCSR(_read_cache_int_vector(f), _read_cache_int_vector(f))
-
-
 def _encode_prepared_profile(profile):
-    import io
-
-    buf = io.BytesIO()
-    buf.write(_PREPARED_PROFILE_CACHE_MAGIC)
-    _write_cache_u64(buf, PREPARED_PROFILE_CACHE_FORMAT_VERSION)
-    _write_cache_string(buf, profile.name)
-    _write_cache_f32(buf, profile.min_logerr)
-    _write_cache_string(buf, normalization_fingerprint(profile.normalization))
-    _write_cache_ragged(buf, profile.bundle.forward)
-    _write_cache_ragged(buf, profile.bundle.reverse)
-    _write_cache_anchor_csr(buf, profile.anchors[0])
-    _write_cache_anchor_csr(buf, profile.anchors[1])
-    return buf.getvalue()
+    return pickle.dumps(profile, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def _decode_prepared_profile(data):
-    import io
-
     try:
-        buf = io.BytesIO(data)
-        if buf.read(len(_PREPARED_PROFILE_CACHE_MAGIC)) != _PREPARED_PROFILE_CACHE_MAGIC:
-            return None
-        if _read_cache_u64(buf) != PREPARED_PROFILE_CACHE_FORMAT_VERSION:
-            return None
-        name = _read_cache_string(buf)
-        threshold = _read_cache_f32(buf)
-        if not np.isfinite(threshold):
-            return None
-        tag = _read_cache_string(buf)
-        if tag == "empirical-log-tail-v1":
-            normalization = EmpiricalLogTail()
-        elif tag.startswith("hybrid-log-tail-v2;"):
-            fields = dict(part.split("=", 1) for part in tag.split(";")[1:])
-            normalization = HybridEmpiricalLogTail(int(fields["bins"]))
-        else:
-            return None
-        forward = _read_cache_ragged(buf)
-        reverse = _read_cache_ragged(buf)
-        anchors = (_read_cache_anchor_csr(buf), _read_cache_anchor_csr(buf))
-        if buf.read(1):
-            return None
-        return PreparedProfile(name, StrandPair(forward, reverse), anchors, threshold, normalization)
+        profile = pickle.loads(data)
     except Exception:
         return None
+    return profile if isinstance(profile, PreparedProfile) else None
 
 
 def cache_get(cache, key):

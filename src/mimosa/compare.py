@@ -103,7 +103,8 @@ def compare_many(query, targets, sequences=None, *, background=None, metric="co"
     """Compare one query against targets in stable order.
 
     Targets below MIN_PARALLEL_TARGETS run in a serial loop; larger batches
-    spread across processes (one serial numba thread per worker).
+    spread across processes (one serial numba thread per worker). Prepared
+    target batches reuse a forked worker pool while the Cache instance lives.
     """
     if not isinstance(query, PreparedProfile):
         query = prepare_profile(query, sequences, background=background, min_logerr=0.0 if min_logerr is None else min_logerr, normalization=normalization, cache=cache)
@@ -119,6 +120,8 @@ def compare_many(query, targets, sequences=None, *, background=None, metric="co"
     if not use_process_pool(len(targets)):
         prepared_targets = [_prepare_side(t, sequences, background, threshold, norm, cache) for t in targets]
         return _compare_many_serial(query, prepared_targets, config, on_progress)
+    if all(isinstance(target, PreparedProfile) for target in targets):
+        return _compare_many_prepared_parallel(query, targets, config, cache, on_progress)
     return _compare_many_parallel(query, targets, config, sequences, background, norm, cache, on_progress)
 
 
@@ -164,4 +167,83 @@ def _compare_many_parallel(query, targets, config, sequences, background, normal
             done += 1
             if on_progress is not None:
                 on_progress(("compare", done, total, name))
+    return results
+
+
+class _PreparedTargetPool:
+    def __init__(self, prepared_targets):
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor
+
+        from ._worker import _init_prepared_targets_worker
+
+        self.targets = list(prepared_targets)
+        self.index_by_id = {id(target): index for index, target in enumerate(self.targets)}
+        self.max_workers = min(mp.cpu_count(), len(self.targets))
+        ctx = mp.get_context("fork")
+        # ponytail: fork shares read-only NumPy pages; spawn would pickle every target.
+        self.executor = ProcessPoolExecutor(
+            max_workers=self.max_workers,
+            initializer=_init_prepared_targets_worker,
+            initargs=(self.targets,),
+            mp_context=ctx,
+        )
+
+    def close(self):
+        self.executor.shutdown(wait=True, cancel_futures=True)
+
+
+def _prepared_target_pool(cache, prepared_targets):
+    if cache is None:
+        return _PreparedTargetPool(prepared_targets), True
+
+    state = getattr(cache, "_prepared_target_pool", None)
+    target_ids = {id(target) for target in prepared_targets}
+    if state is None or not target_ids.issubset(state.index_by_id):
+        if state is not None:
+            state.close()
+        state = _PreparedTargetPool(prepared_targets)
+        cache._prepared_target_pool = state
+    return state, False
+
+
+def _compare_many_prepared_parallel(query, prepared_targets, config, cache, on_progress):
+    """Compare prepared targets without sending profile arrays through IPC."""
+    import multiprocessing as mp
+    from concurrent.futures import as_completed
+
+    if "fork" not in mp.get_all_start_methods():
+        return _compare_many_serial(query, list(prepared_targets), config, on_progress)
+
+    from ._worker import _compare_prepared_chunk
+
+    total = len(prepared_targets)
+    results = [None] * total
+    if on_progress is not None:
+        on_progress(("compare", 0, total, ""))
+    pool, dispose = _prepared_target_pool(cache, prepared_targets)
+    indexes = [pool.index_by_id[id(target)] for target in prepared_targets]
+    chunk_size = max(1, (total + pool.max_workers - 1) // pool.max_workers)
+    chunks = [indexes[start : start + chunk_size] for start in range(0, total, chunk_size)]
+    master_results = {}
+    try:
+        futures = [
+            pool.executor.submit(_compare_prepared_chunk, (query, config, chunk))
+            for chunk in chunks
+        ]
+        done = 0
+        for fut in as_completed(futures):
+            for idx, name, score, shift, orientation, n_sites, metric_str in fut.result():
+                master_results[idx] = (name, score, shift, orientation, n_sites, metric_str)
+                done += 1
+                if on_progress is not None:
+                    on_progress(("compare", done, total, name))
+    finally:
+        if dispose:
+            pool.close()
+    for output_index, master_index in enumerate(indexes):
+        name, score, shift, orientation, n_sites, metric_str = master_results[master_index]
+        results[output_index] = ComparisonResult(
+            query.name, name, score, shift, orientation, metric_str, n_sites
+        )
     return results
