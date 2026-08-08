@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from ._kernels import (
+    batch_pwm_models_forward,
+    batch_pwm_models_reverse,
     batch_rolling_forward,
     batch_rolling_forward_parallel,
+    batch_rolling_models_forward,
+    batch_rolling_models_reverse,
     batch_rolling_reverse,
     batch_rolling_reverse_parallel,
     batch_scan_forward,
@@ -30,6 +36,33 @@ from .models import (
 from .parallel import use_parallel
 
 STRAND_POLICIES = ("forward", "reverse", "best", "both")
+
+
+@dataclass(slots=True)
+class _PackedScanBatch:
+    """Packed raw profiles in original model order."""
+
+    forward_data: np.ndarray
+    forward_offsets: np.ndarray
+    reverse_data: np.ndarray
+    reverse_offsets: np.ndarray
+    motif_lengths: np.ndarray
+
+    def pair(self, model_index):
+        forward_offsets = self.forward_offsets[model_index]
+        reverse_offsets = self.reverse_offsets[model_index]
+        forward_start, forward_stop = forward_offsets[0], forward_offsets[-1]
+        reverse_start, reverse_stop = reverse_offsets[0], reverse_offsets[-1]
+        return StrandPair(
+            RaggedArray(
+                self.forward_data[forward_start:forward_stop],
+                forward_offsets - forward_start,
+            ),
+            RaggedArray(
+                self.reverse_data[reverse_start:reverse_stop],
+                reverse_offsets - reverse_start,
+            ),
+        )
 
 
 def _validate_strand_policy(strands):
@@ -97,6 +130,116 @@ def _scan_batch_into(model, batch, strands):
         else:
             return StrandPair(RaggedArray(fwd, offsets), RaggedArray(rev, offsets.copy()))
     return RaggedArray(data, offsets)
+
+
+def _scan_models_batch(models, batch):
+    """Scan built-in model groups into one packed forward/reverse batch."""
+    if not isinstance(batch, EncodedSequences):
+        raise TypeError("batch must be an EncodedSequences batch.")
+    models = list(models)
+    n_models = len(models)
+    n_rows = len(batch)
+    if n_models == 0:
+        empty_offsets = np.empty((0, n_rows + 1), dtype=np.int64)
+        empty_data = np.empty(0, dtype=np.float32)
+        return _PackedScanBatch(
+            empty_data,
+            empty_offsets,
+            empty_data.copy(),
+            empty_offsets.copy(),
+            np.empty(0, dtype=np.int64),
+        )
+
+    for model in models:
+        _validate_model_contract(model, capability="batch_scan")
+
+    forward_offsets = np.empty((n_models, n_rows + 1), dtype=np.int64)
+    reverse_offsets = np.empty_like(forward_offsets)
+    cursor = 0
+    for model_index, model in enumerate(models):
+        local_offsets = _scan_offsets(batch, model)
+        forward_offsets[model_index] = local_offsets + cursor
+        reverse_offsets[model_index] = local_offsets + cursor
+        cursor += int(local_offsets[-1])
+    forward_data = np.empty(cursor, dtype=np.float32)
+    reverse_data = np.empty(cursor, dtype=np.float32)
+    motif_lengths = np.asarray([model.motif_length for model in models], dtype=np.int64)
+
+    groups = {}
+    custom = []
+    for model_index, model in enumerate(models):
+        if isinstance(model, PWM):
+            key = ("pwm", model.motif_length, 0)
+        elif isinstance(model, (BaMM, Dimont, Slim)):
+            key = ("rolling", model.order + 1, model.motif_length)
+        elif isinstance(model, SiteGA):
+            key = ("sitega", 2, model.motif_length - 1)
+        else:
+            custom.append(model_index)
+            continue
+        groups.setdefault(key, []).append(model_index)
+
+    for (kind, first, second), model_indices in groups.items():
+        indices = np.asarray(model_indices, dtype=np.int64)
+        if kind == "pwm":
+            max_length = first
+            weights = np.stack([models[index].weights for index in model_indices])
+            lengths = np.full(len(model_indices), max_length, dtype=np.int64)
+            batch_pwm_models_forward(
+                weights,
+                lengths,
+                indices,
+                batch.data,
+                batch.offsets,
+                forward_data,
+                forward_offsets,
+            )
+            batch_pwm_models_reverse(
+                weights,
+                lengths,
+                indices,
+                batch.data,
+                batch.offsets,
+                reverse_data,
+                reverse_offsets,
+            )
+        else:
+            weights = np.stack([models[index].weights for index in model_indices])
+            batch_rolling_models_forward(
+                weights,
+                indices,
+                batch.data,
+                batch.offsets,
+                forward_data,
+                forward_offsets,
+                first,
+                second,
+            )
+            batch_rolling_models_reverse(
+                weights,
+                indices,
+                batch.data,
+                batch.offsets,
+                reverse_data,
+                reverse_offsets,
+                first,
+                second,
+            )
+
+    for model_index in custom:
+        model = models[model_index]
+        for row in range(n_rows):
+            start, stop = forward_offsets[model_index, row], forward_offsets[model_index, row + 1]
+            if stop > start:
+                model.scan_into(batch[row], forward_data[start:stop], reverse_data[start:stop])
+
+    return _PackedScanBatch(
+        forward_data,
+        forward_offsets,
+        reverse_data,
+        reverse_offsets,
+        motif_lengths,
+    )
 
 
 def scan(model, sequences, *, strands="forward"):

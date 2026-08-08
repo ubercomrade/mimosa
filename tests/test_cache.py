@@ -118,6 +118,21 @@ class TestPreparedProfileCache:
         assert k1 == k2
         assert len(k1) == 16
 
+    def test_key_fingerprints_same_sequences_once(self, pwm, batch, monkeypatch):
+        from mimosa import cache as cache_module
+
+        calls = 0
+        original = cache_module.sequence_fingerprint
+
+        def counted(value):
+            nonlocal calls
+            calls += 1
+            return original(value)
+
+        monkeypatch.setattr(cache_module, "sequence_fingerprint", counted)
+        prepared_profile_cache_key(Cache(str("/tmp/opencode/cache-test")), pwm, batch)
+        assert calls == 1
+
     def test_key_changes_with_model(self, pwm, batch):
         from mimosa.cache import Cache
 
@@ -142,6 +157,17 @@ class TestPreparedProfileCache:
         p1 = prepare_profile(pwm, batch, cache=cache)
         p2 = prepare_profile(pwm, batch, cache=cache)
         assert p1 == p2
+        assert p1 is p2
+
+    def test_prepare_memory_hit_skips_disk(self, pwm, batch, tmp_path, monkeypatch):
+        cache = Cache(str(tmp_path))
+        prepared = prepare_profile(pwm, batch, cache=cache)
+
+        def unexpected_disk_read(*args, **kwargs):
+            raise AssertionError("memory cache miss")
+
+        monkeypatch.setattr("mimosa.cache.cache_get", unexpected_disk_read)
+        assert prepare_profile(pwm, batch, cache=cache) is prepared
 
     def test_prepare_payload_is_pickle(self, pwm, batch, tmp_path):
         cache = Cache(str(tmp_path))

@@ -155,6 +155,37 @@ class TestCompare:
         assert len(results) == 2
         assert results[0] == results[1]
 
+    def test_compare_many_owns_target_batches(self, pwm_pair, batch, monkeypatch):
+        import importlib
+
+        compare_module = importlib.import_module("mimosa.compare")
+        from mimosa.compare import _compare_many_serial
+
+        m1, m2 = pwm_pair
+        query = prepare_profile(m1, batch)
+        target = prepare_profile(m2, batch)
+        targets = [target, query, target, query, target]
+        monkeypatch.setattr(compare_module, "_TARGET_BATCH_SIZE", 2)
+        expected = _compare_many_serial(query, targets, ProfileConfig(), None)
+        assert compare_many(query, targets, batch) == expected
+
+    def test_compare_many_reuses_sequence_context(self, pwm_pair, batch, tmp_path, monkeypatch):
+        from mimosa import cache as cache_module
+        from mimosa.cache import Cache
+
+        calls = 0
+        original = cache_module.sequence_fingerprint
+
+        def counted(value):
+            nonlocal calls
+            calls += 1
+            return original(value)
+
+        monkeypatch.setattr(cache_module, "sequence_fingerprint", counted)
+        cache = Cache(str(tmp_path))
+        compare_many(pwm_pair[0], [pwm_pair[1]] * 3, batch, cache=cache)
+        assert calls == 1
+
     def test_compare_many_parallel_matches_serial(self, pwm_pair, batch):
         m1, m2 = pwm_pair
         query = prepare_profile(m1, batch)
@@ -179,25 +210,51 @@ class TestCompare:
         for s, p in zip(serial, parallel):
             assert s == p
 
-    def test_compare_many_prepared_pool_reuses_targets(self, pwm_pair, batch, tmp_path):
-        from mimosa.cache import Cache
-
+    def test_compare_many_prepared_numba_matches_direct(self, pwm_pair, batch):
         m1, m2 = pwm_pair
         query = prepare_profile(m1, batch)
         target = prepare_profile(m2, batch)
         targets = [target] * 70
-        cache = Cache(str(tmp_path))
-        try:
-            co = compare_many(query, targets, batch, metric="co", cache=cache)
-            dice = compare_many(query, targets, batch, metric="dice", cache=cache)
-            assert co[0] == compare(query, target, batch, metric="co")
-            assert dice[0] == compare(query, target, batch, metric="dice")
-            assert cache._prepared_target_pool is not None
-        finally:
-            pool = getattr(cache, "_prepared_target_pool", None)
-            if pool is not None:
-                pool.close()
-                delattr(cache, "_prepared_target_pool")
+        for metric in ("co", "dice", "cosine"):
+            results = compare_many(query, targets, batch, metric=metric)
+            expected = compare(query, target, batch, metric=metric)
+            assert results[0] == expected
+            assert all(result == expected for result in results)
+
+    def test_compare_many_prepared_positive_threshold_matches_serial(self, pwm_pair, batch):
+        m1, m2 = pwm_pair
+        query = prepare_profile(m1, batch, min_logerr=1.0)
+        target = prepare_profile(m2, batch, min_logerr=1.0)
+        targets = [target] * 70
+        config = ProfileConfig(metric="co", min_logerr=1.0)
+        from mimosa.compare import _compare_many_serial
+
+        serial = _compare_many_serial(query, targets, config, None)
+        parallel = compare_many(query, targets, batch, min_logerr=1.0)
+        assert parallel == serial
+
+    def test_compare_many_prepared_shared_strands_matches_serial(self, pwm_pair, batch):
+        from mimosa.profiles.prepared import ScoreProfile
+
+        m1, m2 = pwm_pair
+        prepared_target = prepare_profile(m2, batch)
+        shared_query = prepare_profile(
+            ScoreProfile("shared-query", prepared_target.bundle.forward),
+        )
+        prepared_query = prepare_profile(m1, batch)
+        shared_target = prepare_profile(
+            ScoreProfile("shared-target", prepared_query.bundle.forward),
+        )
+        config = ProfileConfig(metric="cosine")
+        from mimosa.compare import _compare_many_serial
+
+        for query, targets in (
+            (shared_query, [prepared_target] * 70),
+            (prepared_query, [shared_target] * 70),
+        ):
+            serial = _compare_many_serial(query, targets, config, None)
+            parallel = compare_many(query, targets, batch, metric="cosine")
+            assert parallel == serial
 
     def test_compare_many_parallel_with_cache(self, pwm_pair, batch, tmp_path):
         from mimosa.cache import Cache
@@ -218,6 +275,20 @@ class TestCompare:
         prepared = prepare_profile(m1, batch)
         roundtrip = pickle.loads(pickle.dumps(prepared))
         assert roundtrip == prepared
+
+    def test_prepared_profile_rejects_negative_anchor(self, pwm_pair, batch):
+        from mimosa.arrays import RaggedArray, StrandPair
+        from mimosa.profiles.anchors import AnchorCSR
+        from mimosa.profiles.prepared import PreparedProfile
+
+        prepared = prepare_profile(pwm_pair[0], batch)
+        bad = AnchorCSR(np.array([-1], dtype=np.int64), np.array([0, 1], dtype=np.int64))
+        with pytest.raises(ValueError):
+            PreparedProfile(
+                prepared.name,
+                StrandPair(RaggedArray.from_rows([[1.0]]), RaggedArray.from_rows([[1.0]])),
+                (bad, bad),
+            )
 
     def test_metric_variants(self, pwm_pair, batch):
         m1, m2 = pwm_pair

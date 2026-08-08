@@ -142,6 +142,104 @@ def batch_scan_reverse_parallel(weights, seq_data, seq_offsets, out_data, out_of
         pwm_scan_reverse(weights, seq_data[start:stop], n_pos, n_terms, out_data[out_offsets[row] : out_offsets[row + 1]])
 
 
+@njit(parallel=True, cache=True)
+def batch_pwm_models_forward(
+    weights, lengths, model_indices, seq_data, seq_offsets, out_data, out_offsets
+):
+    for local_model in prange(model_indices.shape[0]):
+        model = model_indices[local_model]
+        n_terms = lengths[local_model]
+        for row in range(seq_offsets.shape[0] - 1):
+            sequence_start = seq_offsets[row]
+            n_pos = out_offsets[model, row + 1] - out_offsets[model, row]
+            if n_pos <= 0:
+                continue
+            pwm_scan_forward(
+                weights[local_model],
+                seq_data[sequence_start : seq_offsets[row + 1]],
+                n_pos,
+                n_terms,
+                out_data[out_offsets[model, row] : out_offsets[model, row + 1]],
+            )
+
+
+@njit(parallel=True, cache=True)
+def batch_pwm_models_reverse(
+    weights, lengths, model_indices, seq_data, seq_offsets, out_data, out_offsets
+):
+    for local_model in prange(model_indices.shape[0]):
+        model = model_indices[local_model]
+        n_terms = lengths[local_model]
+        for row in range(seq_offsets.shape[0] - 1):
+            sequence_start = seq_offsets[row]
+            n_pos = out_offsets[model, row + 1] - out_offsets[model, row]
+            if n_pos <= 0:
+                continue
+            pwm_scan_reverse(
+                weights[local_model],
+                seq_data[sequence_start : seq_offsets[row + 1]],
+                n_pos,
+                n_terms,
+                out_data[out_offsets[model, row] : out_offsets[model, row + 1]],
+            )
+
+
+@njit(parallel=True, cache=True)
+def batch_rolling_models_forward(
+    weights,
+    model_indices,
+    seq_data,
+    seq_offsets,
+    out_data,
+    out_offsets,
+    kmer_size,
+    n_terms,
+):
+    for local_model in prange(model_indices.shape[0]):
+        model = model_indices[local_model]
+        for row in range(seq_offsets.shape[0] - 1):
+            sequence_start = seq_offsets[row]
+            n_pos = out_offsets[model, row + 1] - out_offsets[model, row]
+            if n_pos <= 0:
+                continue
+            rolling_scan_forward(
+                weights[local_model],
+                seq_data[sequence_start : seq_offsets[row + 1]],
+                kmer_size,
+                n_terms,
+                n_pos,
+                out_data[out_offsets[model, row] : out_offsets[model, row + 1]],
+            )
+
+
+@njit(parallel=True, cache=True)
+def batch_rolling_models_reverse(
+    weights,
+    model_indices,
+    seq_data,
+    seq_offsets,
+    out_data,
+    out_offsets,
+    kmer_size,
+    n_terms,
+):
+    for local_model in prange(model_indices.shape[0]):
+        model = model_indices[local_model]
+        for row in range(seq_offsets.shape[0] - 1):
+            sequence_start = seq_offsets[row]
+            n_pos = out_offsets[model, row + 1] - out_offsets[model, row]
+            if n_pos <= 0:
+                continue
+            rolling_scan_reverse(
+                weights[local_model],
+                seq_data[sequence_start : seq_offsets[row + 1]],
+                kmer_size,
+                n_terms,
+                n_pos,
+                out_data[out_offsets[model, row] : out_offsets[model, row + 1]],
+            )
+
+
 @njit(cache=True)
 def batch_rolling_forward(weights, seq_data, seq_offsets, out_data, out_offsets, kmer_size, n_terms):
     n_rows = seq_offsets.shape[0] - 1
@@ -518,3 +616,206 @@ def _score_shift_best(
 
     out_score[0] = score
     out_sites[0] = total_sites
+
+
+@njit(cache=True)
+def _batch_orientation_best(
+    query_scores_data,
+    query_scores_offsets,
+    target_scores_data,
+    target_scores_offsets,
+    query_positions,
+    query_anchor_offsets,
+    target_positions,
+    target_anchor_offsets,
+    shift_range,
+    window_radius,
+    realign_window,
+    metric_kind,
+    use_dice,
+    min_logerr,
+    seen,
+    candidates,
+    score_work,
+    sites_work,
+    target_index,
+):
+    best_score = np.float32(0.0)
+    best_shift = 0
+    best_sites = 0
+    out_score = score_work[target_index : target_index + 1]
+    out_sites = sites_work[target_index : target_index + 1]
+
+    for shift_index in range(2 * shift_range + 1):
+        shift = shift_index - shift_range
+        if min_logerr > 0.0:
+            _score_shift_csr(
+                query_scores_data,
+                query_scores_offsets,
+                target_scores_data,
+                target_scores_offsets,
+                query_positions,
+                query_anchor_offsets,
+                target_positions,
+                target_anchor_offsets,
+                shift,
+                window_radius,
+                realign_window,
+                metric_kind,
+                use_dice,
+                seen[target_index],
+                candidates[target_index],
+                out_score,
+                out_sites,
+            )
+        else:
+            _score_shift_best(
+                query_scores_data,
+                query_scores_offsets,
+                target_scores_data,
+                target_scores_offsets,
+                query_positions,
+                query_anchor_offsets,
+                target_positions,
+                target_anchor_offsets,
+                shift,
+                window_radius,
+                realign_window,
+                metric_kind,
+                use_dice,
+                out_score,
+                out_sites,
+            )
+        score = np.float32(out_score[0])
+        n_sites = out_sites[0]
+        if float(score) > float(best_score) or (
+            float(score) == float(best_score)
+            and (
+                n_sites > best_sites
+                or (n_sites == best_sites and abs(shift) < abs(best_shift))
+            )
+        ):
+            best_score = score
+            best_shift = shift
+            best_sites = n_sites
+    return best_score, best_shift, best_sites
+
+
+@njit(parallel=True, cache=True)
+def batch_profile_compare(
+    query_forward_data,
+    query_forward_offsets,
+    query_reverse_data,
+    query_reverse_offsets,
+    query_forward_positions,
+    query_forward_anchor_offsets,
+    query_reverse_positions,
+    query_reverse_anchor_offsets,
+    target_forward_data,
+    target_forward_offsets,
+    target_reverse_data,
+    target_reverse_offsets,
+    target_forward_positions,
+    target_forward_anchor_offsets,
+    target_reverse_positions,
+    target_reverse_anchor_offsets,
+    target_shared,
+    query_shared,
+    search_range,
+    window_radius,
+    realign_window,
+    metric_kind,
+    use_dice,
+    min_logerr,
+    seen,
+    candidates,
+    score_work,
+    sites_work,
+    out_scores,
+    out_shifts,
+    out_orientations,
+    out_sites,
+):
+    n_targets = target_shared.shape[0]
+    for target_index in prange(n_targets):
+        best_score = np.float32(0.0)
+        best_shift = 0
+        best_orientation = 0
+        best_sites = 0
+        best_rank = 2**63 - 1
+        n_query_strands = 1 if query_shared else 2
+        n_target_strands = 1 if target_shared[target_index] else 2
+
+        for query_strand in range(n_query_strands):
+            if query_strand == 0:
+                query_data = query_forward_data
+                query_offsets = query_forward_offsets
+                query_positions = query_forward_positions
+                query_anchor_offsets = query_forward_anchor_offsets
+            else:
+                query_data = query_reverse_data
+                query_offsets = query_reverse_offsets
+                query_positions = query_reverse_positions
+                query_anchor_offsets = query_reverse_anchor_offsets
+
+            for target_strand in range(n_target_strands):
+                orientation = query_strand * 2 + target_strand
+                if target_strand == 0:
+                    target_data = target_forward_data
+                    target_offsets = target_forward_offsets[target_index]
+                    target_positions = target_forward_positions
+                    target_anchor_offsets = target_forward_anchor_offsets[target_index]
+                else:
+                    target_data = target_reverse_data
+                    target_offsets = target_reverse_offsets[target_index]
+                    target_positions = target_reverse_positions
+                    target_anchor_offsets = target_reverse_anchor_offsets[target_index]
+
+                score, shift, n_sites = _batch_orientation_best(
+                    query_data,
+                    query_offsets,
+                    target_data,
+                    target_offsets,
+                    query_positions,
+                    query_anchor_offsets,
+                    target_positions,
+                    target_anchor_offsets,
+                    search_range,
+                    window_radius,
+                    realign_window,
+                    metric_kind,
+                    use_dice,
+                    min_logerr,
+                    seen,
+                    candidates,
+                    score_work,
+                    sites_work,
+                    target_index,
+                )
+                rank = orientation
+                if float(score) > float(best_score) or (
+                    float(score) == float(best_score)
+                    and (
+                        n_sites > best_sites
+                        or (
+                            n_sites == best_sites
+                            and (
+                                abs(shift) < abs(best_shift)
+                                or (
+                                    abs(shift) == abs(best_shift)
+                                    and rank < best_rank
+                                )
+                            )
+                        )
+                    )
+                ):
+                    best_score = score
+                    best_shift = shift
+                    best_orientation = orientation
+                    best_sites = n_sites
+                    best_rank = rank
+
+        out_scores[target_index] = best_score
+        out_shifts[target_index] = best_shift
+        out_orientations[target_index] = best_orientation
+        out_sites[target_index] = best_sites

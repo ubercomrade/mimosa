@@ -1,9 +1,10 @@
 import numpy as np
 import pytest
 
-from mimosa import PWM, EncodedSequences, pwm_from_pfm, scan
+from mimosa import BaMM, Dimont, PWM, SiteGA, Slim, EncodedSequences, pwm_from_pfm, scan
 from mimosa.arrays import reverse_complement_batch
 from mimosa.io.models import read_meme
+from mimosa.scan import _scan_models_batch
 
 
 def _seq(*bases):
@@ -97,3 +98,21 @@ class TestScan:
     def test_invalid_strand_policy(self, pwm, batch):
         with pytest.raises(ValueError):
             scan(pwm, batch, strands="diagonal")
+
+    def test_model_batch_dispatch_matches_serial(self, batch):
+        models = [
+            PWM("p2", np.zeros((5, 2), dtype=np.float32), (0.25,) * 4),
+            PWM("p3", np.zeros((5, 3), dtype=np.float32), (0.25,) * 4),
+            BaMM("b0", np.zeros((5, 2), dtype=np.float32), 0, 2),
+            Dimont("d0", np.zeros((5, 2), dtype=np.float32), 0, 2),
+            Slim("s0", np.zeros((5, 2), dtype=np.float32), 0, 2),
+            SiteGA("sg", np.zeros((25, 3), dtype=np.float32), 3),
+        ]
+        packed = _scan_models_batch(models, batch)
+        for index, model in enumerate(models):
+            expected = scan(model, batch, strands="both")
+            actual = packed.pair(index)
+            np.testing.assert_array_equal(actual.forward.data, expected.forward.data)
+            np.testing.assert_array_equal(actual.forward.offsets, expected.forward.offsets)
+            np.testing.assert_array_equal(actual.reverse.data, expected.reverse.data)
+            np.testing.assert_array_equal(actual.reverse.offsets, expected.reverse.offsets)

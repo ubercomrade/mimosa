@@ -6,9 +6,18 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ._kernels import batch_profile_compare
 from .models import MotifModel
 from .profiles.alignment import ProfileConfig, parse_profile_metric, profile_compare
-from .profiles.prepared import PreparedProfile, ScoreProfile, prepare_profile
+from .profiles.prepared import (
+    PreparedProfile,
+    ScoreProfile,
+    _prepare_profile,
+    _prepare_profiles_batch,
+)
+from .parallel import MIN_PARALLEL_TARGETS
+
+_TARGET_BATCH_SIZE = 256
 
 
 @dataclass(frozen=True)
@@ -40,15 +49,37 @@ def _check_threshold(threshold, prepared):
         raise ValueError("min_logerr differs from the prepared query threshold.")
 
 
-def _prepare_side(model, sequences, background, threshold, normalization, cache):
+def _prepare_side(
+    model,
+    sequences,
+    background,
+    threshold,
+    normalization,
+    cache,
+    preparation_context=None,
+):
     if isinstance(model, PreparedProfile):
         return model
     if isinstance(model, MotifModel):
         if sequences is None:
             raise ValueError("motif comparison requires comparison sequences.")
-        return prepare_profile(model, sequences, background=background, min_logerr=threshold, normalization=normalization, cache=cache)
+        return _prepare_profile(
+            model,
+            sequences,
+            background=background,
+            min_logerr=threshold,
+            normalization=normalization,
+            cache=cache,
+            _preparation_context=preparation_context,
+        )
     if isinstance(model, ScoreProfile):
-        return prepare_profile(model, min_logerr=threshold, normalization=normalization, cache=cache)
+        return _prepare_profile(
+            model,
+            min_logerr=threshold,
+            normalization=normalization,
+            cache=cache,
+            _preparation_context=preparation_context,
+        )
     return None
 
 
@@ -102,12 +133,27 @@ def compare(query, target, sequences=None, *, background=None, metric="co", sear
 def compare_many(query, targets, sequences=None, *, background=None, metric="co", search_range=10, window_radius=10, realign_window=3, min_logerr=None, normalization=None, cache=None, on_progress=None):
     """Compare one query against targets in stable order.
 
-    Targets below MIN_PARALLEL_TARGETS run in a serial loop; larger batches
-    spread across processes (one serial numba thread per worker). Prepared
-    target batches reuse a forked worker pool while the Cache instance lives.
+    Target preparation and bounded target batching are internal. Large prepared
+    batches use one Numba target-parallel kernel; small batches stay serial.
     """
+    preparation_context = None
+    if cache is not None and sequences is not None:
+        from .cache import _make_preparation_context
+
+        preparation_context = _make_preparation_context(sequences, background)
     if not isinstance(query, PreparedProfile):
-        query = prepare_profile(query, sequences, background=background, min_logerr=0.0 if min_logerr is None else min_logerr, normalization=normalization, cache=cache)
+        query_source = query
+        query = _prepare_side(
+            query,
+            sequences,
+            background,
+            0.0 if min_logerr is None else min_logerr,
+            normalization,
+            cache,
+            preparation_context,
+        )
+        if query is None:
+            raise TypeError(f"unsupported comparison query: {type(query_source).__name__}")
 
     if min_logerr is not None and np.float32(min_logerr) != query.min_logerr:
         _check_threshold(np.float32(min_logerr), query)
@@ -115,14 +161,39 @@ def compare_many(query, targets, sequences=None, *, background=None, metric="co"
     norm = query.normalization if normalization is None else normalization
     config = ProfileConfig(metric=parse_profile_metric(metric), search_range=search_range, window_radius=window_radius, realign_window=realign_window, min_logerr=threshold)
 
-    from .parallel import use_process_pool
-
-    if not use_process_pool(len(targets)):
-        prepared_targets = [_prepare_side(t, sequences, background, threshold, norm, cache) for t in targets]
-        return _compare_many_serial(query, prepared_targets, config, on_progress)
-    if all(isinstance(target, PreparedProfile) for target in targets):
-        return _compare_many_prepared_parallel(query, targets, config, cache, on_progress)
-    return _compare_many_parallel(query, targets, config, sequences, background, norm, cache, on_progress)
+    total = len(targets)
+    results = []
+    if on_progress is not None:
+        on_progress(("compare", 0, total, ""))
+    for batch_start in range(0, total, _TARGET_BATCH_SIZE):
+        target_batch = targets[batch_start : batch_start + _TARGET_BATCH_SIZE]
+        prepared_targets = _prepare_profiles_batch(
+            target_batch,
+            sequences,
+            background=background,
+            min_logerr=threshold,
+            normalization=norm,
+            cache=cache,
+            _preparation_context=preparation_context,
+        )
+        if any(target is None for target in prepared_targets):
+            unsupported = next(
+                target for target in target_batch if not isinstance(target, (PreparedProfile, MotifModel, ScoreProfile))
+            )
+            raise TypeError(f"unsupported comparison target: {type(unsupported).__name__}")
+        if len(prepared_targets) < MIN_PARALLEL_TARGETS:
+            batch_results = _compare_many_serial(query, prepared_targets, config, None)
+        else:
+            batch_results = _compare_many_prepared_parallel(
+                query, prepared_targets, config, cache, None
+            )
+        results.extend(batch_results)
+        if on_progress is not None:
+            first_result = batch_start
+            for index, result in enumerate(batch_results, first_result + 1):
+                on_progress(("compare", index, total, result.target))
+        del target_batch, prepared_targets, batch_results
+    return results
 
 
 def _compare_many_serial(query, prepared_targets, config, on_progress):
@@ -140,110 +211,123 @@ def _compare_many_serial(query, prepared_targets, config, on_progress):
     return results
 
 
-def _compare_many_parallel(query, targets, config, sequences, background, normalization, cache, on_progress):
-    import multiprocessing as mp
-    from concurrent.futures import ProcessPoolExecutor, as_completed
-
-    from ._worker import _init_worker, _prepare_and_compare
-
-    cache_dir = cache.directory if cache is not None else None
-    total = len(targets)
-    results = [None] * total
-    if on_progress is not None:
-        on_progress(("compare", 0, total, ""))
-    ctx = mp.get_context("spawn")
-    with ProcessPoolExecutor(
-        max_workers=mp.cpu_count(),
-        initializer=_init_worker,
-        initargs=(query, config, sequences, background, cache_dir, normalization),
-        mp_context=ctx,
-    ) as ex:
-        futures = {ex.submit(_prepare_and_compare, t): i for i, t in enumerate(targets)}
-        done = 0
-        for fut in as_completed(futures):
-            idx = futures[fut]
-            name, score, shift, orientation, n_sites, metric_str = fut.result()
-            results[idx] = ComparisonResult(query.name, name, score, shift, orientation, metric_str, n_sites)
-            done += 1
-            if on_progress is not None:
-                on_progress(("compare", done, total, name))
-    return results
-
-
-class _PreparedTargetPool:
-    def __init__(self, prepared_targets):
-        import multiprocessing as mp
-        from concurrent.futures import ProcessPoolExecutor
-
-        from ._worker import _init_prepared_targets_worker
-
-        self.targets = list(prepared_targets)
-        self.index_by_id = {id(target): index for index, target in enumerate(self.targets)}
-        self.max_workers = min(mp.cpu_count(), len(self.targets))
-        ctx = mp.get_context("fork")
-        # ponytail: fork shares read-only NumPy pages; spawn would pickle every target.
-        self.executor = ProcessPoolExecutor(
-            max_workers=self.max_workers,
-            initializer=_init_prepared_targets_worker,
-            initargs=(self.targets,),
-            mp_context=ctx,
-        )
-
-    def close(self):
-        self.executor.shutdown(wait=True, cancel_futures=True)
-
-
-def _prepared_target_pool(cache, prepared_targets):
-    if cache is None:
-        return _PreparedTargetPool(prepared_targets), True
-
-    state = getattr(cache, "_prepared_target_pool", None)
-    target_ids = {id(target) for target in prepared_targets}
-    if state is None or not target_ids.issubset(state.index_by_id):
-        if state is not None:
-            state.close()
-        state = _PreparedTargetPool(prepared_targets)
-        cache._prepared_target_pool = state
-    return state, False
-
-
 def _compare_many_prepared_parallel(query, prepared_targets, config, cache, on_progress):
-    """Compare prepared targets without sending profile arrays through IPC."""
-    import multiprocessing as mp
-    from concurrent.futures import as_completed
-
-    if "fork" not in mp.get_all_start_methods():
-        return _compare_many_serial(query, list(prepared_targets), config, on_progress)
-
-    from ._worker import _compare_prepared_chunk
-
+    """Compare prepared targets with one packed Numba target-parallel kernel."""
     total = len(prepared_targets)
-    results = [None] * total
     if on_progress is not None:
         on_progress(("compare", 0, total, ""))
-    pool, dispose = _prepared_target_pool(cache, prepared_targets)
-    indexes = [pool.index_by_id[id(target)] for target in prepared_targets]
-    chunk_size = max(1, (total + pool.max_workers - 1) // pool.max_workers)
-    chunks = [indexes[start : start + chunk_size] for start in range(0, total, chunk_size)]
-    master_results = {}
-    try:
-        futures = [
-            pool.executor.submit(_compare_prepared_chunk, (query, config, chunk))
-            for chunk in chunks
-        ]
-        done = 0
-        for fut in as_completed(futures):
-            for idx, name, score, shift, orientation, n_sites, metric_str in fut.result():
-                master_results[idx] = (name, score, shift, orientation, n_sites, metric_str)
-                done += 1
-                if on_progress is not None:
-                    on_progress(("compare", done, total, name))
-    finally:
-        if dispose:
-            pool.close()
-    for output_index, master_index in enumerate(indexes):
-        name, score, shift, orientation, n_sites, metric_str = master_results[master_index]
-        results[output_index] = ComparisonResult(
-            query.name, name, score, shift, orientation, metric_str, n_sites
+    if total == 0:
+        return []
+
+    targets = list(prepared_targets)
+    n_rows = len(query.bundle.forward)
+    for target in targets:
+        if len(target.bundle.forward) != n_rows or len(target.bundle.reverse) != n_rows:
+            raise ValueError("prepared profiles must have equal row counts.")
+    target_shared = np.array(
+        [target.bundle.forward is target.bundle.reverse for target in targets],
+        dtype=np.bool_,
+    )
+
+    def pack(strand):
+        data_parts = []
+        position_parts = []
+        score_offsets = np.empty((total, n_rows + 1), dtype=np.int64)
+        anchor_offsets = np.empty((total, n_rows + 1), dtype=np.int64)
+        data_cursor = 0
+        position_cursor = 0
+        for index, target in enumerate(targets):
+            if strand == 1 and target_shared[index]:
+                score_offsets[index] = 0
+                anchor_offsets[index] = 0
+                continue
+            scores = target.bundle.forward if strand == 0 else target.bundle.reverse
+            anchors = target.anchors[0] if strand == 0 else target.anchors[1]
+            score_offsets[index] = scores.offsets + data_cursor
+            anchor_offsets[index] = anchors.offsets + position_cursor
+            data_parts.append(scores.data)
+            position_parts.append(anchors.positions)
+            data_cursor += scores.data.size
+            position_cursor += anchors.positions.size
+        data = np.concatenate(data_parts) if data_parts else np.empty(0, dtype=np.float32)
+        positions = (
+            np.concatenate(position_parts)
+            if position_parts
+            else np.empty(0, dtype=np.int64)
         )
+        return data, score_offsets, positions, anchor_offsets
+
+    target_fwd = pack(0)
+    target_rev = pack(1)
+    query_shared = query.bundle.forward is query.bundle.reverse
+    max_row_length = (
+        int(np.max(np.diff(query.bundle.forward.offsets)))
+        if query.bundle.forward.offsets.size > 1
+        else 0
+    )
+    if config.min_logerr > 0.0:
+        seen = np.zeros((total, max_row_length), dtype=np.uint32)
+        candidates = np.empty((total, max_row_length), dtype=np.int64)
+    else:
+        seen = np.empty((0, 0), dtype=np.uint32)
+        candidates = np.empty((0, 0), dtype=np.int64)
+    out_scores = np.empty(total, dtype=np.float32)
+    out_shifts = np.empty(total, dtype=np.int64)
+    out_orientations = np.empty(total, dtype=np.int8)
+    out_sites = np.empty(total, dtype=np.int64)
+    score_work = np.empty(total, dtype=np.float64)
+    sites_work = np.empty(total, dtype=np.int64)
+    metric_kind = 1 if config.metric == "cosine" else 0
+    use_dice = config.metric == "dice"
+
+    batch_profile_compare(
+        query.bundle.forward.data,
+        query.bundle.forward.offsets,
+        query.bundle.reverse.data,
+        query.bundle.reverse.offsets,
+        query.anchors[0].positions,
+        query.anchors[0].offsets,
+        query.anchors[1].positions,
+        query.anchors[1].offsets,
+        target_fwd[0],
+        target_fwd[1],
+        target_rev[0],
+        target_rev[1],
+        target_fwd[2],
+        target_fwd[3],
+        target_rev[2],
+        target_rev[3],
+        target_shared,
+        query_shared,
+        config.search_range,
+        config.window_radius,
+        config.realign_window,
+        metric_kind,
+        use_dice,
+        config.min_logerr,
+        seen,
+        candidates,
+        score_work,
+        sites_work,
+        out_scores,
+        out_shifts,
+        out_orientations,
+        out_sites,
+    )
+    orientations = ("++", "+-", "-+", "--")
+    results = []
+    for index, target in enumerate(targets):
+        results.append(
+            ComparisonResult(
+                query.name,
+                target.name,
+                out_scores[index],
+                int(out_shifts[index]),
+                orientations[int(out_orientations[index])],
+                config.metric,
+                int(out_sites[index]),
+            )
+        )
+        if on_progress is not None:
+            on_progress(("compare", index + 1, total, target.name))
     return results

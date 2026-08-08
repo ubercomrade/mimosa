@@ -10,6 +10,8 @@ import struct
 import tempfile
 import tomllib
 from contextlib import contextmanager
+from dataclasses import dataclass
+from collections import OrderedDict
 
 if os.name == "nt":
     import msvcrt
@@ -36,12 +38,20 @@ _CACHE_META_NAME = "meta.toml"
 _CACHE_LOCK_NAME = ".mimosa-cache.lock"
 
 ALGORITHM_VERSIONS = {"prepared_profile": "3"}
+_MEMORY_CACHE_MAX_PROFILES = 256
+
+
+@dataclass(frozen=True)
+class _PreparationContext:
+    sequence_fingerprint: str
+    background_fingerprint: str
 
 
 class Cache:
     def __init__(self, directory, enabled=True):
         self.directory = str(directory)
         self.enabled = bool(enabled)
+        self._prepared_profiles = OrderedDict()
 
     def __repr__(self):
         return f"Cache({self.directory!r}, enabled={self.enabled})"
@@ -114,6 +124,27 @@ def cache_key(cache, algorithm, *parts):
 
 
 def prepared_profile_cache_key(cache, source, sequences=None, *, background=None, min_logerr=0.0, normalization=None):
+    return _prepared_profile_cache_key(
+        cache,
+        source,
+        sequences,
+        background=background,
+        min_logerr=min_logerr,
+        normalization=normalization,
+    )
+
+
+def _prepared_profile_cache_key(
+    cache,
+    source,
+    sequences=None,
+    *,
+    background=None,
+    min_logerr=0.0,
+    normalization=None,
+    sequence_fp=None,
+    background_fp=None,
+):
     from .models import MotifModel
 
     is_motif = isinstance(source, MotifModel)
@@ -125,13 +156,18 @@ def prepared_profile_cache_key(cache, source, sequences=None, *, background=None
         source_fingerprint = score_profile_fingerprint(source)
     else:
         raise ValueError(f"unsupported cache source {type(source).__name__}.")
-    sequence_part = "sequences=none" if sequences is None else f"sequences={sequence_fingerprint(sequences)}"
+    if sequences is not None and sequence_fp is None:
+        sequence_fp = sequence_fingerprint(sequences)
+    sequence_part = "sequences=none" if sequence_fp is None else f"sequences={sequence_fp}"
     effective_background = sequences if (is_motif and background is None) else background
-    background_part = (
-        "background=none"
-        if effective_background is None
-        else f"background={sequence_fingerprint(effective_background)}"
-    )
+    if effective_background is None:
+        background_part = "background=none"
+    elif effective_background is sequences and sequence_fp is not None:
+        background_part = f"background={sequence_fp}"
+    elif background_fp is not None:
+        background_part = f"background={background_fp}"
+    else:
+        background_part = f"background={sequence_fingerprint(effective_background)}"
     threshold = np.float32(min_logerr)
     if not np.isfinite(threshold):
         raise ValueError("min_logerr must be finite.")
@@ -158,7 +194,18 @@ def _decode_prepared_profile(data):
         profile = pickle.loads(data)
     except Exception:
         return None
-    return profile if isinstance(profile, PreparedProfile) else None
+    if not isinstance(profile, PreparedProfile):
+        return None
+    try:
+        return PreparedProfile(
+            profile.name,
+            profile.bundle,
+            profile.anchors,
+            profile.min_logerr,
+            profile.normalization,
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def cache_get(cache, key):
@@ -221,8 +268,12 @@ def cache_set(cache, key, data, metadata=None):
 def clearcache(cache, key=None):
     if not cache.enabled:
         return 0
+    if key is not None:
+        cache._prepared_profiles.pop(key, None)
     root = _cache_root(cache)
     if not os.path.isdir(root):
+        if key is None:
+            cache._prepared_profiles.clear()
         return 0
     with _cache_lock(root):
         if key is not None:
@@ -231,6 +282,7 @@ def clearcache(cache, key=None):
                 shutil.rmtree(entry)
                 return 1
             return 0
+        cache._prepared_profiles.clear()
         count = 0
         for name in os.listdir(root):
             entry = os.path.join(root, name)
@@ -246,16 +298,67 @@ def clearcache(cache, key=None):
         return count
 
 
-def _cached_prepared_profile(cache, source, sequences, background, threshold, normalization):
+def _make_preparation_context(sequences, background):
+    if sequences is None:
+        return None
+    sequence_fp = sequence_fingerprint(sequences)
+    background_fp = (
+        sequence_fp
+        if background is None or background is sequences
+        else sequence_fingerprint(background)
+    )
+    return _PreparationContext(sequence_fp, background_fp)
+
+
+def _memory_cache_get(cache, key):
+    profile = cache._prepared_profiles.pop(key, None)
+    if profile is not None:
+        cache._prepared_profiles[key] = profile
+    return profile
+
+
+def _memory_cache_set(cache, key, profile):
+    cache._prepared_profiles.pop(key, None)
+    cache._prepared_profiles[key] = profile
+    while len(cache._prepared_profiles) > _MEMORY_CACHE_MAX_PROFILES:
+        cache._prepared_profiles.popitem(last=False)
+
+
+def _clear_memory_cache(cache):
+    cache._prepared_profiles.clear()
+
+
+def _cached_prepared_profile(
+    cache,
+    source,
+    sequences,
+    background,
+    threshold,
+    normalization,
+    context=None,
+):
     if cache is None or not cache.enabled:
         return None, None
-    key = prepared_profile_cache_key(
-        cache, source, sequences, background=background, min_logerr=threshold, normalization=normalization
+    key = _prepared_profile_cache_key(
+        cache,
+        source,
+        sequences,
+        background=background,
+        min_logerr=threshold,
+        normalization=normalization,
+        sequence_fp=None if context is None else context.sequence_fingerprint,
+        background_fp=None if context is None else context.background_fingerprint,
     )
+    cached = _memory_cache_get(cache, key)
+    if cached is not None:
+        return key, cached
     data = cache_get(cache, key)
     if data is None:
         return key, None
-    return key, _decode_prepared_profile(data)
+    profile = _decode_prepared_profile(data)
+    if profile is not None:
+        _memory_cache_set(cache, key, profile)
+    return key, profile
 
 
 def _store_prepared_profile(cache, key, profile):
@@ -271,4 +374,5 @@ def _store_prepared_profile(cache, key, profile):
             "normalization": normalization_fingerprint(profile.normalization),
         },
     )
+    _memory_cache_set(cache, key, profile)
     return profile
