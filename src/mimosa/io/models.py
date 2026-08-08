@@ -23,7 +23,6 @@ MAX_BAMM_REPRESENTATION_ELEMENTS = 100_000_000
 BAMM_EPSILON = 1e-10
 
 MAX_SITEGA_LENGTH = 10_000
-SITEGA_EPSILON = 1e-9
 DINUC_LIST = [
     "aa", "ac", "ag", "at", "ca", "cc", "cg", "ct",
     "ga", "gc", "gg", "gt", "ta", "tc", "tg", "tt",

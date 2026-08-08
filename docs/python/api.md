@@ -22,16 +22,14 @@ from mimosa import (
 ## Input and model I/O
 
 ```python
-read_model(path, *, format="auto", index=0, background=0.25, order=None, readers=())
+read_model(path, *, format="auto", index=0, background=0.25, order=None)
 read_fasta(path) -> tuple[EncodedSequences, tuple[str, ...]]
 read_scores(path) -> ScoreProfile
 write_model(path, model) -> None
 ```
 
-`read_model` reads MEME, PFM, BaMM, SiteGA, Dimont, Slim, and model bundles.
-Automatic selection uses the bundle manifest, file extension, and reader
-probes. A custom reader can be supplied for one call with `readers=`; Mimosa
-does not maintain a global reader registry.
+`read_model` reads MEME, PFM, BaMM, SiteGA, Dimont, Slim, and model bundles
+using the built-in format dispatch.
 
 `write_model` serializes built-in model families only. Custom models can scan
 and compare, but their arbitrary internal parameters are not a portable model

@@ -38,27 +38,6 @@ class AnchorCSR:
         return f"AnchorCSR({self.positions.size} anchors, {self.offsets.size - 1} rows)"
 
 
-def build_anchor_csr(rows, positions, n_rows):
-    rows = np.asarray(rows, dtype=np.int64)
-    positions = np.asarray(positions, dtype=np.int64)
-    if n_rows < 0:
-        raise ValueError("n_rows must be non-negative.")
-    if rows.size != positions.size:
-        raise ValueError("rows and positions must have equal lengths.")
-    if rows.size and (np.any(rows < 0) or np.any(rows >= n_rows)):
-        raise ValueError("anchor rows must be within 0:n_rows.")
-    if positions.size and np.any(positions < 0):
-        raise ValueError("anchor positions must be non-negative.")
-    if rows.size == 0:
-        return AnchorCSR(np.array([], dtype=np.int64), np.zeros(n_rows + 1, dtype=np.int64))
-    order = np.argsort(rows, kind="stable")
-    sorted_rows = rows[order]
-    sorted_positions = positions[order]
-    counts = np.bincount(sorted_rows, minlength=n_rows)
-    offsets = np.concatenate([[0], np.cumsum(counts)]).astype(np.int64)
-    return AnchorCSR(sorted_positions, offsets)
-
-
 def collect_anchor_csr(scores, threshold):
     n = len(scores)
     positions = np.empty(

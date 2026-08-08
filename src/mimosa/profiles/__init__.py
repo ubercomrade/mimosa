@@ -1,4 +1,4 @@
-from .anchors import AnchorCSR, build_anchor_csr, collect_anchor_csr, collect_both_anchors
+from .anchors import AnchorCSR, collect_anchor_csr, collect_both_anchors
 from .alignment import (
     ProfileConfig,
     parse_profile_metric,
@@ -20,7 +20,6 @@ from .prepared import PreparedProfile, ScoreProfile, prepare_profile
 
 __all__ = [
     "AnchorCSR",
-    "build_anchor_csr",
     "collect_anchor_csr",
     "collect_both_anchors",
     "ProfileConfig",

@@ -32,7 +32,6 @@ from .profiles.normalization import (
 from .profiles.prepared import PreparedProfile, ScoreProfile
 
 CACHE_FORMAT_VERSION = 2
-PREPARED_PROFILE_CACHE_FORMAT_VERSION = 3
 _CACHE_DATA_NAME = "data.bin"
 _CACHE_META_NAME = "meta.toml"
 _CACHE_LOCK_NAME = ".mimosa-cache.lock"
@@ -228,15 +227,11 @@ def cache_get(cache, key):
         return None
 
 
-def cache_set(cache, key, data, metadata=None):
+def cache_set(cache, key, data):
     if not cache.enabled:
         return None
     path = _cache_file_path(cache, key, _CACHE_DATA_NAME)
     checksum = hashlib.sha256(data).hexdigest()
-    meta = {"format_version": CACHE_FORMAT_VERSION, "checksum": f"sha256:{checksum}", "size": len(data)}
-    for name, value in (metadata or {}).items():
-        if name not in ("format_version", "checksum", "size"):
-            meta[name] = value
     root = _cache_root(cache)
     os.makedirs(root, exist_ok=True)
     # ponytail: one cache-wide lock; per-key locks only if write contention matters.
@@ -248,14 +243,7 @@ def cache_set(cache, key, data, metadata=None):
             with open(os.path.join(entry_stage, _CACHE_DATA_NAME), "wb") as f:
                 f.write(data)
             with open(os.path.join(entry_stage, _CACHE_META_NAME), "w", encoding="utf-8") as f:
-                for k in sorted(meta):
-                    v = meta[k]
-                    if isinstance(v, str):
-                        f.write(f'{k} = "{v}"\n')
-                    elif isinstance(v, bool):
-                        f.write(f"{k} = {'true' if v else 'false'}\n")
-                    else:
-                        f.write(f"{k} = {v}\n")
+                f.write(f'checksum = "sha256:{checksum}"\n')
             target = _cache_entry_dir(cache, key)
             if os.path.exists(target):
                 shutil.rmtree(target)
@@ -265,23 +253,14 @@ def cache_set(cache, key, data, metadata=None):
             shutil.rmtree(stage, ignore_errors=True)
 
 
-def clearcache(cache, key=None):
+def clearcache(cache):
     if not cache.enabled:
         return 0
-    if key is not None:
-        cache._prepared_profiles.pop(key, None)
     root = _cache_root(cache)
     if not os.path.isdir(root):
-        if key is None:
-            cache._prepared_profiles.clear()
+        cache._prepared_profiles.clear()
         return 0
     with _cache_lock(root):
-        if key is not None:
-            entry = _cache_entry_dir(cache, key)
-            if os.path.isdir(entry):
-                shutil.rmtree(entry)
-                return 1
-            return 0
         cache._prepared_profiles.clear()
         count = 0
         for name in os.listdir(root):
@@ -324,10 +303,6 @@ def _memory_cache_set(cache, key, profile):
         cache._prepared_profiles.popitem(last=False)
 
 
-def _clear_memory_cache(cache):
-    cache._prepared_profiles.clear()
-
-
 def _cached_prepared_profile(
     cache,
     source,
@@ -368,11 +343,6 @@ def _store_prepared_profile(cache, key, profile):
         cache,
         key,
         _encode_prepared_profile(profile),
-        metadata={
-            "algorithm": "prepared_profile",
-            "prepared_profile_format_version": PREPARED_PROFILE_CACHE_FORMAT_VERSION,
-            "normalization": normalization_fingerprint(profile.normalization),
-        },
     )
     _memory_cache_set(cache, key, profile)
     return profile

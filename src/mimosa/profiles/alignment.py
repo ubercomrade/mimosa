@@ -28,14 +28,6 @@ def parse_profile_metric(name):
     return name
 
 
-def _metric_kind(metric):
-    return _METRIC_KINDS[metric][0]
-
-
-def _use_dice(metric):
-    return _METRIC_KINDS[metric][1]
-
-
 def _orientation_pairs(query_bundle, target_bundle):
     qs = query_bundle.forward is query_bundle.reverse
     ts = target_bundle.forward is target_bundle.reverse
@@ -72,8 +64,7 @@ def _score_orientation_pair(
     site_counts = np.empty(n_shifts, dtype=np.int64)
     out_score = np.empty(1, dtype=np.float64)
     out_sites = np.empty(1, dtype=np.int64)
-    kind = _metric_kind(metric)
-    use_dice = _use_dice(metric)
+    kind, use_dice = _METRIC_KINDS[metric]
 
     if min_logerr > 0.0:
         max_row_length = (

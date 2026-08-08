@@ -14,7 +14,7 @@ from .bundles import (
     write_null_bundle,
 )
 from .fasta import read_fasta, read_scores
-from .readers import ModelReader, read_model
+from .readers import read_model
 from .models import (
     read_bamm,
     read_dimont,
@@ -38,7 +38,6 @@ __all__ = [
     "sequence_fingerprint",
     "write_model",
     "write_null_bundle",
-    "ModelReader",
     "read_model",
     "read_fasta",
     "read_scores",

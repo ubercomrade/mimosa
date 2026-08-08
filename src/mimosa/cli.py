@@ -14,49 +14,15 @@ from .arrays import EncodedSequences
 from .cache import Cache, clearcache
 from .compare import compare
 from .errors import MimosaError
-from .io.bundles import read_model_bundle, write_null_bundle
+from .io.bundles import write_null_bundle
 from .io.fasta import read_fasta, read_scores
-from .io.models import (
-    read_bamm,
-    read_dimont,
-    read_meme,
-    read_pfm,
-    read_sitega,
-    read_slim,
-)
+from .io.models import read_meme
+from .io.readers import read_model
 from .models import PWM, pwm_from_pfm
 from .models import BaMM, Dimont, SiteGA, Slim
 from .profiles.normalization import HybridEmpiricalLogTail
 from .profiles.prepared import ScoreProfile
 from .statistics import annotate_results, build_null
-
-try:
-    from tqdm import tqdm as _tqdm
-except Exception:  # pragma: no cover
-    _tqdm = None
-
-
-def _make_progress(args):
-    if args.quiet or not _tqdm or not sys.stderr.isatty():
-        return None
-
-    def _callback(event):
-        stage, current, total, label = event
-        if current == 0:
-            _pbar = _tqdm(total=total, desc=stage, file=sys.stderr, leave=False)
-            _make_progress._bars[stage] = _pbar
-        elif current >= total:
-            bar = _make_progress._bars.get(stage)
-            if bar:
-                bar.update(total - bar.n)
-                bar.close()
-        else:
-            bar = _make_progress._bars.get(stage)
-            if bar:
-                bar.update(1)
-
-    _make_progress._bars = {}
-    return _callback
 
 MODEL_TYPES = ["pwm", "bamm", "sitega", "dimont", "slim"]
 PROFILE_MODEL_TYPES = ["scores", *MODEL_TYPES]
@@ -79,36 +45,16 @@ def _read_typed_model(path, model_type, background=0.25):
         return read_scores(path)
     if model_type not in MODEL_TYPE_MAP:
         raise CLIError(f"unknown model type: {model_type}")
-    if os.path.isdir(path) and os.path.isfile(os.path.join(path, "manifest.toml")):
-        model = read_model_bundle(path)
-    else:
-        if model_type == "pwm":
-            model = _read_pwm_auto(path, background)
-        elif model_type == "bamm":
-            model = read_bamm(path)
-        elif model_type == "sitega":
-            model = read_sitega(path)
-        elif model_type == "dimont":
-            model = read_dimont(path)
-        elif model_type == "slim":
-            model = read_slim(path)
+    kwargs = {"background": background}
+    if model_type != "pwm":
+        kwargs["format"] = model_type
+    model = read_model(path, **kwargs)
     expected = MODEL_TYPE_MAP[model_type]
     if not isinstance(model, expected):
         raise CLIError(
             f"model at '{path}' is {type(model).__name__}, not the requested {model_type} type."
         )
     return model
-
-
-def _read_pwm_auto(path, background):
-    lower = path.lower()
-    if lower.endswith(".meme"):
-        name, pfm = read_meme(path)
-        return pwm_from_pfm(pfm, background=background, name=name)
-    if lower.endswith(".pfm"):
-        name, pfm = read_pfm(path)
-        return pwm_from_pfm(pfm, background=background, name=name)
-    raise CLIError(f"unsupported PWM format: {path}")
 
 
 def _resolve_sequences(fasta_path, num_sequences, seq_length, seed):
@@ -279,7 +225,6 @@ def _run_build_null(args):
     models = _read_model_collection(args.motifs, args.model_type)
     cache = Cache(args.cache_dir) if args.cache_dir else None
     sequences = _resolve_sequences(args.fasta, args.num_sequences, args.seq_length, args.seed)
-    progress = _make_progress(args)
     dist = build_null(
         models,
         sequences=sequences,
@@ -292,7 +237,6 @@ def _run_build_null(args):
         min_logerr=args.min_logerr,
         normalization=HybridEmpiricalLogTail(),
         cache=cache,
-        on_progress=progress,
     )
     write_null_bundle(args.output, dist)
     summary = {

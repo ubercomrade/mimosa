@@ -63,7 +63,7 @@ from .statistics import (
     empirical_upper_tail_pvalue,
     evalue,
 )
-from .io import ModelReader, read_fasta, read_model, read_scores, write_model
+from .io import read_fasta, read_model, read_scores, write_model
 
 __version__ = "1.4.1"
 
@@ -121,7 +121,6 @@ __all__ = [
     "build_null",
     "empirical_upper_tail_pvalue",
     "evalue",
-    "ModelReader",
     "read_model",
     "write_model",
     "read_fasta",

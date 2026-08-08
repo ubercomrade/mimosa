@@ -1,4 +1,4 @@
-# Custom Models and Readers
+# Custom Models
 
 Mimosa exposes small operation-local extension contracts. Custom extensions do
 not require editing Mimosa or registering global plugins.
@@ -59,29 +59,3 @@ prepared = prepare_profile(external)
 
 `ScoreProfile` supports preparation and comparison, but not raw-sequence
 scanning or motif-site extraction.
-
-## Custom model readers
-
-Pass readers to one `read_model` call. The reader must expose `formats`,
-`probe(path)`, and `read(path, **kwargs)`:
-
-```python
-from mimosa import read_model
-
-
-class CustomReader:
-    formats = ("custom",)
-
-    def probe(self, path):
-        return path.suffix == ".custom"
-
-    def read(self, path, **kwargs):
-        return load_custom_model(path)
-
-
-model = read_model("model.custom", readers=(CustomReader(),))
-```
-
-Automatic detection uses the file extension when it identifies one reader and
-calls `probe` when several candidates remain. There is no mutable global reader
-registry.

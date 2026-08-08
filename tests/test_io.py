@@ -106,30 +106,6 @@ class TestPwmReaders:
         with pytest.raises(ModelFormatError):
             read_meme(str(p))
 
-    def test_custom_reader_and_ambiguity(self, tmp_path):
-        _, pfm = read_meme("examples/foxa2.meme")
-        model = pwm_from_pfm(pfm, name="custom")
-        path = tmp_path / "model.custom"
-        path.write_text("ignored")
-
-        class Reader:
-            formats = ("custom",)
-
-            def __init__(self, selected):
-                self.selected = selected
-
-            def probe(self, candidate):
-                return self.selected
-
-            def read(self, candidate, **kwargs):
-                return model
-
-        assert read_model(path, readers=(Reader(True),)).name == "custom"
-        assert read_model(path, readers=(Reader(False), Reader(True))).name == "custom"
-        with pytest.raises(ModelFormatError):
-            read_model(path, format="custom", readers=(Reader(True), Reader(True)))
-
-
 class TestBammReader:
     @pytest.fixture
     def bamm_path(self, tmp_path):
