@@ -1,8 +1,7 @@
 import numpy as np
 import pytest
 
-from mimosa import PWM, EncodedSequences, pwm_from_pfm, scan
-from mimosa.arrays import reverse_complement_batch
+from mimosa import PWM, EncodedSequences, pwm_from_pfm, reverse_complement, scan
 from mimosa.io.models import read_meme
 
 
@@ -43,7 +42,9 @@ class TestScan:
 
     def test_reverse_complement_equivalence(self, pwm, batch):
         rev = scan(pwm, batch, strands="reverse")
-        rc_batch = reverse_complement_batch(batch)
+        rc_batch = EncodedSequences.from_rows(
+            [reverse_complement(batch[i]) for i in range(len(batch))]
+        )
         fwd_rc = scan(pwm, rc_batch, strands="forward")
         for i in range(len(batch)):
             if len(rev[i]):

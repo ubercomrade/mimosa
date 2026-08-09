@@ -76,8 +76,6 @@ def read_model(path, *, format="auto", index=0, background=0.25, order=None):
         format_name = "pfm"
     try:
         model = _read_builtin(path, format_name, index, background, order)
-    except ModelFormatError:
-        raise
     except (ModelInterfaceError, AttributeError, TypeError, ValueError) as exc:
         raise ModelFormatError(path, f"reader failed: {exc}.") from exc
     if not isinstance(model, MotifModel):

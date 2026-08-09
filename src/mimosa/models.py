@@ -174,14 +174,6 @@ class PWM(MotifModel):
     def motif_length(self):
         return self.weights.shape[1]
 
-    @property
-    def left_context(self):
-        return 0
-
-    @property
-    def right_context(self):
-        return 0
-
     def scan_into(self, sequence, forward, reverse, /):
         from ._kernels import pwm_scan_forward, pwm_scan_reverse
 
@@ -231,14 +223,6 @@ class SiteGA(MotifModel):
         weights = _as_float32_readonly(self.weights)
         _validate_sitega(weights, self.motif_length)
         object.__setattr__(self, "weights", weights)
-
-    @property
-    def left_context(self):
-        return 0
-
-    @property
-    def right_context(self):
-        return 0
 
     def scan_into(self, sequence, forward, reverse, /):
         from ._kernels import rolling_scan_forward, rolling_scan_reverse

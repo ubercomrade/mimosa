@@ -171,7 +171,6 @@ def _select_top_hit_arrays(coll, fraction):
     if n_keep >= n:
         return coll
     keep = np.argsort(-coll.scores, kind="stable")[:n_keep]
-    keep = keep[np.argsort(-coll.scores[keep], kind="stable")]
     return SiteCollection(
         coll.seq_indices[keep], coll.starts[keep], coll.strands[keep], coll.scores[keep]
     )

@@ -90,7 +90,7 @@ Build and use an empirical null distribution:
 
 ```bash
 mimosa build-null examples/ \
-  --model-type pwm --output output/null_bundle \
+  --output output/null_bundle \
   --fasta examples/foreground.fa --num-samples 2000 --seed 127
 
 mimosa profile examples/foxa2.meme examples/gata2.meme \

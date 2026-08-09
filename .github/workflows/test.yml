@@ -2,9 +2,9 @@ name: Tests
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
 
 jobs:
   lint:
@@ -33,6 +33,4 @@ jobs:
       - name: Run pytest
         run: uv run pytest -q
       - name: Run examples
-        working-directory: examples
-        shell: bash
-        run: uv run bash ./run.sh
+        run: uv run bash examples/run.sh

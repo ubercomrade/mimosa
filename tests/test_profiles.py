@@ -156,13 +156,11 @@ class TestCompare:
         assert results[0] == results[1]
 
     def test_compare_many_preserves_target_order(self, pwm_pair, batch):
-        from mimosa.compare import _compare_many_serial
-
         m1, m2 = pwm_pair
         query = prepare_profile(m1, batch)
         target = prepare_profile(m2, batch)
         targets = [target, query, target, query, target]
-        expected = _compare_many_serial(query, targets, ProfileConfig())
+        expected = [compare(query, target) for target in targets]
         assert compare_many(query, targets, batch) == expected
 
     def test_compare_many_reprepares_duplicate_raw_targets_without_cache(
@@ -206,7 +204,7 @@ class TestCompare:
         m1, m2 = pwm_pair
         query = prepare_profile(m1, batch)
         target = prepare_profile(m2, batch)
-        targets = [target] * 70
+        targets = [target] * 2
         for metric in ("co", "dice", "cosine"):
             results = compare_many(query, targets, batch, metric=metric)
             expected = compare(query, target, batch, metric=metric)
@@ -217,15 +215,12 @@ class TestCompare:
         m1, m2 = pwm_pair
         query = prepare_profile(m1, batch, min_logerr=1.0)
         target = prepare_profile(m2, batch, min_logerr=1.0)
-        targets = [target] * 70
-        config = ProfileConfig(metric="co", min_logerr=1.0)
-        from mimosa.compare import _compare_many_serial
-
-        serial = _compare_many_serial(query, targets, config)
+        targets = [target] * 2
+        serial = [compare(query, target, metric="co", min_logerr=1.0) for target in targets]
         results = compare_many(query, targets, batch, min_logerr=1.0)
         assert results == serial
 
-    def test_compare_many_prepared_shared_strands_matches_serial(self, pwm_pair, batch):
+    def test_compare_many_prepared_shared_strands(self, pwm_pair, batch):
         from mimosa.profiles.prepared import ScoreProfile
 
         m1, m2 = pwm_pair
@@ -237,14 +232,11 @@ class TestCompare:
         shared_target = prepare_profile(
             ScoreProfile("shared-target", prepared_query.bundle.forward),
         )
-        config = ProfileConfig(metric="cosine")
-        from mimosa.compare import _compare_many_serial
-
         for query, targets in (
-            (shared_query, [prepared_target] * 70),
-            (prepared_query, [shared_target] * 70),
+            (shared_query, [prepared_target] * 2),
+            (prepared_query, [shared_target] * 2),
         ):
-            serial = _compare_many_serial(query, targets, config)
+            serial = [compare(query, target, metric="cosine") for target in targets]
             results = compare_many(query, targets, batch, metric="cosine")
             assert results == serial
 

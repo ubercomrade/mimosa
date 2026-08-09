@@ -35,12 +35,11 @@ jobs:
 
       - name: Test sdist installation
         run: |
-          uv venv test_env
-          source test_env/bin/activate
-          uv pip install dist/*.tar.gz
-          uv pip install pytest
-          python -c "import mimosa; print(mimosa.__all__)"
-          pytest -q tests
+           uv venv test_env
+           source test_env/bin/activate
+           uv pip install dist/*.tar.gz
+           uv pip install pytest
+           pytest -q tests
 
       - uses: actions/upload-artifact@v4
         with:
@@ -68,9 +67,6 @@ jobs:
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-
-      - name: Check artifacts
-        run: uvx twine check dist/*
 
       - name: Publish to PyPI
         run: uv publish

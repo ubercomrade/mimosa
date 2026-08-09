@@ -13,8 +13,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import resource
 import shutil
 import statistics
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -37,21 +39,16 @@ def _arguments():
 def _repeat_batch(batch, count):
     from mimosa import EncodedSequences
 
-    rows = [batch[index] for index in range(len(batch))]
-    return EncodedSequences.from_rows(
-        [rows[index % len(rows)] for index in range(count)]
-    )
+    return EncodedSequences.from_rows([batch[index % len(batch)] for index in range(count)])
 
 
 def _models():
-    from mimosa.io.models import read_meme
-    from mimosa.models import pwm_from_pfm
+    from mimosa.io import read_model
 
-    result = []
-    for filename in ("foxa2.meme", "gata2.meme", "gata4.meme", "pif4.meme"):
-        name, pfm = read_meme(str(ROOT / "examples" / filename))
-        result.append(pwm_from_pfm(pfm, name=name))
-    return result
+    return [
+        read_model(ROOT / "examples" / filename)
+        for filename in ("foxa2.meme", "gata2.meme", "gata4.meme", "pif4.meme")
+    ]
 
 
 def _targets(models, count):
@@ -65,14 +62,8 @@ def _targets(models, count):
 
 
 def _rss_bytes():
-    try:
-        with open("/proc/self/status", encoding="ascii") as stream:
-            for line in stream:
-                if line.startswith("VmHWM:"):
-                    return int(line.split()[1]) * 1024
-    except (OSError, ValueError):
-        pass
-    return 0
+    value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return int(value if sys.platform == "darwin" else value * 1024)
 
 
 def _cache_bytes(path):
@@ -81,44 +72,6 @@ def _cache_bytes(path):
         if entry.is_file():
             total += entry.stat().st_size
     return total
-
-
-def _preparation_phases(models, sequences, background, cache, threshold):
-    from mimosa.cache import _make_preparation_context
-    from mimosa.profiles.prepared import _prepare_profile
-
-    phases = {
-        "preparation_s": 0.0,
-        "fit_normalize_anchors_s": 0.0,
-        "cache_read_checksum_decode_s": 0.0,
-    }
-    for model in models:
-        started = time.perf_counter()
-        _prepare_profile(
-            model,
-            sequences,
-            background=background,
-            min_logerr=threshold,
-            cache=cache,
-        )
-        phases["preparation_s"] += time.perf_counter() - started
-    disk_cache = type(cache)(
-        cache.directory,
-        memory_budget_bytes=cache.memory_budget_bytes,
-    )
-    context = _make_preparation_context(sequences, background)
-    started = time.perf_counter()
-    for model in models:
-        _prepare_profile(
-            model,
-            sequences,
-            background=background,
-            min_logerr=threshold,
-            cache=disk_cache,
-            _preparation_context=context,
-        )
-    phases["cache_read_checksum_decode_s"] = time.perf_counter() - started
-    return phases
 
 
 def _warmup(models, sequences, threads, threshold):
@@ -138,9 +91,8 @@ def _warmup(models, sequences, threads, threshold):
 
 def _measure_modes(models, targets, sequences, background, cache_path, args, threads):
     from numba import set_num_threads
-    from mimosa import compare_many
+    from mimosa import compare_many, prepare_profile
     from mimosa.cache import Cache
-    from mimosa.profiles.prepared import _prepare_profile
 
     set_num_threads(threads)
     cold_path = cache_path / "cold"
@@ -149,30 +101,18 @@ def _measure_modes(models, targets, sequences, background, cache_path, args, thr
         cold_path,
         memory_budget_bytes=args.memory_budget_bytes,
     )
-    phase_cache = Cache(
-        cache_path / "phase", memory_budget_bytes=args.memory_budget_bytes
-    )
-    phases = _preparation_phases(
-        targets,
-        sequences,
-        background,
-        phase_cache,
-        args.min_logerr,
-    )
-    prepared_query = _prepare_profile(
+    prepared_query = prepare_profile(
         models[0],
         sequences,
         background=background,
         min_logerr=args.min_logerr,
-        cache=phase_cache,
     )
     prepared_targets = [
-        _prepare_profile(
+        prepare_profile(
             target,
             sequences,
             background=background,
             min_logerr=args.min_logerr,
-            cache=phase_cache,
         )
         for target in targets
     ]
@@ -214,11 +154,6 @@ def _measure_modes(models, targets, sequences, background, cache_path, args, thr
             {
                 "mode": mode,
                 "wall_s": wall,
-                "prepare_profiles_s": phases["preparation_s"] if mode == "cold" else 0.0,
-                "cache_read_checksum_decode_s": (
-                    phases["cache_read_checksum_decode_s"] if mode == "disk" else 0.0
-                ),
-                "normalization_anchors_s": phases["fit_normalize_anchors_s"] if mode == "cold" else 0.0,
                 "prepared_alignment_s": prepared_alignment_s,
                 "peak_rss_bytes": _rss_bytes(),
                 "cache_bytes": _cache_bytes(cold_path),
@@ -266,9 +201,6 @@ def main():
                 summary = {"threads": threads_value, "target_count": target_count}
                 for field in (
                     "wall_s",
-                    "prepare_profiles_s",
-                    "cache_read_checksum_decode_s",
-                    "normalization_anchors_s",
                     "prepared_alignment_s",
                     "peak_rss_bytes",
                     "cache_bytes",

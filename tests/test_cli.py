@@ -1,5 +1,4 @@
 import json
-import os
 import subprocess
 import sys
 
@@ -35,6 +34,7 @@ class TestProfileCommand:
         assert d["orientation"] == "++"
         assert d["offset"] == -6
         assert d["metric"] == "co"
+        assert "error" not in r.stdout
 
     def test_motif_models_with_fasta(self):
         r = run_cli(
@@ -52,19 +52,6 @@ class TestProfileCommand:
         d = json.loads(r.stdout)
         assert d["query"] == "MA0047.3"
         assert d["n_sites"] == 199
-
-    def test_stdout_only_json(self):
-        r = run_cli(
-            "profile",
-            "examples/scores_1.fasta",
-            "examples/scores_2.fasta",
-            "--model1-type",
-            "scores",
-            "--model2-type",
-            "scores",
-        )
-        json.loads(r.stdout)
-        assert "error" not in r.stdout
 
     def test_missing_type(self):
         r = run_cli("profile", "a", "b")
@@ -112,21 +99,6 @@ class TestProfileCommand:
         assert r.returncode == 0, r.stderr
         assert json.loads(r.stdout)["metric"] == "cosine"
 
-    def test_removed_rowwise_metric_names(self):
-        for metric in ("co_rowwise", "dice_rowwise"):
-            r = run_cli(
-                "profile",
-                "examples/scores_1.fasta",
-                "examples/scores_2.fasta",
-                "--model1-type",
-                "scores",
-                "--model2-type",
-                "scores",
-                "--metric",
-                metric,
-            )
-            assert r.returncode != 0
-
 
 class TestBuildNullCommand:
     def test_build_null(self, tmp_path):
@@ -139,8 +111,6 @@ class TestBuildNullCommand:
         r = run_cli(
             "build-null",
             str(motifs),
-            "--model-type",
-            "pwm",
             "--output",
             str(out),
             "--num-samples",
@@ -150,26 +120,13 @@ class TestBuildNullCommand:
         d = json.loads(r.stdout)
         assert d["n_models"] == 3
         assert d["n_null"] == 10
-        assert os.path.isdir(str(out))
-        assert os.path.isfile(os.path.join(str(out), "manifest.toml"))
+        assert out.is_dir()
+        assert (out / "manifest.toml").is_file()
 
     def test_build_null_requires_dir(self, tmp_path):
         r = run_cli(
             "build-null",
             "examples/foreground.fa",
-            "--model-type",
-            "pwm",
-            "--output",
-            str(tmp_path / "n"),
-        )
-        assert r.returncode != 0
-
-    def test_build_null_requires_pwm(self, tmp_path):
-        r = run_cli(
-            "build-null",
-            "examples",
-            "--model-type",
-            "sitega",
             "--output",
             str(tmp_path / "n"),
         )

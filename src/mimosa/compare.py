@@ -44,6 +44,15 @@ def _check_threshold(threshold, prepared):
         raise ValueError("min_logerr differs from the prepared query threshold.")
 
 
+def _compare_prepared(query, target, config):
+    score, shift, orientation, n_sites, metric_str = profile_compare(
+        query.bundle, query.anchors, target.bundle, target.anchors, config
+    )
+    return ComparisonResult(
+        query.name, target.name, score, shift, orientation, metric_str, n_sites
+    )
+
+
 def _prepare_side(
     model,
     sequences,
@@ -119,13 +128,10 @@ def compare(query, target, sequences=None, *, background=None, metric="co", sear
         raise TypeError(f"unsupported comparison inputs: {type(query).__name__} vs {type(target).__name__}")
 
     config = ProfileConfig(metric=m, search_range=search_range, window_radius=window_radius, realign_window=realign_window, min_logerr=threshold)
-    score, shift, orientation, n_sites, metric_str = profile_compare(
-        pq.bundle, pq.anchors, pt.bundle, pt.anchors, config
-    )
-    return ComparisonResult(query.name, target.name, score, shift, orientation, metric_str, n_sites)
+    return _compare_prepared(pq, pt, config)
 
 
-def compare_many(query, targets, sequences=None, *, background=None, metric="co", search_range=10, window_radius=10, realign_window=3, min_logerr=None, normalization=None, cache=None, on_progress=None):
+def compare_many(query, targets, sequences=None, *, background=None, metric="co", search_range=10, window_radius=10, realign_window=3, min_logerr=None, normalization=None, cache=None):
     """Compare one query against targets in stable order.
 
     Targets are prepared immediately before their comparison.
@@ -155,11 +161,8 @@ def compare_many(query, targets, sequences=None, *, background=None, metric="co"
     norm = query.normalization if normalization is None else normalization
     config = ProfileConfig(metric=parse_profile_metric(metric), search_range=search_range, window_radius=window_radius, realign_window=realign_window, min_logerr=threshold)
 
-    total = len(targets)
     results = []
-    if on_progress is not None:
-        on_progress(("compare", 0, total, ""))
-    for index, target_source in enumerate(targets):
+    for target_source in targets:
         target = _prepare_side(
             target_source,
             sequences,
@@ -173,18 +176,5 @@ def compare_many(query, targets, sequences=None, *, background=None, metric="co"
             raise TypeError(
                 f"unsupported comparison target: {type(target_source).__name__}"
             )
-        result = _compare_many_serial(query, (target,), config)[0]
-        results.append(result)
-        if on_progress is not None:
-            on_progress(("compare", index + 1, total, result.target))
-    return results
-
-
-def _compare_many_serial(query, prepared_targets, config):
-    results = []
-    for target in prepared_targets:
-        score, shift, orientation, n_sites, metric_str = profile_compare(
-            query.bundle, query.anchors, target.bundle, target.anchors, config
-        )
-        results.append(ComparisonResult(query.name, target.name, score, shift, orientation, metric_str, n_sites))
+        results.append(_compare_prepared(query, target, config))
     return results

@@ -19,7 +19,6 @@ from .io.fasta import read_fasta, read_scores
 from .io.readers import read_model
 from .models import PWM
 from .models import BaMM, Dimont, SiteGA, Slim
-from .profiles.normalization import HybridEmpiricalLogTail
 from .profiles.prepared import ScoreProfile
 from .statistics import annotate_results, build_null
 
@@ -61,10 +60,9 @@ def _resolve_sequences(fasta_path, num_sequences, seq_length, seed):
         batch, _ = read_fasta(fasta_path)
         return batch
     rng = np.random.default_rng(seed)
-    rows = []
-    for _ in range(num_sequences):
-        rows.append(rng.integers(0, 4, size=seq_length, dtype=np.uint8))
-    return EncodedSequences.from_rows(rows)
+    return EncodedSequences.from_rows(
+        [rng.integers(0, 4, size=seq_length, dtype=np.uint8) for _ in range(num_sequences)]
+    )
 
 
 def _validate_null_compatibility(dist, *, strategy, metric, sequences, background, search_range, window_radius, realign_window, min_logerr, model_types=None):
@@ -121,17 +119,10 @@ def _annotate_cli_result(result, args, *, strategy, metric, sequences, backgroun
 
 def _run_profile(args):
     type1, type2 = args.model1_type, args.model2_type
-    if type1 not in PROFILE_MODEL_TYPES:
-        raise CLIError(f"--model1-type must be one of: {', '.join(PROFILE_MODEL_TYPES)}")
-    if type2 not in PROFILE_MODEL_TYPES:
-        raise CLIError(f"--model2-type must be one of: {', '.join(PROFILE_MODEL_TYPES)}")
-    if args.metric not in PROFILE_METRICS:
-        raise CLIError(f"--metric must be one of: {', '.join(PROFILE_METRICS)}")
 
     model1 = _read_typed_model(args.model1, type1, args.background_freq)
     model2 = _read_typed_model(args.model2, type2, args.background_freq)
     cache = Cache(args.cache_dir) if args.cache_dir else None
-    normalization = HybridEmpiricalLogTail()
 
     sequences = None
     bg_sequences = None
@@ -148,7 +139,6 @@ def _run_profile(args):
         realign_window=args.realign_window,
         min_logerr=args.min_logerr,
         background=bg_sequences,
-        normalization=normalization,
         cache=cache,
     )
 
@@ -170,12 +160,8 @@ def _run_profile(args):
 
 
 def _run_build_null(args):
-    if args.model_type != "pwm":
-        raise CLIError("build-null requires --model-type pwm.")
     if not os.path.isdir(args.motifs):
         raise CLIError("motif collection path must be a directory.")
-    if args.metric not in PROFILE_METRICS:
-        raise CLIError(f"--metric must be one of: {', '.join(PROFILE_METRICS)}")
     files = sorted(
         filename for filename in os.listdir(args.motifs) if filename.lower().endswith(".meme")
     )
@@ -194,14 +180,12 @@ def _run_build_null(args):
         window_radius=args.window_radius,
         realign_window=args.realign_window,
         min_logerr=args.min_logerr,
-        normalization=HybridEmpiricalLogTail(),
         cache=cache,
     )
     write_null_bundle(args.output, dist)
     summary = {
         "output": args.output,
         "n_models": len(models),
-        "n_comparisons": dist.n_null,
         "n_null": dist.n_null,
         "model_type": dist.model_type,
         "shuffle": True,
@@ -211,14 +195,11 @@ def _run_build_null(args):
         "estimator": "empirical_upper_tail",
         "normalization": dist.contract["normalization_version"],
     }
-    if not args.quiet:
-        print(json.dumps(summary, indent=2, sort_keys=True))
+    print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
 
 
 def _run_cache(args):
-    if args.operation != "clear":
-        raise CLIError("cache requires a subcommand: clear")
     cache_dir = args.cache_dir
     root = os.path.abspath(cache_dir)
     if root == os.path.dirname(root) or root == os.path.expanduser("~"):
@@ -226,8 +207,7 @@ def _run_cache(args):
     if os.path.exists(root) and (not os.path.isdir(root) or os.path.islink(root)):
         raise CLIError("--cache-dir must be a real directory, not a file or symlink.")
     removed = clearcache(Cache(cache_dir))
-    if not args.quiet:
-        print(json.dumps({"cache_dir": cache_dir, "removed": removed}, indent=2, sort_keys=True))
+    print(json.dumps({"cache_dir": cache_dir, "removed": removed}, indent=2, sort_keys=True))
     return 0
 
 
@@ -241,9 +221,9 @@ def build_parser():
     p = sub.add_parser("profile", help="compare two motif score profiles")
     p.add_argument("model1", help="first model or score-profile file")
     p.add_argument("model2", help="second model or score-profile file")
-    p.add_argument("--model1-type", required=True)
-    p.add_argument("--model2-type", required=True)
-    p.add_argument("--metric", default="co")
+    p.add_argument("--model1-type", required=True, choices=PROFILE_MODEL_TYPES)
+    p.add_argument("--model2-type", required=True, choices=PROFILE_MODEL_TYPES)
+    p.add_argument("--metric", default="co", choices=PROFILE_METRICS)
     p.add_argument("--search-range", type=int, default=10)
     p.add_argument("--window-radius", type=int, default=10)
     p.add_argument("--realign-window", type=int, default=3)
@@ -258,13 +238,11 @@ def build_parser():
     p.add_argument("--null-distribution")
     p.add_argument("--effective-number-of-targets", type=int)
     p.add_argument("--pvalue", action="store_true")
-    p.add_argument("--quiet", action="store_true")
 
     p = sub.add_parser("build-null", help="build a null distribution from motif comparisons")
     p.add_argument("motifs", help="motif collection path")
-    p.add_argument("--model-type", required=True)
     p.add_argument("--output", required=True)
-    p.add_argument("--metric", default="co")
+    p.add_argument("--metric", default="co", choices=PROFILE_METRICS)
     p.add_argument("--fasta")
     p.add_argument("--num-sequences", type=int, default=1000)
     p.add_argument("--seq-length", type=int, default=200)
@@ -275,10 +253,9 @@ def build_parser():
     p.add_argument("--realign-window", type=int, default=3)
     p.add_argument("--min-logerr", type=float, default=0.0)
     p.add_argument("--cache-dir")
-    p.add_argument("--quiet", action="store_true")
 
     p = sub.add_parser("cache", help="manage the disk cache")
-    p.add_argument("operation", help="cache operation (clear)")
+    p.add_argument("operation", choices=("clear",), help="cache operation (clear)")
     p.add_argument("--cache-dir", default=".mimosa-cache")
     p.add_argument("--quiet", action="store_true")
     return parser

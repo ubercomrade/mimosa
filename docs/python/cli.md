@@ -29,7 +29,6 @@ Important options:
 - `--cache-dir PATH` enables prepared-profile caching.
 - `--pvalue --null-distribution PATH` adds empirical significance annotations.
 - `--effective-number-of-targets N` changes E-values without changing BH adjustment.
-- `--quiet` disables terminal progress output.
 
 Example:
 
@@ -45,14 +44,13 @@ Build a PWM-only profile null distribution from a motif directory:
 
 ```bash
 uv run mimosa build-null MOTIFS \
-  --model-type pwm --output OUTPUT \
+  --output OUTPUT \
   [--fasta FASTA] [options]
 ```
 
 `MOTIFS` must be a directory containing at least two readable PWM files.
 `--num-samples`, `--seed`, `--metric`, the alignment options, and `--cache-dir`
-control construction. The summary is JSON on `stdout` unless `--quiet` is
-used.
+control construction. The summary is JSON on `stdout`.
 
 ## `cache clear`
 

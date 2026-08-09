@@ -85,7 +85,6 @@ class TestPwmReaders:
         np.testing.assert_allclose(pfm.sum(axis=0), 1.0, atol=1e-4)
 
     def test_read_meme_index(self):
-        _, pfm0 = read_meme("examples/foxa2.meme", index=0)
         with pytest.raises(ModelFormatError):
             read_meme("examples/foxa2.meme", index=5)
 
@@ -107,32 +106,20 @@ class TestPwmReaders:
             read_meme(str(p))
 
 class TestBammReader:
-    @pytest.fixture
-    def bamm_path(self, tmp_path):
-        p = tmp_path / "myog.ihbcp"
-        with open(p, "w") as f:
-            for position in range(1, 15):
-                for order in range(5):
-                    values = ["0.1", "0.2", "0.3", "0.4"] * (4**order)
-                    f.write(" ".join(values) + "\n")
-                if position < 14:
-                    f.write("\n")
-        return str(p)
-
-    def test_read_bamm(self, bamm_path):
-        m = read_bamm(bamm_path)
+    def test_read_bamm(self):
+        m = read_bamm("examples/myog.ihbcp")
         assert m.name == "myog"
         assert m.motif_length == 14
         assert m.order == 4
         assert m.weights.shape == (5**5, 14)
 
-    def test_read_bamm_order0(self, bamm_path):
-        m = read_bamm(bamm_path, order=0)
+    def test_read_bamm_order0(self):
+        m = read_bamm("examples/myog.ihbcp", order=0)
         assert m.order == 0
         assert m.weights.shape == (5, 14)
 
-    def test_read_bamm_clamped(self, bamm_path):
-        m = read_bamm(bamm_path, order=100)
+    def test_read_bamm_clamped(self):
+        m = read_bamm("examples/myog.ihbcp", order=100)
         assert m.order == 4
 
     @pytest.mark.parametrize(
@@ -165,7 +152,7 @@ class TestBammReader:
 
 class TestSitega:
     def test_read(self):
-        m = read_sitega("tests/fixtures/sitega.mat")
+        m = read_sitega("examples/sitega_stat6.mat")
         assert m.name == "Bootatrap"
         assert m.motif_length == 12
         assert m.weights.shape == (25, 12)
@@ -258,7 +245,7 @@ class TestModelBundle:
         np.testing.assert_array_equal(m2.weights, m.weights)
 
     def test_roundtrip_bamm(self, tmp_path):
-        m = read_bamm("/tmp/opencode/myog.ihbcp") if os.path.exists("/tmp/opencode/myog.ihbcp") else self._make_bamm(tmp_path)
+        m = read_bamm("examples/myog.ihbcp")
         path = str(tmp_path / "b")
         write_model(path, m)
         m2 = read_model_bundle(path)
@@ -266,20 +253,8 @@ class TestModelBundle:
         assert m2.order == m.order
         np.testing.assert_array_equal(m2.weights, m.weights)
 
-    @staticmethod
-    def _make_bamm(tmp_path):
-        p = tmp_path / "myog.ihbcp"
-        with open(p, "w") as f:
-            for position in range(1, 15):
-                for order in range(5):
-                    values = ["0.1", "0.2", "0.3", "0.4"] * (4**order)
-                    f.write(" ".join(values) + "\n")
-                if position < 14:
-                    f.write("\n")
-        return read_bamm(str(p))
-
     def test_roundtrip_sitega(self, tmp_path):
-        m = read_sitega("tests/fixtures/sitega.mat")
+        m = read_sitega("examples/sitega_stat6.mat")
         path = str(tmp_path / "s")
         write_model(path, m)
         m2 = read_model_bundle(path)
@@ -335,11 +310,8 @@ class TestModelBundle:
         m = pwm_from_pfm(pfm, name=name)
         path = str(tmp_path / "m")
         write_model(path, m)
-        manifest = os.path.join(path, "manifest.toml")
-        with open(manifest) as f:
-            content = f.read()
-        with open(manifest, "w") as f:
-            f.write(content.replace("format_version = 2", "format_version = 1"))
+        manifest = tmp_path / "m" / "manifest.toml"
+        manifest.write_text(manifest.read_text().replace("format_version = 2", "format_version = 1"))
         with pytest.raises(ModelFormatError):
             read_model_bundle(path)
 
@@ -367,22 +339,16 @@ class TestNullBundle:
     def test_rejects_previous_format_version(self, tmp_path, dist):
         path = str(tmp_path / "null")
         write_null_bundle(path, dist)
-        manifest = os.path.join(path, "manifest.toml")
-        with open(manifest) as f:
-            content = f.read()
-        with open(manifest, "w") as f:
-            f.write(content.replace("format_version = 8", "format_version = 7"))
+        manifest = tmp_path / "null" / "manifest.toml"
+        manifest.write_text(manifest.read_text().replace("format_version = 8", "format_version = 7"))
         with pytest.raises(ModelFormatError):
             read_null_bundle(path)
 
     def test_rejects_removed_metric(self, tmp_path, dist):
         path = str(tmp_path / "null")
         write_null_bundle(path, dist)
-        manifest = os.path.join(path, "manifest.toml")
-        with open(manifest) as f:
-            content = f.read()
-        with open(manifest, "w") as f:
-            f.write(content.replace('metric = "co"', 'metric = "co_rowwise"'))
+        manifest = tmp_path / "null" / "manifest.toml"
+        manifest.write_text(manifest.read_text().replace('metric = "co"', 'metric = "co_rowwise"'))
         with pytest.raises(ModelFormatError):
             read_null_bundle(path)
 
@@ -402,11 +368,8 @@ class TestNullBundle:
     def test_rejects_empty_null_distribution(self, tmp_path, dist):
         path = str(tmp_path / "null")
         write_null_bundle(path, dist)
-        manifest = os.path.join(path, "manifest.toml")
-        with open(manifest) as f:
-            content = f.read()
-        with open(manifest, "w") as f:
-            f.write(content.replace("n_null = 20", "n_null = 0"))
+        manifest = tmp_path / "null" / "manifest.toml"
+        manifest.write_text(manifest.read_text().replace("n_null = 20", "n_null = 0"))
         with pytest.raises(ModelFormatError, match="n_null"):
             read_null_bundle(path)
 

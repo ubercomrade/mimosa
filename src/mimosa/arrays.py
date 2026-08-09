@@ -41,6 +41,17 @@ def _validate_encoded_data(data):
         )
 
 
+def _from_rows(cls, rows, dtype):
+    offsets = np.empty(len(rows) + 1, dtype=np.int64)
+    offsets[0] = 0
+    for i, row in enumerate(rows):
+        offsets[i + 1] = offsets[i] + len(row)
+    data = np.empty(int(offsets[-1]), dtype=dtype)
+    for i, row in enumerate(rows):
+        data[offsets[i] : offsets[i + 1]] = row
+    return cls(data, offsets)
+
+
 class EncodedSequences:
     """All sequences in one uint8 buffer plus int64 offsets (zero-based)."""
 
@@ -64,15 +75,7 @@ class EncodedSequences:
 
     @classmethod
     def from_rows(cls, rows):
-        n = len(rows)
-        offsets = np.empty(n + 1, dtype=np.int64)
-        offsets[0] = 0
-        for i, r in enumerate(rows):
-            offsets[i + 1] = offsets[i] + len(r)
-        data = np.empty(int(offsets[-1]), dtype=np.uint8)
-        for i, r in enumerate(rows):
-            data[offsets[i] : offsets[i + 1]] = r
-        return cls(data, offsets)
+        return _from_rows(cls, rows, np.uint8)
 
     @classmethod
     def from_strings(cls, strings):
@@ -112,13 +115,6 @@ def reverse_complement(seq):
     return rc
 
 
-def reverse_complement_batch(batch):
-    data = np.empty_like(batch.data)
-    for i in range(len(batch)):
-        data[batch.offsets[i] : batch.offsets[i + 1]] = reverse_complement(batch[i])
-    return EncodedSequences(data, batch.offsets.copy())
-
-
 class RaggedArray:
     """Flat offset-based ragged storage for float32 score tracks."""
 
@@ -141,15 +137,7 @@ class RaggedArray:
 
     @classmethod
     def from_rows(cls, rows):
-        n = len(rows)
-        offsets = np.empty(n + 1, dtype=np.int64)
-        offsets[0] = 0
-        for i, r in enumerate(rows):
-            offsets[i + 1] = offsets[i] + len(r)
-        data = np.empty(int(offsets[-1]), dtype=np.float32)
-        for i, r in enumerate(rows):
-            data[offsets[i] : offsets[i + 1]] = r
-        return cls(data, offsets)
+        return _from_rows(cls, rows, np.float32)
 
     def __len__(self):
         return self.offsets.size - 1

@@ -12,8 +12,6 @@ import shutil
 import struct
 import tempfile
 import tomllib
-from dataclasses import dataclass
-from functools import singledispatch
 
 import numpy as np
 
@@ -476,65 +474,37 @@ def score_profile_fingerprint(profile):
 
 # ── Model bundle write/read ──────────────────────────────────────────────────
 
-@dataclass(frozen=True, slots=True)
-class _BundleSpec:
-    kind: str
-    array_name: str
-    array: np.ndarray
-    metadata: tuple
-
-
-@singledispatch
 def _bundle_spec(model):
+    if isinstance(model, PWM):
+        return "pwm", "weights", model.weights, (("background", list(model.background)),)
+    if isinstance(model, BaMM):
+        return (
+            "bamm",
+            "representation",
+            model.weights,
+            (("order", model.order), ("motif_length", model.motif_length)),
+        )
+    if isinstance(model, SiteGA):
+        return "sitega", "representation", model.weights, (("motif_length", model.motif_length),)
+    if isinstance(model, Dimont):
+        return (
+            "dimont",
+            "representation",
+            model.weights,
+            (("span", model.order), ("motif_length", model.motif_length)),
+        )
+    if isinstance(model, Slim):
+        return (
+            "slim",
+            "representation",
+            model.weights,
+            (("span", model.order), ("motif_length", model.motif_length)),
+        )
     raise InvariantError(f"unsupported model kind {type(model).__name__}.")
 
 
-@_bundle_spec.register(PWM)
-def _bundle_spec_pwm(model):
-    return _BundleSpec("pwm", "weights", model.weights, (("background", list(model.background)),))
-
-
-@_bundle_spec.register(BaMM)
-def _bundle_spec_bamm(model):
-    return _BundleSpec(
-        "bamm",
-        "representation",
-        model.weights,
-        (("order", model.order), ("motif_length", model.motif_length)),
-    )
-
-
-@_bundle_spec.register(SiteGA)
-def _bundle_spec_sitega(model):
-    return _BundleSpec(
-        "sitega", "representation", model.weights, (("motif_length", model.motif_length),)
-    )
-
-
-@_bundle_spec.register(Dimont)
-def _bundle_spec_dimont(model):
-    return _BundleSpec(
-        "dimont",
-        "representation",
-        model.weights,
-        (("span", model.order), ("motif_length", model.motif_length)),
-    )
-
-
-@_bundle_spec.register(Slim)
-def _bundle_spec_slim(model):
-    return _BundleSpec(
-        "slim",
-        "representation",
-        model.weights,
-        (("span", model.order), ("motif_length", model.motif_length)),
-    )
-
-
 def write_model(path, model):
-    spec = _bundle_spec(model)
-    arr = spec.array
-    arr_name = spec.array_name
+    kind, arr_name, arr, metadata = _bundle_spec(model)
     shape = [arr.shape[0], arr.shape[1]]
     byte_length = _bundle_shape_payload_bytes(shape, "<f4", str(path), "model array")
     if not np.all(np.isfinite(arr)):
@@ -547,7 +517,7 @@ def write_model(path, model):
         manifest = {
             "format": "mimosa",
             "format_version": MODEL_FORMAT_VERSION,
-            "kind": spec.kind,
+            "kind": kind,
             "name": model.name,
             "dtype": "<f4",
             "shape": shape,
@@ -564,7 +534,7 @@ def write_model(path, model):
                 }
             },
         }
-        manifest.update(dict(spec.metadata))
+        manifest.update(dict(metadata))
         _write_bundle_manifest(os.path.join(stage, BUNDLE_MANIFEST_NAME), manifest)
 
     _with_bundle_write(path, writer)
@@ -610,7 +580,6 @@ def _read_pwm_bundle(path, manifest, name):
     declared = _required_manifest_shape(manifest["shape"], path, "manifest")
     if len(declared) != 2 or declared[0] != 5 or declared[1] <= 0:
         raise _bundle_error(path, "PWM manifest shape must be [5, positive motif_length].")
-    _validate_declared_model_shape(path, manifest, 5, declared[1], "PWM")
     weights = _read_model_array(path, manifest, "weights")
     bg_values = _required_manifest_floats(manifest, "background", path, "PWM manifest", expected_length=4)
     bg = tuple(np.float32(v) for v in bg_values)

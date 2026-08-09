@@ -39,11 +39,6 @@ class TestCache:
         cache_set(cache, "abc123", b"payload")
         assert cache_get(cache, "abc123") == b"payload"
 
-    def test_disabled(self, tmp_path):
-        cache = Cache(str(tmp_path), enabled=False)
-        cache_set(cache, "abc", b"data")
-        assert cache_get(cache, "abc") is None
-
     def test_missing(self, tmp_path):
         cache = Cache(str(tmp_path))
         assert cache_get(cache, "nope") is None
@@ -110,11 +105,8 @@ class TestPreparedProfileCache:
         return read_fasta("examples/foreground.fa")[0]
 
     def test_key_content_addressed(self, pwm, batch):
-        from mimosa.cache import Cache
-
-        cache = Cache("/tmp/opencode/cache-test")
-        k1 = prepared_profile_cache_key(cache, pwm, batch)
-        k2 = prepared_profile_cache_key(cache, pwm, batch)
+        k1 = prepared_profile_cache_key(pwm, batch)
+        k2 = prepared_profile_cache_key(pwm, batch)
         assert k1 == k2
         assert len(k1) == 16
 
@@ -130,26 +122,20 @@ class TestPreparedProfileCache:
             return original(value)
 
         monkeypatch.setattr(cache_module, "sequence_fingerprint", counted)
-        prepared_profile_cache_key(Cache(str("/tmp/opencode/cache-test")), pwm, batch)
+        prepared_profile_cache_key(pwm, batch)
         assert calls == 1
 
     def test_key_changes_with_model(self, pwm, batch):
-        from mimosa.cache import Cache
-
-        cache = Cache("/tmp/opencode/cache-test")
-        k1 = prepared_profile_cache_key(cache, pwm, batch)
+        k1 = prepared_profile_cache_key(pwm, batch)
         from mimosa import PWM
 
         m2 = PWM("other", pwm.weights, pwm.background)
-        k2 = prepared_profile_cache_key(cache, m2, batch)
+        k2 = prepared_profile_cache_key(m2, batch)
         assert k1 != k2
 
     def test_key_changes_with_min_logerr(self, pwm, batch):
-        from mimosa.cache import Cache
-
-        cache = Cache("/tmp/opencode/cache-test")
-        k1 = prepared_profile_cache_key(cache, pwm, batch, min_logerr=0.0)
-        k2 = prepared_profile_cache_key(cache, pwm, batch, min_logerr=2.0)
+        k1 = prepared_profile_cache_key(pwm, batch, min_logerr=0.0)
+        k2 = prepared_profile_cache_key(pwm, batch, min_logerr=2.0)
         assert k1 != k2
 
     def test_prepare_hit(self, pwm, batch, tmp_path):
@@ -181,7 +167,7 @@ class TestPreparedProfileCache:
     def test_prepare_disk_hit_rejects_corrupt_payload(self, pwm, batch, tmp_path):
         cache = Cache(str(tmp_path))
         expected = prepare_profile(pwm, batch, cache=cache)
-        key = prepared_profile_cache_key(cache, pwm, batch)
+        key = prepared_profile_cache_key(pwm, batch)
         data_path = tmp_path / key / "data.bin"
         with open(data_path, "r+b") as f:
             f.seek(-1, os.SEEK_END)
@@ -198,7 +184,7 @@ class TestPreparedProfileCache:
 
         cache = Cache(str(tmp_path))
         expected = prepare_profile(pwm, batch)
-        key = prepared_profile_cache_key(cache, pwm, batch)
+        key = prepared_profile_cache_key(pwm, batch)
         cache_set(cache, key, pickle.dumps(expected, protocol=pickle.HIGHEST_PROTOCOL))
         loaded = prepare_profile(pwm, batch, cache=Cache(str(tmp_path)))
         assert loaded == expected
@@ -206,7 +192,7 @@ class TestPreparedProfileCache:
     def test_prepare_payload_is_mmap_profile(self, pwm, batch, tmp_path):
         cache = Cache(str(tmp_path))
         prepared = prepare_profile(pwm, batch, cache=cache)
-        key = prepared_profile_cache_key(cache, pwm, batch)
+        key = prepared_profile_cache_key(pwm, batch)
         with open(tmp_path / key / "data.bin", "rb") as f:
             assert f.read(19) == b"MIMOSA-PREP-MMAP-1\0"
         with open(tmp_path / key / "meta.toml", "rb") as f:

@@ -166,10 +166,6 @@ def read_pfm(path):
         raise ModelFormatError(path, "PFM file is empty.")
     _validate_probability_rows(rows, path, "PFM")
     pfm = np.array(rows, dtype=np.float32).T
-    if pfm.shape[1] <= 0:
-        raise ModelFormatError(path, "motif length must be positive.")
-    if not np.all(np.isfinite(pfm)):
-        raise ModelFormatError(path, "matrix contains non-finite values.")
     return Path(path).stem, pfm
 
 

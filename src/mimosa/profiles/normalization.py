@@ -71,8 +71,7 @@ def _fit_empirical_table(values, total_n=None):
         total_n = n
     if n == 0:
         return LogTailTable(np.array([0.0], dtype=np.float32), np.array([0.0], dtype=np.float32))
-    sorted_desc = np.sort(values)[::-1]
-    unique, counts = np.unique(sorted_desc, return_counts=True)
+    unique, counts = np.unique(values, return_counts=True)
     unique = unique[::-1]
     counts = counts[::-1]
     cumulative = np.cumsum(counts, dtype=np.float64)

@@ -38,7 +38,6 @@ class TestSiteSelection:
 
     def test_threshold_hits(self, pwm, batch):
         coll = select_sites(pwm, batch, ThresholdHits(5.0))
-        assert len(coll) >= 0
         assert np.all(coll.scores >= 5.0)
 
     def test_top_fraction(self, pwm, batch):

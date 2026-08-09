@@ -77,7 +77,3 @@ a cache miss. Clear entries with:
 ```bash
 uv run mimosa cache clear --cache-dir .mimosa-cache
 ```
-
-The cache directory must be trusted when it contains legacy entries because
-their fallback loader uses `pickle`. Cache checksums still detect accidental
-corruption before loading.

@@ -152,48 +152,35 @@ def _prepare_profile(
     else:
         key = None
 
+    calibration = None
     if isinstance(model_or_scores, ScoreProfile):
         if sequences is not None:
             raise ValueError("ScoreProfile preparation does not consume sequences.")
         raw = StrandPair(model_or_scores.scores, model_or_scores.scores)
-        _, norm_bundle = _fit_normalize(
-            normalization, raw, tail_logerr=threshold
-        )
-        anchors = collect_both_anchors(norm_bundle, threshold)
-        prepared = PreparedProfile._from_validated(
-            model_or_scores.name, norm_bundle, anchors, threshold, normalization
-        )
-        if cache is not None:
-            prepared = _store_prepared_profile(cache, key, prepared)
-        return prepared
-
-    if isinstance(model_or_scores, MotifModel):
+        name = model_or_scores.name
+    elif isinstance(model_or_scores, MotifModel):
         if sequences is None:
             raise ValueError("motif prepared profiles require comparison sequences.")
         from ..scan import _scan_batch_into
 
         raw = _scan_batch_into(model_or_scores, sequences, "both")
+        name = model_or_scores.name
         bg = sequences if background is None else background
-        if bg is sequences:
-            _, norm_bundle = _fit_normalize(
-                normalization, raw, tail_logerr=threshold
-            )
-        else:
+        if bg is not sequences:
             bg_raw = _scan_batch_into(model_or_scores, bg, "both")
-            _, norm_bundle = _fit_normalize(
-                normalization,
-                raw,
-                calibration=bg_raw,
-                tail_logerr=threshold,
-            )
-        anchors = collect_both_anchors(norm_bundle, threshold)
-        prepared = PreparedProfile._from_validated(
-            model_or_scores.name, norm_bundle, anchors, threshold, normalization
+            calibration = bg_raw
+    else:
+        raise TypeError(
+            "model_or_scores must be a ScoreProfile or a MotifModel."
         )
-        if cache is not None:
-            prepared = _store_prepared_profile(cache, key, prepared)
-        return prepared
 
-    raise TypeError(
-        "model_or_scores must be a ScoreProfile or a MotifModel."
+    _, norm_bundle = _fit_normalize(
+        normalization, raw, calibration=calibration, tail_logerr=threshold
     )
+    anchors = collect_both_anchors(norm_bundle, threshold)
+    prepared = PreparedProfile._from_validated(
+        name, norm_bundle, anchors, threshold, normalization
+    )
+    if cache is not None:
+        prepared = _store_prepared_profile(cache, key, prepared)
+    return prepared

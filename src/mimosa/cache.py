@@ -52,7 +52,6 @@ _PREPARED_PROFILE_SECTION_NAMES = (
     "forward_anchor_offsets",
     "reverse_anchor_offsets",
 )
-ALGORITHM_VERSIONS = {"prepared_profile": "4"}
 DEFAULT_MEMORY_CACHE_BYTES = 1 << 30
 
 
@@ -63,20 +62,19 @@ class _PreparationContext:
 
 
 class Cache:
-    def __init__(self, directory, enabled=True, memory_budget_bytes=DEFAULT_MEMORY_CACHE_BYTES):
+    def __init__(self, directory, memory_budget_bytes=DEFAULT_MEMORY_CACHE_BYTES):
         if isinstance(memory_budget_bytes, bool) or not isinstance(memory_budget_bytes, (int, np.integer)):
             raise TypeError("memory_budget_bytes must be a non-negative integer.")
         if memory_budget_bytes < 0:
             raise ValueError("memory_budget_bytes must be non-negative.")
         self.directory = str(directory)
-        self.enabled = bool(enabled)
         self.memory_budget_bytes = int(memory_budget_bytes)
         self._prepared_profiles = OrderedDict()
         self._prepared_profiles_bytes = 0
         self._verified_entries = set()
 
     def __repr__(self):
-        return f"Cache({self.directory!r}, enabled={self.enabled})"
+        return f"Cache({self.directory!r})"
 
 
 def _validate_cache_key(key):
@@ -135,19 +133,8 @@ def _cache_file_path(cache, key, name):
     return path
 
 
-def cache_key(cache, algorithm, *parts):
-    algo_version = ALGORITHM_VERSIONS.get(algorithm, "0")
-    lines = [f"v={CACHE_FORMAT_VERSION}\n", f"algo={algorithm}\n", f"algo_ver={algo_version}\n"]
-    for p in parts:
-        lines.append(p)
-        lines.append("\n")
-    full_hash = hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
-    return full_hash[:16]
-
-
-def prepared_profile_cache_key(cache, source, sequences=None, *, background=None, min_logerr=0.0, normalization=None):
+def prepared_profile_cache_key(source, sequences=None, *, background=None, min_logerr=0.0, normalization=None):
     return _prepared_profile_cache_key(
-        cache,
         source,
         sequences,
         background=background,
@@ -157,7 +144,6 @@ def prepared_profile_cache_key(cache, source, sequences=None, *, background=None
 
 
 def _prepared_profile_cache_key(
-    cache,
     source,
     sequences=None,
     *,
@@ -196,15 +182,17 @@ def _prepared_profile_cache_key(
     if normalization is None:
         normalization = HybridEmpiricalLogTail()
     bits = struct.unpack("<I", struct.pack("<f", threshold))[0]
-    return cache_key(
-        cache,
-        "prepared_profile",
+    parts = (
         f"source={source_fingerprint}",
         sequence_part,
         background_part,
         f"min_logerr=0x{bits:08X}",
         f"normalization={normalization_fingerprint(normalization)}",
     )
+    lines = [f"v={CACHE_FORMAT_VERSION}\n", "algo=prepared_profile\n", "algo_ver=4\n"]
+    for part in parts:
+        lines.extend((part, "\n"))
+    return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()[:16]
 
 
 def _prepared_profile_sections(profile):
@@ -266,18 +254,12 @@ def _encode_prepared_profile_with_metadata(profile):
         "n_rows": len(profile.bundle.forward),
         "shared_reverse_scores": profile.bundle.forward is profile.bundle.reverse,
         "shared_reverse_anchors": profile.anchors[0] is profile.anchors[1],
-        "payload_size": len(payload),
     }
     for name, spec in specs.items():
         metadata[f"{name}_offset"] = spec["offset"]
         metadata[f"{name}_count"] = spec["count"]
         metadata[f"{name}_dtype"] = spec["dtype"]
     return bytes(payload), metadata
-
-
-def _encode_prepared_profile(profile):
-    data, _ = _encode_prepared_profile_with_metadata(profile)
-    return data
 
 
 def _decode_prepared_profile(data):
@@ -422,13 +404,6 @@ def _decode_mmap_prepared_profile(path, meta):
         if normalization is None or normalization_fingerprint(normalization) != normalization_tag:
             return None
         file_size = os.path.getsize(path)
-        payload_size = meta.get("payload_size", file_size)
-        if (
-            isinstance(payload_size, bool)
-            or not isinstance(payload_size, int)
-            or payload_size != file_size
-        ):
-            return None
         with open(path, "rb") as f:
             if f.read(len(_PREPARED_PROFILE_BINARY_MAGIC)) != _PREPARED_PROFILE_BINARY_MAGIC:
                 return None
@@ -518,8 +493,6 @@ def _cached_mmap_prepared_profile(cache, key):
 
 
 def cache_get(cache, key):
-    if not cache.enabled:
-        return None
     path = _cache_file_path(cache, key, _CACHE_DATA_NAME)
     try:
         meta = _read_cache_metadata(cache, key)
@@ -537,8 +510,6 @@ def cache_get(cache, key):
 
 
 def cache_set(cache, key, data, metadata=None):
-    if not cache.enabled:
-        return None
     path = _cache_file_path(cache, key, _CACHE_DATA_NAME)
     data = bytes(data)
     checksum = hashlib.sha256(data).hexdigest()
@@ -576,8 +547,6 @@ def cache_set(cache, key, data, metadata=None):
 
 
 def clearcache(cache):
-    if not cache.enabled:
-        return 0
     root = _cache_root(cache)
     if not os.path.isdir(root):
         _clear_memory_cache(cache)
@@ -669,10 +638,9 @@ def _cached_prepared_profile(
     normalization,
     context=None,
 ):
-    if cache is None or not cache.enabled:
+    if cache is None:
         return None, None
     key = _prepared_profile_cache_key(
-        cache,
         source,
         sequences,
         background=background,
@@ -698,7 +666,7 @@ def _cached_prepared_profile(
 
 
 def _store_prepared_profile(cache, key, profile):
-    if cache is None or not cache.enabled or key is None:
+    if cache is None or key is None:
         return profile
     data, metadata = _encode_prepared_profile_with_metadata(profile)
     cache_set(

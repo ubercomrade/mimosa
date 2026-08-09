@@ -126,11 +126,8 @@ def adjusted_pvalues(pvalues):
         raise ValueError("p-values must be finite and lie in [0, 1].")
     order = np.argsort(p, kind="stable")
     sorted_p = p[order]
-    adj = np.empty(n, dtype=np.float64)
-    adj[n - 1] = min(sorted_p[n - 1], 1.0)
-    for i in range(n - 2, -1, -1):
-        val = sorted_p[i] * n / (i + 1)
-        adj[i] = min(adj[i + 1], val)
+    ranks = np.arange(1, n + 1, dtype=np.float64)
+    adj = np.minimum.accumulate((sorted_p * n / ranks)[::-1])[::-1]
     adj = np.minimum(adj, 1.0)
     result = np.empty(n, dtype=np.float64)
     result[order] = adj
@@ -257,7 +254,6 @@ def build_null(
     min_logerr=0.0,
     normalization=None,
     cache=None,
-    on_progress=None,
 ):
     if len(models) < 2:
         raise ValueError("at least two models are required for null construction.")
@@ -284,10 +280,8 @@ def build_null(
     ]
     profile_models = list(models) + shuffled_models
 
-    if on_progress is not None:
-        on_progress(("prepare", 0, len(profile_models), ""))
     prepared = []
-    for i, model in enumerate(profile_models):
+    for model in profile_models:
         prepared.append(
             prepare_profile(
                 model,
@@ -298,14 +292,10 @@ def build_null(
                 cache=cache,
             )
         )
-        if on_progress is not None:
-            on_progress(("prepare", i + 1, len(profile_models), model.name))
 
     work_items = [_next_null_work_item(len(models), rng) for _ in range(n_samples)]
     raw_scores = np.empty(n_samples, dtype=np.float64)
     pairs = []
-    if on_progress is not None:
-        on_progress(("null", 0, n_samples, ""))
     for i, (query_idx, target_idx) in enumerate(work_items):
         result = compare(
             prepared[query_idx],
@@ -317,8 +307,6 @@ def build_null(
         )
         raw_scores[i] = float(result.score)
         pairs.append((profile_models[query_idx].name, profile_models[target_idx].name, float(result.score)))
-        if on_progress is not None:
-            on_progress(("null", i + 1, n_samples, profile_models[target_idx].name))
 
     seq_fp = sequence_fingerprint(sequences)
     bg_fp = "none" if background is None else sequence_fingerprint(background)

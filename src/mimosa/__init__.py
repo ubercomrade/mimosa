@@ -1,5 +1,7 @@
 """Mimosa: motif scanning, comparison, and statistical evaluation in Python."""
 
+from importlib.metadata import version
+
 from .arrays import (
     EncodedSequences,
     N_CODE,
@@ -65,7 +67,7 @@ from .statistics import (
 )
 from .io import read_fasta, read_model, read_scores, write_model
 
-__version__ = "1.4.1"
+__version__ = version("mimosa-tool")
 
 __all__ = [
     "EncodedSequences",
