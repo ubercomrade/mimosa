@@ -54,6 +54,14 @@ class TestEncodedSequences:
         with pytest.raises(InvariantError):
             EncodedSequences(np.array([5], dtype=np.uint8), np.array([0, 1], dtype=np.int64))
 
+    def test_overflow_codes_rejected_before_cast(self):
+        with pytest.raises(InvariantError):
+            EncodedSequences(np.array([256], dtype=np.int64), np.array([0, 1], dtype=np.int64))
+
+    def test_from_rows_rejects_overflow_codes_before_cast(self):
+        with pytest.raises(InvariantError):
+            EncodedSequences.from_rows([[256]])
+
     def test_empty_rows_valid(self):
         batch = EncodedSequences(
             np.array([], dtype=np.uint8), np.array([0, 0, 0], dtype=np.int64)

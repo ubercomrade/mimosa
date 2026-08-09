@@ -63,6 +63,8 @@ def _score_orientation_pair(
     t_csr = target_anchors[target_strand]
 
     n_shifts = 2 * search_range + 1
+    if query_scores.offsets.size != target_scores.offsets.size:
+        raise ValueError("profiles must have the same number of rows.")
     kind, use_dice = _METRIC_KINDS[metric]
     best_score = np.float32(0.0)
     best_shift = 0

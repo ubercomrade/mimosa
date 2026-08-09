@@ -7,6 +7,7 @@ byte-for-byte, including the `bitstring` fingerprint canonicalization.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import struct
 import tempfile
@@ -15,7 +16,17 @@ import tomllib
 import numpy as np
 
 from ..errors import InvariantError, ModelFormatError
-from ..models import BaMM, Dimont, PWM, SiteGA, Slim
+from ..models import (
+    MAX_CONTEXT_ORDER,
+    MAX_CONTEXT_REPRESENTATION_ELEMENTS,
+    MAX_DIMONT_SLIM_LENGTH,
+    MAX_DIMONT_SLIM_ORDER,
+    BaMM,
+    Dimont,
+    PWM,
+    SiteGA,
+    Slim,
+)
 
 MODEL_FORMAT_VERSION = 2
 NULL_FORMAT_VERSION = 8
@@ -295,7 +306,7 @@ def _toml_value(v):
     if isinstance(v, float):
         return repr(v)
     if isinstance(v, str):
-        return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        return json.dumps(v, ensure_ascii=True)
     if isinstance(v, list):
         return "[" + ", ".join(_toml_value(x) for x in v) + "]"
     raise InvariantError(f"unsupported TOML value type {type(v).__name__}")
@@ -349,11 +360,12 @@ def _content_fingerprint(arr, dtype, value_format, bits_format, bit_width, type_
     arr = np.asarray(arr, dtype=dtype)
     shape = "".join(f"{dimension}," for dimension in arr.shape)
     flat = arr.ravel(order="F")
-    parts = [f"{type_name}:{shape};"]
+    digest = hashlib.sha256()
+    digest.update(f"{type_name}:{shape};".encode("utf-8"))
     for x in flat:
         bits = struct.unpack(bits_format, struct.pack(value_format, float(x)))[0]
-        parts.append(f"{bits:0{bit_width}b};")
-    return hashlib.sha256("".join(parts).encode("utf-8")).hexdigest()
+        digest.update(f"{bits:0{bit_width}b};".encode("ascii"))
+    return digest.hexdigest()
 
 
 def content_fingerprint_float64(arr):
@@ -548,6 +560,12 @@ def _read_model_array(path, manifest, array_name):
 
 
 def _validate_declared_model_shape(path, manifest, expected_rows, expected_cols, model_kind):
+    if expected_rows * expected_cols > MAX_CONTEXT_REPRESENTATION_ELEMENTS:
+        raise _bundle_error(
+            path,
+            f"{model_kind} representation has {expected_rows * expected_cols} elements, "
+            f"exceeds the limit {MAX_CONTEXT_REPRESENTATION_ELEMENTS}.",
+        )
     if "shape" not in manifest:
         raise _bundle_error(path, "manifest is missing 'shape'.")
     shape = _required_manifest_shape(manifest["shape"], path, "manifest")
@@ -566,14 +584,12 @@ def _read_pwm_bundle(path, manifest, name):
         raise _bundle_error(path, "PWM manifest shape must be [5, positive motif_length].")
     weights = _read_model_array(path, manifest, "weights")
     bg_values = _required_manifest_floats(manifest, "background", path, "PWM manifest", expected_length=4)
-    bg = tuple(np.float32(v) for v in bg_values)
-    if not all(np.isfinite(bg)):
-        raise _bundle_error(path, "PWM background is not representable as Float32.")
+    bg = tuple(float(v) for v in bg_values)
     return PWM(name, weights, bg)
 
 
 def _read_bamm_bundle(path, manifest, name):
-    order = _required_manifest_int(manifest, "order", path, "BaMM manifest", minimum=0, maximum=10)
+    order = _required_manifest_int(manifest, "order", path, "BaMM manifest", minimum=0, maximum=MAX_CONTEXT_ORDER)
     motif_length = _required_manifest_int(manifest, "motif_length", path, "BaMM manifest", minimum=1, maximum=10_000)
     _validate_declared_model_shape(path, manifest, 5 ** (order + 1), motif_length, "BaMM")
     representation = _read_model_array(path, manifest, "representation")
@@ -588,16 +604,16 @@ def _read_sitega_bundle(path, manifest, name):
 
 
 def _read_dimont_bundle(path, manifest, name):
-    span = _required_manifest_int(manifest, "span", path, "Dimont manifest", minimum=0, maximum=10)
-    motif_length = _required_manifest_int(manifest, "motif_length", path, "Dimont manifest", minimum=1, maximum=10_000)
+    span = _required_manifest_int(manifest, "span", path, "Dimont manifest", minimum=0, maximum=MAX_DIMONT_SLIM_ORDER)
+    motif_length = _required_manifest_int(manifest, "motif_length", path, "Dimont manifest", minimum=1, maximum=MAX_DIMONT_SLIM_LENGTH)
     _validate_declared_model_shape(path, manifest, 5 ** (span + 1), motif_length, "Dimont")
     representation = _read_model_array(path, manifest, "representation")
     return Dimont(name, representation, span, motif_length)
 
 
 def _read_slim_bundle(path, manifest, name):
-    span = _required_manifest_int(manifest, "span", path, "Slim manifest", minimum=0, maximum=10)
-    motif_length = _required_manifest_int(manifest, "motif_length", path, "Slim manifest", minimum=1, maximum=10_000)
+    span = _required_manifest_int(manifest, "span", path, "Slim manifest", minimum=0, maximum=MAX_DIMONT_SLIM_ORDER)
+    motif_length = _required_manifest_int(manifest, "motif_length", path, "Slim manifest", minimum=1, maximum=MAX_DIMONT_SLIM_LENGTH)
     _validate_declared_model_shape(path, manifest, 5 ** (span + 1), motif_length, "Slim")
     representation = _read_model_array(path, manifest, "representation")
     return Slim(name, representation, span, motif_length)
@@ -645,6 +661,14 @@ def write_null_bundle(path, dist):
         raise InvariantError(f"unsupported profile metric '{dist.metric}'.")
     if not np.all(np.isfinite(dist.raw_scores)):
         raise InvariantError("null distribution raw_scores contain non-finite values.")
+    actual_raw_scores_fingerprint = content_fingerprint_float64(dist.raw_scores)
+    if dist.contract.get("raw_scores_fingerprint") != actual_raw_scores_fingerprint:
+        raise InvariantError("null distribution raw_scores fingerprint does not match the payload.")
+    for index, pair in enumerate(dist.pairs):
+        if not isinstance(pair, (tuple, list)) or len(pair) < 2:
+            raise InvariantError(f"null distribution pair {index} must contain two labels.")
+        if not all(isinstance(label, str) and label for label in pair[:2]):
+            raise InvariantError(f"null distribution pair {index} labels must be non-empty strings.")
     _bundle_shape_payload_bytes([len(dist.raw_scores)], "<f8", str(path), "raw_null_scores array")
 
     def writer(stage):
@@ -793,6 +817,9 @@ def read_null_bundle(path):
     window_radius = _required_manifest_int(compat, "window_radius", path, "compatibility metadata", minimum=0)
     realign_window = _required_manifest_int(compat, "realign_window", path, "compatibility metadata", minimum=0)
     min_logerr = _required_manifest_float(compat, "min_logerr", path, "compatibility metadata")
+    min_logerr32 = np.float32(min_logerr)
+    if not np.isfinite(min_logerr32):
+        raise _bundle_error(path, "compatibility min_logerr is not representable as Float32.")
     normalization_version = _required_manifest_string(compat, "normalization_version", path, "compatibility metadata")
     alignment_version = _required_manifest_string(compat, "alignment_version", path, "compatibility metadata")
     raw_scores_fingerprint = _required_manifest_string(compat, "raw_scores_fingerprint", path, "compatibility metadata")
@@ -805,7 +832,7 @@ def read_null_bundle(path):
         "search_range": search_range,
         "window_radius": window_radius,
         "realign_window": realign_window,
-        "min_logerr": np.float32(min_logerr),
+        "min_logerr": min_logerr32,
         "normalization_version": normalization_version,
         "alignment_version": alignment_version,
         "sequence_fingerprint": seq_fp,

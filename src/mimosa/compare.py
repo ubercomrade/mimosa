@@ -158,7 +158,9 @@ def compare_many(query, targets, sequences=None, *, background=None, metric="co"
     if min_logerr is not None and np.float32(min_logerr) != query.min_logerr:
         _check_threshold(np.float32(min_logerr), query)
     threshold = query.min_logerr
-    norm = query.normalization if normalization is None else normalization
+    if normalization is not None and normalization != query.normalization:
+        raise ValueError("prepared query and requested normalization differ.")
+    norm = query.normalization
     config = ProfileConfig(metric=parse_profile_metric(metric), search_range=search_range, window_radius=window_radius, realign_window=realign_window, min_logerr=threshold)
 
     results = []
@@ -176,5 +178,9 @@ def compare_many(query, targets, sequences=None, *, background=None, metric="co"
             raise TypeError(
                 f"unsupported comparison target: {type(target_source).__name__}"
             )
+        if target.min_logerr != threshold:
+            raise ValueError("prepared profiles use different min_logerr thresholds.")
+        if target.normalization != norm:
+            raise ValueError("prepared profiles use different normalization strategies.")
         results.append(_compare_prepared(query, target, config))
     return results

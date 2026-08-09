@@ -286,6 +286,15 @@ def _toml_value(value):
     raise TypeError(f"unsupported cache metadata type {type(value).__name__}")
 
 
+def _metadata_checksum(meta):
+    payload = "".join(
+        f"{name} = {_toml_value(meta[name])}\n"
+        for name in sorted(meta)
+        if name != "metadata_checksum"
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _read_cache_metadata(cache, key):
     meta_path = _cache_file_path(cache, key, _CACHE_META_NAME)
     with open(meta_path, "rb") as f:
@@ -300,6 +309,11 @@ def _read_cache_metadata(cache, key):
     try:
         int(expected[7:], 16)
     except ValueError:
+        return None
+    metadata_checksum = meta.get("metadata_checksum")
+    if metadata_checksum is None:
+        return meta
+    if not isinstance(metadata_checksum, str) or len(metadata_checksum) != 64 or metadata_checksum != _metadata_checksum(meta):
         return None
     return meta
 
@@ -514,6 +528,7 @@ def cache_set(cache, key, data, metadata=None):
     for name, value in (metadata or {}).items():
         if name not in ("format_version", "checksum", "size"):
             meta[name] = value
+    meta["metadata_checksum"] = _metadata_checksum(meta)
     root = _cache_root(cache)
     os.makedirs(root, exist_ok=True)
     # ponytail: one cache-wide lock; per-key locks only if write contention matters.
@@ -554,9 +569,12 @@ def clearcache(cache):
                 shutil.rmtree(entry, ignore_errors=True)
                 continue
             if os.path.isdir(entry) and not os.path.islink(entry):
-                if os.path.isfile(os.path.join(entry, _CACHE_DATA_NAME)) or os.path.isfile(
-                    os.path.join(entry, _CACHE_META_NAME)
-                ):
+                try:
+                    _validate_cache_key(name)
+                    valid_metadata = _read_cache_metadata(cache, name) is not None
+                except (OSError, TypeError, ValueError):
+                    valid_metadata = False
+                if valid_metadata and os.path.isfile(os.path.join(entry, _CACHE_DATA_NAME)):
                     shutil.rmtree(entry)
                     count += 1
         return count
@@ -638,18 +656,20 @@ def _cached_prepared_profile(
         background_fp=None if context is None else context[1],
     )
     cached = _memory_cache_get(cache, key)
-    if cached is not None:
+    if cached is not None and cached.min_logerr == np.float32(threshold) and cached.normalization == normalization:
         return key, cached
     profile = _cached_mmap_prepared_profile(cache, key)
-    if profile is not None:
+    if profile is not None and profile.min_logerr == np.float32(threshold) and profile.normalization == normalization:
         _memory_cache_set(cache, key, profile)
         return key, profile
     data = cache_get(cache, key)
     if data is None:
         return key, None
     profile = _decode_prepared_profile(data)
-    if profile is not None:
+    if profile is not None and profile.min_logerr == np.float32(threshold) and profile.normalization == normalization:
         _memory_cache_set(cache, key, profile)
+    else:
+        profile = None
     return key, profile
 
 

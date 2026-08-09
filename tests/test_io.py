@@ -1,4 +1,6 @@
+import math
 import os
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -15,7 +17,15 @@ from mimosa.io.bundles import (
     write_null_bundle,
 )
 from mimosa.io.fasta import read_fasta, read_scores
-from mimosa.io.models import read_bamm, read_dimont, read_meme, read_pfm, read_sitega, read_slim
+from mimosa.io.models import (
+    _slim_symbol_log_probs,
+    read_bamm,
+    read_dimont,
+    read_meme,
+    read_pfm,
+    read_sitega,
+    read_slim,
+)
 from mimosa.models import pwm_from_pfm
 from mimosa.statistics import NullDistribution, build_null
 
@@ -164,6 +174,20 @@ class TestSitega:
 
 
 class TestXmlReaders:
+    @staticmethod
+    def _minimal_slim_xml(*, alphabet=4, dependency_positions=1):
+        symbols = "".join("<pos>0</pos>" for _ in range(alphabet))
+        dependencies = "".join(
+            f"<pos><pos><pos>{symbols}</pos></pos></pos>"
+            for _ in range(dependency_positions)
+        )
+        return f"""<root><SLIM>
+<length>1</length>
+<componentMixtureParameters><pos><pos>0</pos></pos></componentMixtureParameters>
+<ancestorMixtureParameters><pos><pos><pos>0</pos></pos></pos></ancestorMixtureParameters>
+<dependencyParameters>{dependencies}</dependencyParameters>
+</SLIM></root>"""
+
     def test_read_dimont(self):
         m = read_dimont("tests/fixtures/stat_dimont-model-1.xml")
         assert m.order == 3
@@ -175,6 +199,52 @@ class TestXmlReaders:
         assert m.order == 5
         assert m.motif_length == 15
         assert m.weights.shape == (15625, 15)
+
+    def test_slim_length_limit(self, tmp_path):
+        source = "tests/fixtures/slim/example-model-1.xml"
+        p = tmp_path / "slim.xml"
+        p.write_text(open(source, encoding="utf-8").read().replace(
+            "<length><className>java.lang.Integer</className>15</length>",
+            "<length><className>java.lang.Integer</className>31</length>",
+            1,
+        ))
+        with pytest.raises(ModelFormatError, match="exceeds limit 30"):
+            read_slim(p)
+
+    def test_slim_uses_alphabet_not_motif_length_for_contexts(self):
+        good = [0.0, -100.0, -100.0, -100.0]
+        bad = [-100.0, 0.0, -100.0, -100.0]
+        params = (
+            [[0.0], [0.0], [0.0], [-100.0, -100.0, -100.0, 0.0]],
+            [
+                [[good]],
+                [[good]],
+                [[good]],
+                [[good], [good] * 4, [good] * 16, [bad] * 27 + [good] + [bad] * 36],
+            ],
+            [[[]], [[]], [[]], [[0.0], [0.0], [0.0], [0.0]]],
+            3,
+            15,
+            4,
+        )
+
+        score = _slim_symbol_log_probs(3, 0, (3, 2, 1), params, "model.xml")
+
+        assert score == pytest.approx(math.log(4.0))
+
+    def test_slim_rejects_non_dna_alphabet(self, tmp_path):
+        p = tmp_path / "slim.xml"
+        p.write_text(self._minimal_slim_xml(alphabet=5))
+
+        with pytest.raises(ModelFormatError, match="alphabet size must be 4"):
+            read_slim(p)
+
+    def test_slim_rejects_missing_dependency_position(self, tmp_path):
+        p = tmp_path / "slim.xml"
+        p.write_text(self._minimal_slim_xml(dependency_positions=0))
+
+        with pytest.raises(ModelFormatError, match="dependencyParameters length"):
+            read_slim(p)
 
     def test_dimont_wrong_root(self, tmp_path):
         p = tmp_path / "d.xml"
@@ -242,6 +312,18 @@ class TestModelBundle:
         assert m2.name == m.name
         assert m2.background == m.background
         np.testing.assert_array_equal(m2.weights, m.weights)
+
+    def test_roundtrip_pwm_preserves_nonuniform_background(self, tmp_path):
+        model = PWM("x", np.zeros((5, 3), dtype=np.float32), (0.1, 0.2, 0.3, 0.4))
+        path = str(tmp_path / "m")
+        write_model(path, model)
+        assert read_model_bundle(path).background == model.background
+
+    def test_roundtrip_model_name_with_newline(self, tmp_path):
+        model = PWM("name\nwith newline", np.zeros((5, 3), dtype=np.float32), (0.25,) * 4)
+        path = str(tmp_path / "m")
+        write_model(path, model)
+        assert read_model_bundle(path).name == model.name
 
     def test_roundtrip_bamm(self, tmp_path):
         m = read_bamm("examples/myog.ihbcp")
@@ -391,3 +473,8 @@ class TestNullBundle:
         )
         with pytest.raises(Exception):
             write_null_bundle(str(tmp_path / "bad"), dist2)
+
+    def test_rejects_stale_raw_fingerprint(self, tmp_path, dist):
+        stale = replace(dist, contract={**dist.contract, "raw_scores_fingerprint": "0" * 64})
+        with pytest.raises(InvariantError, match="fingerprint"):
+            write_null_bundle(str(tmp_path / "bad"), stale)

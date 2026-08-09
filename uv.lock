@@ -46,7 +46,7 @@ wheels = [
 
 [[package]]
 name = "mimosa-tool"
-version = "1.4.3"
+version = "1.4.4"
 source = { editable = "." }
 dependencies = [
     { name = "numba" },

@@ -10,7 +10,15 @@ from pathlib import Path
 import numpy as np
 
 from ..errors import ModelFormatError
-from ..models import BaMM, Dimont, SiteGA, Slim
+from ..models import (
+    MAX_CONTEXT_REPRESENTATION_ELEMENTS,
+    MAX_DIMONT_SLIM_LENGTH,
+    MAX_DIMONT_SLIM_ORDER,
+    BaMM,
+    Dimont,
+    SiteGA,
+    Slim,
+)
 
 MAX_MEME_MOTIF_LENGTH = 10_000
 MAX_PFM_LENGTH = 10_000
@@ -29,12 +37,12 @@ DINUC_MAP = {
     for j, b in enumerate("acgt")
 }
 
-DIMONT_MAX_LENGTH = 10_000
-DIMONT_MAX_SPAN = 10
+DIMONT_MAX_LENGTH = MAX_DIMONT_SLIM_LENGTH
+DIMONT_MAX_SPAN = MAX_DIMONT_SLIM_ORDER
 LOG_UNIFORM_BASE = math.log(4.0)
 
-SLIM_MAX_LENGTH = 10_000
-SLIM_MAX_SPAN = 10
+SLIM_MAX_LENGTH = MAX_DIMONT_SLIM_LENGTH
+SLIM_MAX_SPAN = MAX_DIMONT_SLIM_ORDER
 
 
 def _validate_probability_rows(rows, path, label):
@@ -538,6 +546,12 @@ def read_dimont(path):
     if span > DIMONT_MAX_SPAN:
         raise ModelFormatError(path, f"Dimont span {span} exceeds limit {DIMONT_MAX_SPAN}.")
     n_rows = 5 ** (span + 1)
+    if n_rows * length_val > MAX_CONTEXT_REPRESENTATION_ELEMENTS:
+        raise ModelFormatError(
+            path,
+            f"Dimont representation has {n_rows * length_val} elements, "
+            f"exceeds the limit {MAX_CONTEXT_REPRESENTATION_ELEMENTS}.",
+        )
     rep = np.empty((n_rows, length_val), dtype=np.float32)
     full_contexts = list(itertools.product(range(4), repeat=span))
     for pos_idx, node in enumerate(nodes):
@@ -648,7 +662,7 @@ def _slim_symbol_log_probs(position, symbol, full_context, params, path):
     dep_lp = params[1][position]
     anc_lp = params[2][position]
     span = params[3]
-    alphabet = params[4]
+    alphabet = params[5]
     n_comp = len(comp_lp)
     local_scores = [0.0] * n_comp
     local_scores[0] = comp_lp[0] + dep_lp[0][0][symbol]
@@ -694,12 +708,36 @@ def read_slim(path):
             path,
             f"Slim componentMixtureParameters length ({len(component_raw)}) does not match length ({length_val}).",
         )
+    if len(ancestor_raw) != length_val:
+        raise ModelFormatError(
+            path,
+            f"Slim ancestorMixtureParameters length ({len(ancestor_raw)}) does not match length ({length_val}).",
+        )
+    if len(dependency_raw) != length_val:
+        raise ModelFormatError(
+            path,
+            f"Slim dependencyParameters length ({len(dependency_raw)}) does not match length ({length_val}).",
+        )
+    for position, components in enumerate(component_raw):
+        component_count = len(components)
+        if len(ancestor_raw[position]) != component_count:
+            raise ModelFormatError(
+                path,
+                f"Slim ancestorMixtureParameters position {position} has {len(ancestor_raw[position])} components, expected {component_count}.",
+            )
+        if len(dependency_raw[position]) != component_count:
+            raise ModelFormatError(
+                path,
+                f"Slim dependencyParameters position {position} has {len(dependency_raw[position])} components, expected {component_count}.",
+            )
     span = _slim_span(component_raw, ancestor_raw, path)
     if span > SLIM_MAX_SPAN:
         raise ModelFormatError(path, f"Slim span {span} exceeds limit {SLIM_MAX_SPAN}.")
     if not dependency_raw or not dependency_raw[0] or not dependency_raw[0][0] or not dependency_raw[0][0][0]:
         raise ModelFormatError(path, "malformed Slim model: empty dependency parameters.")
     alphabet = len(dependency_raw[0][0][0])
+    if alphabet != 4:
+        raise ModelFormatError(path, f"Slim alphabet size must be 4, got {alphabet}.")
     comp_lp = [_log_normalize(component_raw[p]) for p in range(length_val)]
     anc_lp = [
         [_log_normalize(ancestor_raw[p][c]) for c in range(len(ancestor_raw[p]))]
@@ -710,16 +748,34 @@ def read_slim(path):
         comp_dep = []
         for c in range(len(dependency_raw[p])):
             rows = dependency_raw[p][c]
+            expected_rows = alphabet**c
+            if len(rows) != expected_rows:
+                raise ModelFormatError(
+                    path,
+                    f"Slim dependency position {p} component {c} has {len(rows)} contexts, "
+                    f"expected {expected_rows}.",
+                )
             n_cols = len(rows[0])
             mat = []
             for r in rows:
                 if len(r) != n_cols:
-                    raise ModelFormatError("", "inconsistent dependency row lengths.")
+                    raise ModelFormatError(path, "inconsistent Slim dependency row lengths.")
+                if len(r) != alphabet:
+                    raise ModelFormatError(
+                        path,
+                        f"Slim dependency row has {len(r)} symbols, expected {alphabet}.",
+                    )
                 mat.append(_log_normalize(r))
             comp_dep.append(mat)
         dep_lp.append(comp_dep)
     params = (comp_lp, dep_lp, anc_lp, span, length_val, alphabet)
     n_rows = 5 ** (span + 1)
+    if n_rows * length_val > MAX_CONTEXT_REPRESENTATION_ELEMENTS:
+        raise ModelFormatError(
+            path,
+            f"Slim representation has {n_rows * length_val} elements, "
+            f"exceeds the limit {MAX_CONTEXT_REPRESENTATION_ELEMENTS}.",
+        )
     rep = np.empty((n_rows, length_val), dtype=np.float32)
     full_contexts = list(itertools.product(range(4), repeat=span))
     for position in range(length_val):

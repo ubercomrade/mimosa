@@ -12,6 +12,10 @@ from .errors import ModelDimensionError, ModelFormatError, ModelInterfaceError
 
 NUCLEOTIDE_CARDINALITY = 4
 PSEUDOCOUNT_PWM = 1e-4
+MAX_CONTEXT_ORDER = 10
+MAX_CONTEXT_REPRESENTATION_ELEMENTS = 100_000_000
+MAX_DIMONT_SLIM_ORDER = 6
+MAX_DIMONT_SLIM_LENGTH = 30
 
 
 def _validate_model_name(name, model_type):
@@ -36,6 +40,10 @@ def _validate_pwm_background(background):
 
 
 def _validate_pwm_weights(weights, background):
+    if weights.ndim != 2:
+        raise ModelDimensionError(
+            f"PWM weights must be two-dimensional, got {weights.ndim} dimensions."
+        )
     if weights.shape[0] != 5:
         raise ModelDimensionError(
             f"PWM weights must have 5 rows (A,C,G,T,N), got {weights.shape[0]}."
@@ -50,15 +58,33 @@ def _validate_pwm_weights(weights, background):
 
 
 def _validate_context_model(representation, context, motif_length, model_name, context_name):
+    if representation.ndim != 2:
+        raise ModelDimensionError(
+            f"{model_name} representation must be two-dimensional, got {representation.ndim} dimensions."
+        )
     if context < 0:
         raise ModelDimensionError(
             f"{model_name} {context_name} must be non-negative, got {context}."
         )
-    if context > 10:
+    if context > MAX_CONTEXT_ORDER:
         raise ModelDimensionError(
-            f"{model_name} {context_name} must be <= 10 to avoid allocation blow-up, got {context}."
+            f"{model_name} {context_name} must be <= {MAX_CONTEXT_ORDER} to avoid allocation blow-up, got {context}."
         )
+    if model_name in ("Dimont", "Slim"):
+        if context > MAX_DIMONT_SLIM_ORDER:
+            raise ModelDimensionError(
+                f"{model_name} {context_name} must be <= {MAX_DIMONT_SLIM_ORDER}, got {context}."
+            )
+        if motif_length > MAX_DIMONT_SLIM_LENGTH:
+            raise ModelDimensionError(
+                f"{model_name} motif_length must be <= {MAX_DIMONT_SLIM_LENGTH}, got {motif_length}."
+            )
     expected_rows = 5 ** (context + 1)
+    if expected_rows * motif_length > MAX_CONTEXT_REPRESENTATION_ELEMENTS:
+        raise ModelDimensionError(
+            f"{model_name} representation is too large: {expected_rows * motif_length} elements, "
+            f"limit is {MAX_CONTEXT_REPRESENTATION_ELEMENTS}."
+        )
     if representation.shape[0] != expected_rows:
         raise ModelDimensionError(
             f"{model_name} representation must have {expected_rows} rows for {context_name}={context}, got {representation.shape[0]}."
@@ -76,6 +102,10 @@ def _validate_context_model(representation, context, motif_length, model_name, c
 
 
 def _validate_sitega(representation, motif_length):
+    if representation.ndim != 2:
+        raise ModelDimensionError(
+            f"SiteGA representation must be two-dimensional, got {representation.ndim} dimensions."
+        )
     if representation.shape[0] != 25:
         raise ModelDimensionError(
             f"SiteGA representation must have 25 rows (5×5 dinucleotides), got {representation.shape[0]}."
@@ -93,7 +123,7 @@ def _validate_sitega(representation, motif_length):
 
 
 def _as_float32_readonly(arr):
-    arr = np.ascontiguousarray(arr, dtype=np.float32)
+    arr = np.array(arr, dtype=np.float32, order="C", copy=True)
     arr.setflags(write=False)
     return arr
 

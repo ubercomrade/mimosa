@@ -42,6 +42,16 @@ class TestPWM:
         with pytest.raises(ModelFormatError):
             PWM("x", w, (0.25, 0.25, 0.25, 0.25))
 
+    def test_rejects_non_two_dimensional_weights(self):
+        with pytest.raises(ModelDimensionError):
+            PWM("x", np.zeros((5, 3, 1), dtype=np.float32), (0.25, 0.25, 0.25, 0.25))
+
+    def test_weights_do_not_alias_input(self):
+        source = np.zeros((5, 3), dtype=np.float32)
+        model = PWM("x", source, (0.25, 0.25, 0.25, 0.25))
+        source[0, 0] = 1.0
+        assert model.weights[0, 0] == 0.0
+
     def test_rejects_empty_name(self):
         with pytest.raises(ValueError):
             PWM("", np.zeros((5, 3), dtype=np.float32), (0.25, 0.25, 0.25, 0.25))
@@ -96,6 +106,14 @@ class TestContextModels:
     def test_bamm_row_validation(self):
         with pytest.raises(ModelDimensionError):
             BaMM("b", np.zeros((5, 4), dtype=np.float32), 1, 4)
+
+    def test_context_representation_rejects_excessive_order(self):
+        with pytest.raises(ModelDimensionError):
+            Dimont("d", np.zeros((1, 1), dtype=np.float32), 11, 1)
+
+    def test_dimont_limits_match_xml_reader(self):
+        with pytest.raises(ModelDimensionError, match="must be <= 6"):
+            Dimont("d", np.zeros((5**8, 1), dtype=np.float32), 7, 1)
 
     def test_dimont_and_slim(self):
         d = Dimont("d", np.zeros((625, 5), dtype=np.float32), 3, 5)

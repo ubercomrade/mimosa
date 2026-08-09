@@ -60,6 +60,20 @@ class TestCache:
         assert clearcache(cache) == 2
         assert cache_get(cache, "a") is None
 
+    def test_clear_preserves_unrelated_directory(self, tmp_path):
+        unrelated = tmp_path / "not-a-cache-entry"
+        unrelated.mkdir()
+        (unrelated / "data.bin").write_bytes(b"user data")
+        assert clearcache(Cache(str(tmp_path))) == 0
+        assert unrelated.exists()
+
+    def test_metadata_tampering_invalidates_entry(self, tmp_path):
+        cache = Cache(str(tmp_path))
+        cache_set(cache, "abc", b"payload", metadata={"min_logerr": 0.0})
+        meta = tmp_path / "abc" / "meta.toml"
+        meta.write_text(meta.read_text().replace("min_logerr = 0.0", "min_logerr = 1.0"))
+        assert cache_get(cache, "abc") is None
+
     def test_key_validation(self, tmp_path):
         cache = Cache(str(tmp_path))
         with pytest.raises(ValueError):

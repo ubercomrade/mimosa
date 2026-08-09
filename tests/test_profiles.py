@@ -220,6 +220,18 @@ class TestCompare:
         results = compare_many(query, targets, batch, min_logerr=1.0)
         assert results == serial
 
+    def test_compare_many_rejects_incompatible_prepared_target(self, pwm_pair, batch):
+        query = prepare_profile(pwm_pair[0], batch, min_logerr=0.0)
+        target = prepare_profile(pwm_pair[1], batch, min_logerr=1.0)
+        with pytest.raises(ValueError, match="different min_logerr"):
+            compare_many(query, [target])
+
+    def test_compare_rejects_different_row_counts(self):
+        query = ScoreProfile("query", [[1.0, 2.0], [3.0, 4.0]])
+        target = ScoreProfile("target", [[1.0, 2.0]])
+        with pytest.raises(ValueError, match="same number of rows"):
+            compare(query, target)
+
     def test_compare_many_prepared_shared_strands(self, pwm_pair, batch):
         from mimosa.profiles.prepared import ScoreProfile
 

@@ -19,7 +19,7 @@ from .io.fasta import read_fasta, read_scores
 from .io.readers import read_model
 from .models import PWM, BaMM, Dimont, SiteGA, Slim
 from .profiles.prepared import ScoreProfile
-from .statistics import annotate_results, build_null
+from .statistics import ALIGNMENT_VERSION, annotate_results, build_null
 
 PROFILE_METRICS = ["co", "dice", "cosine"]
 MODEL_TYPE_MAP = {
@@ -85,6 +85,8 @@ def _validate_null_compatibility(dist, *, metric, sequences, background, search_
         raise CLIError(
             f"null distribution model type '{dist.model_type}' is incompatible with compared model types '{', '.join(model_types)}'."
         )
+    if dist.contract["alignment_version"] != ALIGNMENT_VERSION:
+        raise CLIError("null distribution alignment version is incompatible with this comparison.")
 
 
 def _run_profile(args):

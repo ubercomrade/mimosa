@@ -42,6 +42,20 @@ def _validate_encoded_data(data):
         )
 
 
+def _validate_raw_encoded_data(data):
+    if data.size == 0:
+        return
+    if not np.issubdtype(data.dtype, np.integer):
+        raise TypeError("encoded data must have an integer dtype.")
+    invalid = (data < 0) | (data > N_CODE)
+    if np.any(invalid):
+        bad = int(np.flatnonzero(invalid)[0])
+        raise InvariantError(
+            f"invalid encoded base {data[bad]!r} at index {bad}; "
+            "valid codes are 0..4 (A,C,G,T,N)."
+        )
+
+
 def _from_rows(cls, rows, dtype):
     offsets = np.empty(len(rows) + 1, dtype=np.int64)
     offsets[0] = 0
@@ -67,6 +81,7 @@ class EncodedSequences:
             raise ValueError("offsets must be one-dimensional.")
         if not np.issubdtype(raw_offsets.dtype, np.integer):
             raise TypeError("offsets must have an integer dtype.")
+        _validate_raw_encoded_data(raw_data)
         data = np.ascontiguousarray(raw_data, dtype=np.uint8)
         offsets = np.ascontiguousarray(raw_offsets, dtype=np.int64)
         _validate_ragged_offsets(offsets, data.size)
@@ -76,6 +91,9 @@ class EncodedSequences:
 
     @classmethod
     def from_rows(cls, rows):
+        rows = list(rows)
+        for row in rows:
+            _validate_raw_encoded_data(np.asarray(row))
         return _from_rows(cls, rows, np.uint8)
 
     @classmethod

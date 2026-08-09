@@ -1,6 +1,11 @@
 import json
 import subprocess
 import sys
+from types import SimpleNamespace
+
+import pytest
+
+from mimosa.cli import CLIError, _validate_null_compatibility
 
 MIMOSA = [sys.executable, "-m", "mimosa.cli"]
 
@@ -152,6 +157,34 @@ class TestCacheCommand:
     def test_clear_broad_dir(self):
         r = run_cli("cache", "clear", "--cache-dir", "/")
         assert r.returncode != 0
+
+    def test_null_compatibility_rejects_alignment_version(self):
+        dist = SimpleNamespace(
+            strategy="profile",
+            metric="co",
+            contract={
+                "search_range": 10,
+                "window_radius": 10,
+                "realign_window": 3,
+                "min_logerr": 0.0,
+                "alignment_version": "old-alignment",
+            },
+            sequence_fingerprint="none",
+            background_fingerprint="none",
+            model_type="pwm",
+        )
+        with pytest.raises(CLIError, match="alignment version"):
+            _validate_null_compatibility(
+                dist,
+                metric="co",
+                sequences=None,
+                background=None,
+                search_range=10,
+                window_radius=10,
+                realign_window=3,
+                min_logerr=0.0,
+                model_types=("pwm", "pwm"),
+            )
 
 
 class TestVersion:
