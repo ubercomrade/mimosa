@@ -26,10 +26,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _arguments():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sequence-count", type=int, default=10_000)
-    parser.add_argument("--target-counts", default="1,64,128,256")
-    parser.add_argument("--threads", default="1,2,4,6,8")
-    parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--sequence-count", type=int, default=2_000)
+    parser.add_argument("--target-counts", default="1,64,128")
+    parser.add_argument("--threads", default="1,2,4")
+    parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--min-logerr", type=float, default=2.0)
     parser.add_argument("--memory-budget-bytes", type=int, default=1 << 30)
     parser.add_argument("--output", type=Path)
