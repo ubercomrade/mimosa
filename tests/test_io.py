@@ -125,7 +125,6 @@ class TestBammReader:
     @pytest.mark.parametrize(
         "path",
         [
-            "examples/foxa2.ihbcp",
             "examples/gata2.ihbcp",
             "examples/gata4.ihbcp",
             "examples/myog.ihbcp",

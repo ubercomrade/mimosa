@@ -29,7 +29,6 @@ from .models import (
     extend_pwm_with_n,
     pfm_to_pwm,
     pwm_from_pfm,
-    reverse_complement_weights,
     site_start_offset,
     window_size,
 )
@@ -94,7 +93,6 @@ __all__ = [
     "extend_pwm_with_n",
     "pfm_to_pwm",
     "pwm_from_pfm",
-    "reverse_complement_weights",
     "site_start_offset",
     "window_size",
     "ProfileConfig",

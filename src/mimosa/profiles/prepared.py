@@ -57,19 +57,6 @@ class PreparedProfile:
 
     __slots__ = ("name", "bundle", "anchors", "min_logerr", "normalization")
 
-    @classmethod
-    def _from_validated(cls, name, bundle, anchors, min_logerr=0.0, normalization=None):
-        """Build a profile after the internal normalization/anchor pipeline."""
-        profile = cls.__new__(cls)
-        profile.name = str(name)
-        profile.bundle = bundle
-        profile.anchors = anchors
-        profile.min_logerr = np.float32(min_logerr)
-        profile.normalization = (
-            normalization if normalization is not None else HybridEmpiricalLogTail()
-        )
-        return profile
-
     def __init__(self, name, bundle, anchors, min_logerr=0.0, normalization=None):
         if not np.isfinite(min_logerr):
             raise ValueError("min_logerr must be finite.")
@@ -178,9 +165,7 @@ def _prepare_profile(
         normalization, raw, calibration=calibration, tail_logerr=threshold
     )
     anchors = collect_both_anchors(norm_bundle, threshold)
-    prepared = PreparedProfile._from_validated(
-        name, norm_bundle, anchors, threshold, normalization
-    )
+    prepared = PreparedProfile(name, norm_bundle, anchors, threshold, normalization)
     if cache is not None:
-        prepared = _store_prepared_profile(cache, key, prepared)
+        _store_prepared_profile(cache, key, prepared)
     return prepared

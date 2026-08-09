@@ -183,16 +183,18 @@ class PWM(MotifModel):
 
 
 @dataclass(frozen=True, slots=True)
-class BaMM(MotifModel):
+class _ContextModel(MotifModel):
     name: str
     weights: np.ndarray
     order: int
     motif_length: int
 
     def __post_init__(self):
-        _validate_model_name(self.name, "BaMM")
+        _validate_model_name(self.name, type(self).__name__)
         weights = _as_float32_readonly(self.weights)
-        _validate_context_model(weights, self.order, self.motif_length, "BaMM", "order")
+        _validate_context_model(
+            weights, self.order, self.motif_length, type(self).__name__, "order"
+        )
         object.__setattr__(self, "weights", weights)
 
     @property
@@ -210,6 +212,18 @@ class BaMM(MotifModel):
         kmer = self.order + 1
         rolling_scan_forward(self.weights, sequence, kmer, self.motif_length, n_pos, forward)
         rolling_scan_reverse(self.weights, sequence, kmer, self.motif_length, n_pos, reverse)
+
+
+class BaMM(_ContextModel):
+    pass
+
+
+class Dimont(_ContextModel):
+    pass
+
+
+class Slim(_ContextModel):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,65 +245,6 @@ class SiteGA(MotifModel):
         rolling_scan_forward(self.weights, sequence, 2, self.motif_length - 1, n_pos, forward)
         rolling_scan_reverse(self.weights, sequence, 2, self.motif_length - 1, n_pos, reverse)
 
-
-@dataclass(frozen=True, slots=True)
-class Dimont(MotifModel):
-    name: str
-    weights: np.ndarray
-    order: int
-    motif_length: int
-
-    def __post_init__(self):
-        _validate_model_name(self.name, "Dimont")
-        weights = _as_float32_readonly(self.weights)
-        _validate_context_model(weights, self.order, self.motif_length, "Dimont", "order")
-        object.__setattr__(self, "weights", weights)
-
-    @property
-    def left_context(self):
-        return self.order
-
-    @property
-    def right_context(self):
-        return self.order
-
-    def scan_into(self, sequence, forward, reverse, /):
-        from ._kernels import rolling_scan_forward, rolling_scan_reverse
-
-        n_pos = forward.shape[0]
-        kmer = self.order + 1
-        rolling_scan_forward(self.weights, sequence, kmer, self.motif_length, n_pos, forward)
-        rolling_scan_reverse(self.weights, sequence, kmer, self.motif_length, n_pos, reverse)
-
-
-@dataclass(frozen=True, slots=True)
-class Slim(MotifModel):
-    name: str
-    weights: np.ndarray
-    order: int
-    motif_length: int
-
-    def __post_init__(self):
-        _validate_model_name(self.name, "Slim")
-        weights = _as_float32_readonly(self.weights)
-        _validate_context_model(weights, self.order, self.motif_length, "Slim", "order")
-        object.__setattr__(self, "weights", weights)
-
-    @property
-    def left_context(self):
-        return self.order
-
-    @property
-    def right_context(self):
-        return self.order
-
-    def scan_into(self, sequence, forward, reverse, /):
-        from ._kernels import rolling_scan_forward, rolling_scan_reverse
-
-        n_pos = forward.shape[0]
-        kmer = self.order + 1
-        rolling_scan_forward(self.weights, sequence, kmer, self.motif_length, n_pos, forward)
-        rolling_scan_reverse(self.weights, sequence, kmer, self.motif_length, n_pos, reverse)
 
 
 # ── Geometry ─────────────────────────────────────────────────────────────────
@@ -353,15 +308,3 @@ def pwm_from_pfm(pfm, background=0.25, name=""):
     weights = extend_pwm_with_n(pwm4)
     bg = tuple(float(background) for _ in range(4))
     return PWM(name, weights, bg)
-
-
-def reverse_complement_weights(weights):
-    weights = np.asarray(weights)
-    if weights.shape[0] == 4:
-        return weights[::-1, ::-1].copy()
-    elif weights.shape[0] == 5:
-        return weights[[3, 2, 1, 0, 4], ::-1].copy()
-    else:
-        raise ModelDimensionError(
-            f"reverse_complement expects 4 or 5 rows, got {weights.shape[0]}."
-        )

@@ -23,11 +23,11 @@ MAX_BAMM_REPRESENTATION_ELEMENTS = 100_000_000
 BAMM_EPSILON = 1e-10
 
 MAX_SITEGA_LENGTH = 10_000
-DINUC_LIST = [
-    "aa", "ac", "ag", "at", "ca", "cc", "cg", "ct",
-    "ga", "gc", "gg", "gt", "ta", "tc", "tg", "tt",
-]
-DINUC_MAP = {value: (index // 4, index % 4) for index, value in enumerate(DINUC_LIST)}
+DINUC_MAP = {
+    a + b: (i, j)
+    for i, a in enumerate("acgt")
+    for j, b in enumerate("acgt")
+}
 
 DIMONT_MAX_LENGTH = 10_000
 DIMONT_MAX_SPAN = 10
@@ -191,8 +191,6 @@ def _parse_bamm_blocks(path):
             if stripped.startswith("#"):
                 continue
             parts = stripped.split()
-            if not parts:
-                continue
             order_index = len(current_block)
             if order_index > MAX_BAMM_ORDER:
                 raise ModelFormatError(
@@ -230,14 +228,6 @@ def _parse_bamm_blocks(path):
                 path,
                 f"inconsistent orders in block {i}: expected {n_orders}, got {len(block)}.",
             )
-    for pos_idx, block in enumerate(blocks):
-        for k, arr in enumerate(block):
-            expected_width = 4 ** (k + 1)
-            if len(arr) != expected_width:
-                raise ModelFormatError(
-                    path,
-                    f"BaMM order {k - 1} width in block {pos_idx}: expected {expected_width}, got {len(arr)}.",
-                )
     return blocks
 
 
@@ -251,10 +241,6 @@ def _decode_5ary(code, n_digits):
 
 
 def _build_bamm_representation(blocks, target_order, n_positions, path):
-    if not (0 <= target_order <= MAX_BAMM_ORDER):
-        raise ModelFormatError(
-            path, f"BaMM order must be between 0 and {MAX_BAMM_ORDER}, got {target_order}."
-        )
     n_rows = 5 ** (target_order + 1)
     if n_rows * n_positions > MAX_BAMM_REPRESENTATION_ELEMENTS:
         raise ModelFormatError(
@@ -265,12 +251,6 @@ def _build_bamm_representation(blocks, target_order, n_positions, path):
     for pos in range(n_positions):
         current_k = min(pos, target_order)
         p_motif = blocks[pos][current_k]
-        expected_width = 4 ** (current_k + 1)
-        if len(p_motif) != expected_width:
-            raise ModelFormatError(
-                path,
-                f"position {pos} order {current_k}: expected {expected_width} values, got {len(p_motif)}.",
-            )
         uniform_bg = 0.25 ** (current_k + 1)
         log_odds = np.log(
             (np.array(p_motif, dtype=np.float32) + BAMM_EPSILON) / (uniform_bg + BAMM_EPSILON)
@@ -668,7 +648,7 @@ def _slim_symbol_log_probs(position, symbol, full_context, params, path):
     dep_lp = params[1][position]
     anc_lp = params[2][position]
     span = params[3]
-    alphabet = params[5]
+    alphabet = params[4]
     n_comp = len(comp_lp)
     local_scores = [0.0] * n_comp
     local_scores[0] = comp_lp[0] + dep_lp[0][0][symbol]

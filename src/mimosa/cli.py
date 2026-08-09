@@ -17,13 +17,10 @@ from .errors import MimosaError
 from .io.bundles import write_null_bundle
 from .io.fasta import read_fasta, read_scores
 from .io.readers import read_model
-from .models import PWM
-from .models import BaMM, Dimont, SiteGA, Slim
+from .models import PWM, BaMM, Dimont, SiteGA, Slim
 from .profiles.prepared import ScoreProfile
 from .statistics import annotate_results, build_null
 
-MODEL_TYPES = ["pwm", "bamm", "sitega", "dimont", "slim"]
-PROFILE_MODEL_TYPES = ["scores", *MODEL_TYPES]
 PROFILE_METRICS = ["co", "dice", "cosine"]
 MODEL_TYPE_MAP = {
     "pwm": PWM,
@@ -32,6 +29,7 @@ MODEL_TYPE_MAP = {
     "dimont": Dimont,
     "slim": Slim,
 }
+PROFILE_MODEL_TYPES = ["scores", *MODEL_TYPE_MAP]
 
 
 class CLIError(Exception):
@@ -65,56 +63,28 @@ def _resolve_sequences(fasta_path, num_sequences, seq_length, seed):
     )
 
 
-def _validate_null_compatibility(dist, *, strategy, metric, sequences, background, search_range, window_radius, realign_window, min_logerr, model_types=None):
-    d = dist.to_dict() if hasattr(dist, "to_dict") and not isinstance(dist, dict) else dist
+def _validate_null_compatibility(dist, *, metric, sequences, background, search_range, window_radius, realign_window, min_logerr, model_types):
     from .io.bundles import sequence_fingerprint
 
     expected_sequences = "none" if sequences is None else sequence_fingerprint(sequences)
     expected_background = "none" if background is None else sequence_fingerprint(background)
     checks = [
-        (d["strategy"], strategy, f"null distribution strategy '{d['strategy']}' is incompatible with {strategy} comparison."),
-        (d["metric"], metric, f"null distribution metric '{d['metric']}' is incompatible with requested metric '{metric}'."),
-        (d["contract"]["search_range"], search_range, "null distribution search range is incompatible with this comparison."),
-        (d["contract"]["window_radius"], window_radius, "null distribution window radius is incompatible with this comparison."),
-        (d["contract"]["realign_window"], realign_window, "null distribution realignment window is incompatible with this comparison."),
-        (d["contract"]["min_logerr"], np.float32(min_logerr), "null distribution minimum log-ERR is incompatible with this comparison."),
-        (d["sequence_fingerprint"], expected_sequences, "null distribution sequence fingerprint is incompatible with this comparison."),
-        (d["background_fingerprint"], expected_background, "null distribution background fingerprint is incompatible with this comparison."),
+        (dist.strategy, "profile", "null distribution strategy is incompatible with profile comparison."),
+        (dist.metric, metric, f"null distribution metric '{dist.metric}' is incompatible with requested metric '{metric}'."),
+        (dist.contract["search_range"], search_range, "null distribution search range is incompatible with this comparison."),
+        (dist.contract["window_radius"], window_radius, "null distribution window radius is incompatible with this comparison."),
+        (dist.contract["realign_window"], realign_window, "null distribution realignment window is incompatible with this comparison."),
+        (dist.contract["min_logerr"], np.float32(min_logerr), "null distribution minimum log-ERR is incompatible with this comparison."),
+        (dist.sequence_fingerprint, expected_sequences, "null distribution sequence fingerprint is incompatible with this comparison."),
+        (dist.background_fingerprint, expected_background, "null distribution background fingerprint is incompatible with this comparison."),
     ]
     for actual, expected, msg in checks:
         if actual != expected:
             raise CLIError(msg)
-    if model_types is not None and not all(t == d["model_type"] for t in model_types):
+    if not all(t == dist.model_type for t in model_types):
         raise CLIError(
-            f"null distribution model type '{d['model_type']}' is incompatible with compared model types '{', '.join(model_types)}'."
+            f"null distribution model type '{dist.model_type}' is incompatible with compared model types '{', '.join(model_types)}'."
         )
-
-
-def _annotate_cli_result(result, args, *, strategy, metric, sequences, background, search_range, window_radius, realign_window, min_logerr, model_types=None):
-    if not args.pvalue:
-        return result
-    if not args.null_distribution:
-        raise CLIError("--pvalue requires an explicit --null-distribution bundle.")
-    from .io.bundles import read_null_bundle
-    from .statistics import NullDistribution
-
-    dist = NullDistribution(**read_null_bundle(args.null_distribution))
-    if dist.contract["normalization_version"] != "hybrid-log-tail-v2;bins=65536":
-        raise CLIError("null distribution normalization is incompatible with this comparison.")
-    _validate_null_compatibility(
-        dist,
-        strategy=strategy,
-        metric=metric,
-        sequences=sequences,
-        background=background,
-        search_range=search_range,
-        window_radius=window_radius,
-        realign_window=realign_window,
-        min_logerr=min_logerr,
-        model_types=model_types,
-    )
-    effective = args.effective_number_of_targets
-    return annotate_results([result], dist, effective_number_of_targets=effective)[0]
 
 
 def _run_profile(args):
@@ -142,19 +112,30 @@ def _run_profile(args):
         cache=cache,
     )
 
-    annotated = _annotate_cli_result(
-        result,
-        args,
-        strategy="profile",
-        metric=args.metric,
-        sequences=sequences,
-        background=bg_sequences,
-        search_range=args.search_range,
-        window_radius=args.window_radius,
-        realign_window=args.realign_window,
-        min_logerr=args.min_logerr,
-        model_types=(type1, type2),
-    )
+    annotated = result
+    if args.pvalue:
+        if not args.null_distribution:
+            raise CLIError("--pvalue requires an explicit --null-distribution bundle.")
+        from .io.bundles import read_null_bundle
+        from .statistics import NullDistribution
+
+        dist = NullDistribution(**read_null_bundle(args.null_distribution))
+        if dist.contract["normalization_version"] != "hybrid-log-tail-v2;bins=65536":
+            raise CLIError("null distribution normalization is incompatible with this comparison.")
+        _validate_null_compatibility(
+            dist,
+            metric=args.metric,
+            sequences=sequences,
+            background=bg_sequences,
+            search_range=args.search_range,
+            window_radius=args.window_radius,
+            realign_window=args.realign_window,
+            min_logerr=args.min_logerr,
+            model_types=(type1, type2),
+        )
+        annotated = annotate_results(
+            [result], dist, effective_number_of_targets=args.effective_number_of_targets
+        )[0]
     print(json.dumps(annotated.to_dict(), indent=2, sort_keys=True))
     return 0
 
@@ -257,7 +238,6 @@ def build_parser():
     p = sub.add_parser("cache", help="manage the disk cache")
     p.add_argument("operation", choices=("clear",), help="cache operation (clear)")
     p.add_argument("--cache-dir", default=".mimosa-cache")
-    p.add_argument("--quiet", action="store_true")
     return parser
 
 

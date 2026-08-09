@@ -11,7 +11,6 @@ import struct
 import tempfile
 import tomllib
 from contextlib import contextmanager
-from dataclasses import dataclass
 from collections import OrderedDict
 
 if os.name == "nt":
@@ -53,12 +52,6 @@ _PREPARED_PROFILE_SECTION_NAMES = (
     "reverse_anchor_offsets",
 )
 DEFAULT_MEMORY_CACHE_BYTES = 1 << 30
-
-
-@dataclass(frozen=True)
-class _PreparationContext:
-    sequence_fingerprint: str
-    background_fingerprint: str
 
 
 class Cache:
@@ -525,10 +518,11 @@ def cache_set(cache, key, data, metadata=None):
     os.makedirs(root, exist_ok=True)
     # ponytail: one cache-wide lock; per-key locks only if write contention matters.
     with _cache_lock(root):
-        stage = tempfile.mkdtemp(prefix=".mimosa-cache-stage-", dir=root)
-        entry_stage = os.path.join(stage, _validate_cache_key(key))
-        os.makedirs(entry_stage)
-        try:
+        with tempfile.TemporaryDirectory(
+            prefix=".mimosa-cache-stage-", dir=root, ignore_cleanup_errors=True
+        ) as stage:
+            entry_stage = os.path.join(stage, _validate_cache_key(key))
+            os.makedirs(entry_stage)
             with open(os.path.join(entry_stage, _CACHE_DATA_NAME), "wb") as f:
                 f.write(data)
             with open(os.path.join(entry_stage, _CACHE_META_NAME), "w", encoding="utf-8") as f:
@@ -542,8 +536,6 @@ def cache_set(cache, key, data, metadata=None):
                 item for item in cache._verified_entries if item[0] != key
             }
             return path
-        finally:
-            shutil.rmtree(stage, ignore_errors=True)
 
 
 def clearcache(cache):
@@ -571,15 +563,13 @@ def clearcache(cache):
 
 
 def _make_preparation_context(sequences, background):
-    if sequences is None:
-        return None
     sequence_fp = sequence_fingerprint(sequences)
     background_fp = (
         sequence_fp
         if background is None or background is sequences
         else sequence_fingerprint(background)
     )
-    return _PreparationContext(sequence_fp, background_fp)
+    return sequence_fp, background_fp
 
 
 def _memory_cache_get(cache, key):
@@ -638,16 +628,14 @@ def _cached_prepared_profile(
     normalization,
     context=None,
 ):
-    if cache is None:
-        return None, None
     key = _prepared_profile_cache_key(
         source,
         sequences,
         background=background,
         min_logerr=threshold,
         normalization=normalization,
-        sequence_fp=None if context is None else context.sequence_fingerprint,
-        background_fp=None if context is None else context.background_fingerprint,
+        sequence_fp=None if context is None else context[0],
+        background_fp=None if context is None else context[1],
     )
     cached = _memory_cache_get(cache, key)
     if cached is not None:
@@ -666,8 +654,6 @@ def _cached_prepared_profile(
 
 
 def _store_prepared_profile(cache, key, profile):
-    if cache is None or key is None:
-        return profile
     data, metadata = _encode_prepared_profile_with_metadata(profile)
     cache_set(
         cache,
@@ -676,4 +662,3 @@ def _store_prepared_profile(cache, key, profile):
         metadata=metadata,
     )
     _memory_cache_set(cache, key, profile)
-    return profile

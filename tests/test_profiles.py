@@ -313,8 +313,7 @@ class TestCompare:
 
 
 class TestTieBreaking:
-    def test_tie_ladder(self, pwm_pair, batch):
-        m1, m2 = pwm_pair
+    def test_config_defaults(self):
         config = ProfileConfig()
         assert config.search_range == 10
         assert config.window_radius == 10

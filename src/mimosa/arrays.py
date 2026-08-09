@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from dataclasses import dataclass
 
 from .errors import InvariantError
 
@@ -156,25 +157,9 @@ class RaggedArray:
         return f"RaggedArray({len(self)} rows, {self.data.size} elements)"
 
 
+@dataclass(slots=True)
 class StrandPair:
     """Forward and reverse RaggedArray values; may share the same object."""
 
-    __slots__ = ("forward", "reverse")
-
-    def __init__(self, forward, reverse):
-        self.forward = forward
-        self.reverse = reverse
-
-    def __eq__(self, other):
-        return (
-            isinstance(other, StrandPair)
-            and self.forward is other.forward
-            and self.reverse is other.reverse
-        ) or (
-            isinstance(other, StrandPair)
-            and self.forward == other.forward
-            and self.reverse == other.reverse
-        )
-
-    def __repr__(self):
-        return f"StrandPair(forward={self.forward!r}, reverse={self.reverse!r})"
+    forward: RaggedArray
+    reverse: RaggedArray

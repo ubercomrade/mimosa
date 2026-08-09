@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import os
-import shutil
 import struct
 import tempfile
 import tomllib
@@ -254,7 +253,7 @@ def _validate_bundle_array_checksum(root, spec, bundle_path):
     return file_path
 
 
-def _read_raw_f32_2d(path, expected_shape, expected_bytes, root=None, expected_checksum=None):
+def _read_raw_f32_2d(path, expected_shape, expected_bytes, expected_checksum=None):
     file_size = os.path.getsize(path)
     if file_size != expected_bytes:
         raise _bundle_error(path, f"raw payload length mismatch: expected {expected_bytes} bytes, got {file_size}.")
@@ -271,20 +270,6 @@ def _read_raw_f32_2d(path, expected_shape, expected_bytes, root=None, expected_c
     if not np.all(np.isfinite(data)):
         raise _bundle_error(path, "raw model array contains non-finite values.")
     return data
-
-
-def _write_raw_f32_2d(path, arr):
-    arr = np.ascontiguousarray(arr, dtype=np.float32)
-    if not np.all(np.isfinite(arr)):
-        raise InvariantError("model value cannot be represented as Float32.")
-    arr.astype("<f4", copy=False).tofile(path)
-
-
-def _write_npy(path, arr):
-    arr = np.ascontiguousarray(arr)
-    if arr.dtype not in (np.float64, np.uint32):
-        raise InvariantError(f"unsupported NPY dtype {arr.dtype}.")
-    np.save(path, arr)
 
 
 def _read_npy(path, expected_dtype, expected_shape):
@@ -344,19 +329,18 @@ def _with_bundle_write(path, writer):
         raise InvariantError(f"bundle target '{target}' already exists.")
     parent = os.path.dirname(target)
     os.makedirs(parent, exist_ok=True)
-    stage = tempfile.mkdtemp(prefix=f".{os.path.basename(target)}.mimosa-stage-", dir=parent)
     try:
-        os.makedirs(os.path.join(stage, BUNDLE_DATA_DIR), exist_ok=True)
-        writer(target, stage)
-        os.rename(stage, target)
-        return target
+        with tempfile.TemporaryDirectory(
+            prefix=f".{os.path.basename(target)}.mimosa-stage-", dir=parent
+        ) as stage:
+            os.makedirs(os.path.join(stage, BUNDLE_DATA_DIR), exist_ok=True)
+            writer(stage)
+            os.rename(stage, target)
+            return target
     except Exception as e:
         if isinstance(e, (InvariantError, ModelFormatError)):
             raise
         raise InvariantError(f"failed to write bundle '{target}': {e}.")
-    finally:
-        if os.path.isdir(stage):
-            shutil.rmtree(stage, ignore_errors=True)
 
 
 # ── Content fingerprints (Julia bitstring canonicalization) ─────────────────
@@ -510,9 +494,9 @@ def write_model(path, model):
     if not np.all(np.isfinite(arr)):
         raise InvariantError("model array contains non-finite values.")
 
-    def writer(target, stage):
+    def writer(stage):
         data_path = os.path.join(stage, BUNDLE_DATA_DIR, f"{arr_name}.bin")
-        _write_raw_f32_2d(data_path, arr)
+        np.ascontiguousarray(arr, dtype=np.float32).astype("<f4", copy=False).tofile(data_path)
         checksum = _file_sha256(data_path)
         manifest = {
             "format": "mimosa",
@@ -560,7 +544,7 @@ def _read_model_array(path, manifest, array_name):
     byte_length = _required_manifest_int(
         arrays[array_name], "byte_length", path, f"array '{array_name}'", minimum=1, maximum=MAX_BUNDLE_BYTES
     )
-    return _read_raw_f32_2d(file_path, shape, byte_length, root=path, expected_checksum=checksum)
+    return _read_raw_f32_2d(file_path, shape, byte_length, expected_checksum=checksum)
 
 
 def _validate_declared_model_shape(path, manifest, expected_rows, expected_cols, model_kind):
@@ -663,23 +647,18 @@ def write_null_bundle(path, dist):
         raise InvariantError("null distribution raw_scores contain non-finite values.")
     _bundle_shape_payload_bytes([len(dist.raw_scores)], "<f8", str(path), "raw_null_scores array")
 
-    def writer(target, stage):
+    def writer(stage):
         npy_path = os.path.join(stage, BUNDLE_DATA_DIR, "raw_null_scores.npy")
-        _write_npy(npy_path, np.asarray(dist.raw_scores, dtype=np.float64))
+        np.save(npy_path, np.ascontiguousarray(dist.raw_scores, dtype=np.float64))
         checksum = _file_sha256(npy_path)
-        labels = []
-        label_indices = {}
-        for pair in dist.pairs:
-            for label in (pair[0], pair[1]):
-                if label not in label_indices:
-                    label_indices[label] = len(labels) + 1
-                    labels.append(label)
+        labels = list(dict.fromkeys(label for pair in dist.pairs for label in pair[:2]))
+        label_indices = {label: index + 1 for index, label in enumerate(labels)}
         pair_indices = np.empty((dist.n_null, 2), dtype=np.uint32)
         for index, pair in enumerate(dist.pairs):
             pair_indices[index, 0] = label_indices[pair[0]]
             pair_indices[index, 1] = label_indices[pair[1]]
         pairs_path = os.path.join(stage, BUNDLE_DATA_DIR, "pair_indices.npy")
-        _write_npy(pairs_path, pair_indices)
+        np.save(pairs_path, np.ascontiguousarray(pair_indices))
         pairs_checksum = _file_sha256(pairs_path)
         manifest = {
             "format": "mimosa",
@@ -791,9 +770,7 @@ def read_null_bundle(path):
         pairs.append((labels[query_index], labels[target_index], float(raw_scores[index])))
 
     compat = _required_manifest_table(manifest, "compatibility", path, "null manifest")
-    compat_version = _required_manifest_int(compat, "format_version", path, "compatibility metadata", minimum=NULL_FORMAT_VERSION, maximum=NULL_FORMAT_VERSION)
-    if compat_version != NULL_FORMAT_VERSION:
-        raise _bundle_error(path, "unsupported compatibility metadata version.")
+    _required_manifest_int(compat, "format_version", path, "compatibility metadata", minimum=NULL_FORMAT_VERSION, maximum=NULL_FORMAT_VERSION)
     compat_strategy = _required_manifest_string(compat, "strategy", path, "compatibility metadata")
     compat_metric = _required_manifest_string(compat, "metric", path, "compatibility metadata")
     if compat_strategy != strategy:
