@@ -372,7 +372,7 @@ def _score_row_csr(
     query_positions, query_offsets,
     target_positions, target_offsets,
     row, shift, window_radius, realign_window,
-    metric_kind, use_dice, seen, candidates, epoch,
+    metric_kind, use_dice, seen, epoch,
 ):
     len1 = scores1_offsets[row + 1] - scores1_offsets[row]
     len2 = scores2_offsets[row + 1] - scores2_offsets[row]
@@ -380,7 +380,9 @@ def _score_row_csr(
     r2_start = scores2_offsets[row]
     r1 = scores1_data[r1_start : r1_start + len1]
     r2 = scores2_data[r2_start : r2_start + len2]
-    count = 0
+    total_row_score = 0.0
+    total_finite = 0
+    total_sites = 0
 
     for idx in range(query_offsets[row], query_offsets[row + 1]):
         pos1 = query_positions[idx]
@@ -390,8 +392,17 @@ def _score_row_csr(
         ):
             if seen[pos1] != epoch:
                 seen[pos1] = epoch
-                candidates[count] = pos1
-                count += 1
+                total_sites += 1
+                if metric_kind == 1:
+                    score, finite = _accumulate_cosine(
+                        r1, r2, pos1, shift, window_radius
+                    )
+                else:
+                    score, finite = _accumulate_overlap(
+                        r1, r2, pos1, shift, window_radius, use_dice
+                    )
+                total_row_score += score
+                total_finite += finite
 
     for idx in range(target_offsets[row], target_offsets[row + 1]):
         expected_pos1 = target_positions[idx] - shift
@@ -404,24 +415,18 @@ def _score_row_csr(
         ):
             if seen[pos1] != epoch:
                 seen[pos1] = epoch
-                candidates[count] = pos1
-                count += 1
-
-    total_row_score = 0.0
-    total_finite = 0
-    for candidate in range(count):
-        pos1 = candidates[candidate]
-        if metric_kind == 1:
-            score, finite = _accumulate_cosine(
-                r1, r2, pos1, shift, window_radius
-            )
-        else:
-            score, finite = _accumulate_overlap(
-                r1, r2, pos1, shift, window_radius, use_dice
-            )
-        total_row_score += score
-        total_finite += finite
-    return total_row_score, total_finite, count
+                total_sites += 1
+                if metric_kind == 1:
+                    score, finite = _accumulate_cosine(
+                        r1, r2, pos1, shift, window_radius
+                    )
+                else:
+                    score, finite = _accumulate_overlap(
+                        r1, r2, pos1, shift, window_radius, use_dice
+                    )
+                total_row_score += score
+                total_finite += finite
+    return total_row_score, total_finite, total_sites
 
 
 @njit(cache=True)
@@ -496,7 +501,7 @@ def _score_shift_csr(
     target_positions, target_offsets,
     shift, window_radius, realign_window,
     metric_kind,  # 0=rowwise, 1=cosine
-    use_dice, seen, candidates,
+    use_dice, seen,
     out_score, out_sites,
 ):
     total_row_score = 0.0
@@ -510,7 +515,7 @@ def _score_shift_csr(
             query_positions, query_offsets,
             target_positions, target_offsets,
             row, shift, window_radius, realign_window,
-            metric_kind, use_dice, seen, candidates, row + 1,
+            metric_kind, use_dice, seen, row + 1,
         )
         total_row_score += row_score
         total_finite += row_finite
@@ -520,28 +525,47 @@ def _score_shift_csr(
 
 
 @njit(parallel=True, cache=True)
-def _score_shift_csr_parallel(
+def _score_orientation_csr_parallel(
     scores1_data, scores1_offsets,
     scores2_data, scores2_offsets,
     query_positions, query_offsets,
     target_positions, target_offsets,
-    shift, window_radius, realign_window,
-    metric_kind, use_dice, seen, candidates,
-    epoch_base, row_scores, row_finite, row_sites,
+    search_range, window_radius, realign_window,
+    metric_kind, use_dice, seen,
+    row_scores, row_finite, row_sites, out_scores, out_sites,
 ):
-    for row in prange(scores1_offsets.shape[0] - 1):
+    n_rows = scores1_offsets.shape[0] - 1
+    n_shifts = 2 * search_range + 1
+    for row in prange(n_rows):
         thread = get_thread_id()
-        score, finite, sites = _score_row_csr(
-            scores1_data, scores1_offsets,
-            scores2_data, scores2_offsets,
-            query_positions, query_offsets,
-            target_positions, target_offsets,
-            row, shift, window_radius, realign_window,
-            metric_kind, use_dice, seen[thread], candidates[thread], epoch_base + row,
+        for shift_index in range(n_shifts):
+            shift = shift_index - search_range
+            score, finite, sites = _score_row_csr(
+                scores1_data, scores1_offsets,
+                scores2_data, scores2_offsets,
+                query_positions, query_offsets,
+                target_positions, target_offsets,
+                row, shift, window_radius, realign_window,
+                metric_kind, use_dice, seen[thread], shift_index * n_rows + row + 1,
+            )
+            row_scores[row, shift_index] = score
+            row_finite[row, shift_index] = finite
+            row_sites[row, shift_index] = sites
+
+    for shift_index in range(n_shifts):
+        total_row_score = 0.0
+        total_finite = 0
+        total_sites = 0
+        for row in range(n_rows):
+            total_row_score += row_scores[row, shift_index]
+            total_finite += row_finite[row, shift_index]
+            total_sites += row_sites[row, shift_index]
+        out_scores[shift_index] = (
+            0.0
+            if total_sites == 0 or total_finite == 0
+            else total_row_score / total_finite
         )
-        row_scores[row] = score
-        row_finite[row] = finite
-        row_sites[row] = sites
+        out_sites[shift_index] = total_sites
 
 
 @njit(cache=True)
@@ -576,24 +600,43 @@ def _score_shift_best(
 
 
 @njit(parallel=True, cache=True)
-def _score_shift_best_parallel(
+def _score_orientation_best_parallel(
     scores1_data, scores1_offsets,
     scores2_data, scores2_offsets,
     query_positions, query_offsets,
     target_positions, target_offsets,
-    shift, window_radius, realign_window,
+    search_range, window_radius, realign_window,
     metric_kind, use_dice,
-    row_scores, row_finite, row_sites,
+    row_scores, row_finite, row_sites, out_scores, out_sites,
 ):
-    for row in prange(scores1_offsets.shape[0] - 1):
-        score, finite, sites = _score_row_best(
-            scores1_data, scores1_offsets,
-            scores2_data, scores2_offsets,
-            query_positions, query_offsets,
-            target_positions, target_offsets,
-            row, shift, window_radius, realign_window,
-            metric_kind, use_dice,
+    n_rows = scores1_offsets.shape[0] - 1
+    n_shifts = 2 * search_range + 1
+    for row in prange(n_rows):
+        for shift_index in range(n_shifts):
+            shift = shift_index - search_range
+            score, finite, sites = _score_row_best(
+                scores1_data, scores1_offsets,
+                scores2_data, scores2_offsets,
+                query_positions, query_offsets,
+                target_positions, target_offsets,
+                row, shift, window_radius, realign_window,
+                metric_kind, use_dice,
+            )
+            row_scores[row, shift_index] = score
+            row_finite[row, shift_index] = finite
+            row_sites[row, shift_index] = sites
+
+    for shift_index in range(n_shifts):
+        total_row_score = 0.0
+        total_finite = 0
+        total_sites = 0
+        for row in range(n_rows):
+            total_row_score += row_scores[row, shift_index]
+            total_finite += row_finite[row, shift_index]
+            total_sites += row_sites[row, shift_index]
+        out_scores[shift_index] = (
+            0.0
+            if total_sites == 0 or total_finite == 0
+            else total_row_score / total_finite
         )
-        row_scores[row] = score
-        row_finite[row] = finite
-        row_sites[row] = sites
+        out_sites[shift_index] = total_sites

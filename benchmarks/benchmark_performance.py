@@ -140,6 +140,7 @@ def _measure_modes(models, targets, sequences, background, cache_path, args, thr
     from numba import set_num_threads
     from mimosa import compare_many
     from mimosa.cache import Cache
+    from mimosa.profiles.prepared import _prepare_profile
 
     set_num_threads(threads)
     cold_path = cache_path / "cold"
@@ -148,13 +149,45 @@ def _measure_modes(models, targets, sequences, background, cache_path, args, thr
         cold_path,
         memory_budget_bytes=args.memory_budget_bytes,
     )
+    phase_cache = Cache(
+        cache_path / "phase", memory_budget_bytes=args.memory_budget_bytes
+    )
     phases = _preparation_phases(
         targets,
         sequences,
         background,
-        Cache(cache_path / "phase", memory_budget_bytes=args.memory_budget_bytes),
+        phase_cache,
         args.min_logerr,
     )
+    prepared_query = _prepare_profile(
+        models[0],
+        sequences,
+        background=background,
+        min_logerr=args.min_logerr,
+        cache=phase_cache,
+    )
+    prepared_targets = [
+        _prepare_profile(
+            target,
+            sequences,
+            background=background,
+            min_logerr=args.min_logerr,
+            cache=phase_cache,
+        )
+        for target in targets
+    ]
+    compare_many(
+        prepared_query,
+        prepared_targets,
+        min_logerr=args.min_logerr,
+    )
+    started = time.perf_counter()
+    compare_many(
+        prepared_query,
+        prepared_targets,
+        min_logerr=args.min_logerr,
+    )
+    prepared_alignment_s = time.perf_counter() - started
     timings = []
     for mode in ("cold", "disk", "memory"):
         if mode == "cold":
@@ -186,6 +219,7 @@ def _measure_modes(models, targets, sequences, background, cache_path, args, thr
                     phases["cache_read_checksum_decode_s"] if mode == "disk" else 0.0
                 ),
                 "normalization_anchors_s": phases["fit_normalize_anchors_s"] if mode == "cold" else 0.0,
+                "prepared_alignment_s": prepared_alignment_s,
                 "peak_rss_bytes": _rss_bytes(),
                 "cache_bytes": _cache_bytes(cold_path),
             }
@@ -235,6 +269,7 @@ def main():
                     "prepare_profiles_s",
                     "cache_read_checksum_decode_s",
                     "normalization_anchors_s",
+                    "prepared_alignment_s",
                     "peak_rss_bytes",
                     "cache_bytes",
                 ):

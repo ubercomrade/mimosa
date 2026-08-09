@@ -6,9 +6,9 @@ import numpy as np
 
 from .._kernels import (
     _score_shift_best,
-    _score_shift_best_parallel,
     _score_shift_csr,
-    _score_shift_csr_parallel,
+    _score_orientation_best_parallel,
+    _score_orientation_csr_parallel,
 )
 from ..parallel import use_parallel
 
@@ -63,8 +63,6 @@ def _score_orientation_pair(
     t_csr = target_anchors[target_strand]
 
     n_shifts = 2 * search_range + 1
-    out_score = np.empty(1, dtype=np.float64)
-    out_sites = np.empty(1, dtype=np.int64)
     kind, use_dice = _METRIC_KINDS[metric]
     best_score = np.float32(0.0)
     best_shift = 0
@@ -77,11 +75,15 @@ def _score_orientation_pair(
     if parallel:
         from numba import get_num_threads
 
-        row_scores = np.empty(n_rows, dtype=np.float64)
-        row_finite = np.empty(n_rows, dtype=np.int64)
-        row_sites = np.empty(n_rows, dtype=np.int64)
+        row_scores = np.empty((n_rows, n_shifts), dtype=np.float64)
+        row_finite = np.empty((n_rows, n_shifts), dtype=np.int64)
+        row_sites = np.empty((n_rows, n_shifts), dtype=np.int64)
+        out_scores = np.empty(n_shifts, dtype=np.float32)
+        out_sites = np.empty(n_shifts, dtype=np.int64)
     else:
         row_scores = row_finite = row_sites = None
+        out_score = np.empty(1, dtype=np.float64)
+        out_sites_one = np.empty(1, dtype=np.int64)
 
     if min_logerr > 0.0:
         max_row_length = (
@@ -91,36 +93,37 @@ def _score_orientation_pair(
         )
         if parallel:
             seen = np.zeros((get_num_threads(), max_row_length), dtype=np.uint32)
-            candidates = np.empty((get_num_threads(), max_row_length), dtype=np.int64)
         else:
             seen = np.zeros(max_row_length, dtype=np.uint32)
-            candidates = np.empty(max_row_length, dtype=np.int64)
     else:
-        seen = candidates = None
+        seen = None
+
+    if parallel and min_logerr > 0.0:
+        _score_orientation_csr_parallel(
+            query_scores.data, query_scores.offsets,
+            target_scores.data, target_scores.offsets,
+            q_csr.positions, q_csr.offsets,
+            t_csr.positions, t_csr.offsets,
+            search_range, window_radius, realign_window,
+            kind, use_dice, seen,
+            row_scores, row_finite, row_sites, out_scores, out_sites,
+        )
+    elif parallel:
+        _score_orientation_best_parallel(
+            query_scores.data, query_scores.offsets,
+            target_scores.data, target_scores.offsets,
+            q_csr.positions, q_csr.offsets,
+            t_csr.positions, t_csr.offsets,
+            search_range, window_radius, realign_window,
+            kind, use_dice,
+            row_scores, row_finite, row_sites, out_scores, out_sites,
+        )
 
     for shift_index in range(n_shifts):
         shift = shift_index - search_range
-        if parallel and min_logerr > 0.0:
-            _score_shift_csr_parallel(
-                query_scores.data, query_scores.offsets,
-                target_scores.data, target_scores.offsets,
-                q_csr.positions, q_csr.offsets,
-                t_csr.positions, t_csr.offsets,
-                shift, window_radius, realign_window,
-                kind, use_dice, seen, candidates,
-                shift_index * n_rows + 1,
-                row_scores, row_finite, row_sites,
-            )
-        elif parallel:
-            _score_shift_best_parallel(
-                query_scores.data, query_scores.offsets,
-                target_scores.data, target_scores.offsets,
-                q_csr.positions, q_csr.offsets,
-                t_csr.positions, t_csr.offsets,
-                shift, window_radius, realign_window,
-                kind, use_dice,
-                row_scores, row_finite, row_sites,
-            )
+        if parallel:
+            score = np.float32(out_scores[shift_index])
+            n_sites = out_sites[shift_index]
         elif min_logerr > 0.0:
             _score_shift_csr(
                 query_scores.data, query_scores.offsets,
@@ -128,8 +131,10 @@ def _score_orientation_pair(
                 q_csr.positions, q_csr.offsets,
                 t_csr.positions, t_csr.offsets,
                 shift, window_radius, realign_window,
-                kind, use_dice, seen, candidates, out_score, out_sites,
+                kind, use_dice, seen, out_score, out_sites_one,
             )
+            score = np.float32(out_score[0])
+            n_sites = out_sites_one[0]
         else:
             _score_shift_best(
                 query_scores.data, query_scores.offsets,
@@ -137,22 +142,10 @@ def _score_orientation_pair(
                 q_csr.positions, q_csr.offsets,
                 t_csr.positions, t_csr.offsets,
                 shift, window_radius, realign_window,
-                kind, use_dice, out_score, out_sites,
+                kind, use_dice, out_score, out_sites_one,
             )
-        if parallel:
-            total_score = 0.0
-            total_finite = 0
-            n_sites = 0
-            for row in range(n_rows):
-                total_score += row_scores[row]
-                total_finite += row_finite[row]
-                n_sites += row_sites[row]
-            score = np.float32(
-                0.0 if n_sites == 0 or total_finite == 0 else total_score / total_finite
-            )
-        else:
             score = np.float32(out_score[0])
-            n_sites = out_sites[0]
+            n_sites = out_sites_one[0]
         if float(score) > float(best_score) or (
             float(score) == float(best_score)
             and (
