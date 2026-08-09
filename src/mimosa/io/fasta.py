@@ -25,7 +25,6 @@ def read_fasta(path, max_sequences=MAX_FASTA_SEQUENCES):
     current_seq = bytearray()
     current_name = ""
     has_current = False
-    n_sequences = 0
     with open(path, "r", encoding="ascii", errors="replace") as f:
         for line in f:
             if len(line) > MAX_FASTA_LINE_LENGTH:
@@ -37,13 +36,12 @@ def read_fasta(path, max_sequences=MAX_FASTA_SEQUENCES):
                 continue
             if stripped[0] == ">":
                 if has_current:
-                    if n_sequences >= max_sequences:
+                    if len(rows) >= max_sequences:
                         raise ModelFormatError(
                             path, f"exceeded max_sequences limit {max_sequences}."
                         )
                     rows.append(bytes(current_seq))
                     names.append(current_name)
-                    n_sequences += 1
                     current_seq = bytearray()
                 header = stripped[1:].strip()
                 current_name = header.split()[0] if header else ""
@@ -57,16 +55,15 @@ def read_fasta(path, max_sequences=MAX_FASTA_SEQUENCES):
                         path, f"sequence exceeds length limit {MAX_FASTA_SEQUENCE_LENGTH}."
                     )
     if has_current:
-        if n_sequences >= max_sequences:
+        if len(rows) >= max_sequences:
             raise ModelFormatError(path, f"exceeded max_sequences limit {max_sequences}.")
         rows.append(bytes(current_seq))
         names.append(current_name)
-        n_sequences += 1
     if not rows:
         raise ModelFormatError(path, "no sequences found in FASTA file.")
     data = np.frombuffer(b"".join(rows), dtype=np.uint8)
     encoded = _ENCODE_TABLE[data]
-    offsets = np.zeros(n_sequences + 1, dtype=np.int64)
+    offsets = np.zeros(len(rows) + 1, dtype=np.int64)
     for i, r in enumerate(rows):
         offsets[i + 1] = offsets[i] + len(r)
     return EncodedSequences(encoded, offsets), tuple(names)
@@ -97,8 +94,6 @@ def read_scores(path):
                 raise ModelFormatError(file, "score values require a header.")
             cleaned = stripped.replace(",", " ")
             for token in cleaned.split():
-                if not token:
-                    continue
                 try:
                     value = float(token)
                 except ValueError:

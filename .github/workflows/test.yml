@@ -18,11 +18,10 @@ jobs:
           uv run ruff check .
 
   test:
-    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest]
         python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6

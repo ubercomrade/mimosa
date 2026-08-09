@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import itertools
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -17,7 +18,6 @@ MAX_LINE_LENGTH = 1_000_000
 
 MAX_BAMM_POSITIONS = 10_000
 MAX_BAMM_ORDER = 10
-MAX_BAMM_FILE_BYTES = 256 * 1024**2
 MAX_BAMM_LINE_LENGTH = 1_000_000
 MAX_BAMM_REPRESENTATION_ELEMENTS = 100_000_000
 BAMM_EPSILON = 1e-10
@@ -459,14 +459,6 @@ def _dimont_span(context_positions_list):
     return span
 
 
-def _iter_contexts(span):
-    if span == 0:
-        return [()]
-    import itertools
-
-    return list(itertools.product(range(4), repeat=span))
-
-
 def _context_value(full_context, span, position, absolute_position, path):
     if absolute_position < 0:
         raise ModelFormatError(
@@ -571,7 +563,7 @@ def read_dimont(path):
         raise ModelFormatError(path, f"Dimont span {span} exceeds limit {DIMONT_MAX_SPAN}.")
     n_rows = 5 ** (span + 1)
     rep = np.empty((n_rows, length_val), dtype=np.float32)
-    full_contexts = _iter_contexts(span)
+    full_contexts = list(itertools.product(range(4), repeat=span))
     for pos_idx, node in enumerate(nodes):
         pt_pos = pos_idx
         context_scores = {}
@@ -588,17 +580,13 @@ def read_dimont(path):
 
 # ── Slim ─────────────────────────────────────────────────────────────────────
 
-def _slim_pos_children(elem):
-    return [c for c in elem if c.tag == "pos"]
-
-
 def _slim_parse_component_params(slim, path):
     elem = _xml_find(slim, "componentMixtureParameters")
     if elem is None:
         raise ModelFormatError(path, "malformed Slim model: missing componentMixtureParameters.")
     result = []
-    for pos_p in _slim_pos_children(elem):
-        comps = _slim_pos_children(pos_p)
+    for pos_p in elem.findall("pos"):
+        comps = pos_p.findall("pos")
         if not comps:
             raise ModelFormatError(path, "malformed Slim model: empty component mixture.")
         result.append([_xml_numeric(c, path, "Slim component weight") for c in comps])
@@ -612,10 +600,10 @@ def _slim_parse_ancestor_params(slim, path):
     if elem is None:
         raise ModelFormatError(path, "malformed Slim model: missing ancestorMixtureParameters.")
     result = []
-    for pos_p in _slim_pos_children(elem):
+    for pos_p in elem.findall("pos"):
         comp_list = []
-        for comp_c in _slim_pos_children(pos_p):
-            ancs = _slim_pos_children(comp_c)
+        for comp_c in pos_p.findall("pos"):
+            ancs = comp_c.findall("pos")
             if not ancs:
                 raise ModelFormatError(path, "malformed Slim model: empty ancestor mixture.")
             comp_list.append([_xml_numeric(a, path, "Slim ancestor weight") for a in ancs])
@@ -628,15 +616,15 @@ def _slim_parse_dependency_params(slim, path):
     if elem is None:
         raise ModelFormatError(path, "malformed Slim model: missing dependencyParameters.")
     result = []
-    for pos_p in _slim_pos_children(elem):
+    for pos_p in elem.findall("pos"):
         comp_list = []
-        for comp_c in _slim_pos_children(pos_p):
-            rows = _slim_pos_children(comp_c)
+        for comp_c in pos_p.findall("pos"):
+            rows = comp_c.findall("pos")
             if not rows:
                 raise ModelFormatError(path, "malformed Slim model: empty dependency rows.")
             row_list = []
             for row_r in rows:
-                syms = _slim_pos_children(row_r)
+                syms = row_r.findall("pos")
                 if not syms:
                     raise ModelFormatError(path, "malformed Slim model: empty dependency row.")
                 row_list.append([_xml_numeric(s, path, "Slim dependency value") for s in syms])
@@ -757,7 +745,7 @@ def read_slim(path):
     params = (comp_lp, dep_lp, anc_lp, span, length_val, alphabet)
     n_rows = 5 ** (span + 1)
     rep = np.empty((n_rows, length_val), dtype=np.float32)
-    full_contexts = _iter_contexts(span)
+    full_contexts = list(itertools.product(range(4), repeat=span))
     for position in range(length_val):
         context_scores = {}
         for ctx in full_contexts:

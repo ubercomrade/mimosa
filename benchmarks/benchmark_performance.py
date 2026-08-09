@@ -1,4 +1,4 @@
-"""Measure the production compare_many path and its major phases.
+"""Measure the production compare_many path.
 
 Run from the repository root, for example::
 
@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def _arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sequence-count", type=int, default=10_000)
-    parser.add_argument("--target-counts", default="64,128,256")
+    parser.add_argument("--target-counts", default="1,64,128,256")
     parser.add_argument("--threads", default="1,2,4,6,8")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--min-logerr", type=float, default=2.0)
@@ -84,96 +84,40 @@ def _cache_bytes(path):
 
 
 def _preparation_phases(models, sequences, background, cache, threshold):
-    from mimosa.cache import (
-        _encode_prepared_profile,
-        _make_preparation_context,
-        _store_prepared_profile,
-        _cached_prepared_profile,
-        prepared_profile_cache_key,
-    )
-    from mimosa.profiles.anchors import collect_both_anchors
-    from mimosa.profiles.normalization import HybridEmpiricalLogTail, _fit_normalize
-    from mimosa.profiles.prepared import PreparedProfile
-    from mimosa.compare import _TARGET_BATCH_SIZE
-    from mimosa.scan import _scan_models_batch
+    from mimosa.cache import _make_preparation_context
+    from mimosa.profiles.prepared import _prepare_profile
 
-    normalization = HybridEmpiricalLogTail()
-    context = _make_preparation_context(sequences, background)
     phases = {
-        "scan_models_batch_s": 0.0,
+        "preparation_s": 0.0,
         "fit_normalize_anchors_s": 0.0,
-        "encode_s": 0.0,
-        "cache_set_s": 0.0,
         "cache_read_checksum_decode_s": 0.0,
     }
-
-    for batch_start in range(0, len(models), _TARGET_BATCH_SIZE):
-        model_batch = models[batch_start : batch_start + _TARGET_BATCH_SIZE]
+    for model in models:
         started = time.perf_counter()
-        raw = _scan_models_batch(model_batch, sequences)
-        background_raw = None
-        if background is not None and background is not sequences:
-            background_raw = _scan_models_batch(model_batch, background)
-        phases["scan_models_batch_s"] += time.perf_counter() - started
-
-        for local_index, model in enumerate(model_batch):
-            started = time.perf_counter()
-            raw_pair = raw.pair(local_index)
-            if background_raw is None:
-                _, normalized = _fit_normalize(
-                    normalization, raw_pair, tail_logerr=threshold
-                )
-            else:
-                _, normalized = _fit_normalize(
-                    normalization,
-                    raw_pair,
-                    calibration=background_raw.pair(local_index),
-                    tail_logerr=threshold,
-                )
-            anchors = collect_both_anchors(normalized, threshold)
-            phases["fit_normalize_anchors_s"] += time.perf_counter() - started
-            profile = PreparedProfile._from_validated(
-                model.name, normalized, anchors, threshold, normalization
-            )
-            started = time.perf_counter()
-            _encode_prepared_profile(profile)
-            phases["encode_s"] += time.perf_counter() - started
-            key = prepared_profile_cache_key(
-                cache,
-                model,
-                sequences,
-                background=background,
-                min_logerr=threshold,
-                normalization=normalization,
-            )
-            started = time.perf_counter()
-            _store_prepared_profile(cache, key, profile)
-            phases["cache_set_s"] += time.perf_counter() - started
+        _prepare_profile(
+            model,
+            sequences,
+            background=background,
+            min_logerr=threshold,
+            cache=cache,
+        )
+        phases["preparation_s"] += time.perf_counter() - started
     disk_cache = type(cache)(
         cache.directory,
         memory_budget_bytes=cache.memory_budget_bytes,
     )
+    context = _make_preparation_context(sequences, background)
     started = time.perf_counter()
     for model in models:
-        _cached_prepared_profile(
-            disk_cache,
+        _prepare_profile(
             model,
             sequences,
-            background,
-            threshold,
-            normalization,
-            context,
+            background=background,
+            min_logerr=threshold,
+            cache=disk_cache,
+            _preparation_context=context,
         )
     phases["cache_read_checksum_decode_s"] = time.perf_counter() - started
-    phases["preparation_s"] = sum(
-        phases[name]
-        for name in (
-            "scan_models_batch_s",
-            "fit_normalize_anchors_s",
-            "encode_s",
-            "cache_set_s",
-        )
-    )
     return phases
 
 
@@ -196,14 +140,6 @@ def _measure_modes(models, targets, sequences, background, cache_path, args, thr
     from numba import set_num_threads
     from mimosa import compare_many
     from mimosa.cache import Cache
-    from mimosa.compare import (
-        _TARGET_BATCH_SIZE,
-        _compare_many_prepared_parallel,
-        _prepare_side,
-    )
-    from mimosa.parallel import MIN_PARALLEL_TARGETS, scan_dispatch_path
-    from mimosa.scan import _scan_offsets
-    from mimosa.profiles.alignment import ProfileConfig
 
     set_num_threads(threads)
     cold_path = cache_path / "cold"
@@ -219,28 +155,6 @@ def _measure_modes(models, targets, sequences, background, cache_path, args, thr
         Cache(cache_path / "phase", memory_budget_bytes=args.memory_budget_bytes),
         args.min_logerr,
     )
-    groups = {}
-    representatives = {}
-    for target in targets:
-        key = (type(target).__name__, target.motif_length)
-        groups[key] = groups.get(key, 0) + 1
-        representatives.setdefault(key, target)
-    scan_paths = [
-        scan_dispatch_path(
-            int(_scan_offsets(sequences, representatives[key])[-1]),
-            rows=len(sequences),
-            groups=size,
-        )
-        for key, size in groups.items()
-    ]
-    scan_path = (
-        "model-parallel"
-        if "model-parallel" in scan_paths
-        else "row-parallel"
-        if "row-parallel" in scan_paths
-        else "serial"
-    )
-
     timings = []
     for mode in ("cold", "disk", "memory"):
         if mode == "cold":
@@ -263,45 +177,6 @@ def _measure_modes(models, targets, sequences, background, cache_path, args, thr
         )
         wall = time.perf_counter() - started
 
-        if (
-            len(targets) >= MIN_PARALLEL_TARGETS
-            and _TARGET_BATCH_SIZE >= MIN_PARALLEL_TARGETS
-        ):
-            phase_cache = Cache(
-                cache.directory,
-                memory_budget_bytes=args.memory_budget_bytes,
-            )
-            query = _prepare_side(
-                models[0],
-                sequences,
-                background,
-                args.min_logerr,
-                None,
-                phase_cache,
-            )
-            prepared_targets = [
-                _prepare_side(
-                    target,
-                    sequences,
-                    background,
-                    args.min_logerr,
-                    None,
-                    phase_cache,
-                )
-                for target in targets
-            ]
-            parallel_phases = {}
-            _compare_many_prepared_parallel(
-                query,
-                prepared_targets,
-                ProfileConfig(min_logerr=args.min_logerr),
-                phase_cache,
-                None,
-                parallel_phases,
-            )
-        else:
-            parallel_phases = {}
-
         timings.append(
             {
                 "mode": mode,
@@ -311,17 +186,8 @@ def _measure_modes(models, targets, sequences, background, cache_path, args, thr
                     phases["cache_read_checksum_decode_s"] if mode == "disk" else 0.0
                 ),
                 "normalization_anchors_s": phases["fit_normalize_anchors_s"] if mode == "cold" else 0.0,
-                "packing_s": parallel_phases.get("packing", 0.0),
-                "alignment_kernel_s": parallel_phases.get("alignment_kernel", 0.0),
                 "peak_rss_bytes": _rss_bytes(),
                 "cache_bytes": _cache_bytes(cold_path),
-                "dispatch_path": (
-                    "target-parallel"
-                    if len(targets) >= MIN_PARALLEL_TARGETS
-                    and _TARGET_BATCH_SIZE >= MIN_PARALLEL_TARGETS
-                    else "serial"
-                ),
-                "scan_dispatch_path": scan_path,
             }
         )
     return timings
@@ -369,8 +235,6 @@ def main():
                     "prepare_profiles_s",
                     "cache_read_checksum_decode_s",
                     "normalization_anchors_s",
-                    "packing_s",
-                    "alignment_kernel_s",
                     "peak_rss_bytes",
                     "cache_bytes",
                 ):
@@ -381,8 +245,6 @@ def main():
                             if sample["mode"] == mode
                         ]
                         summary[f"{mode}_{field}_median"] = statistics.median(values)
-                summary["dispatch_path"] = samples[0]["dispatch_path"]
-                summary["scan_dispatch_path"] = samples[0]["scan_dispatch_path"]
                 summary["samples"] = samples
                 results.append(summary)
     payload = json.dumps({"benchmark": "mimosa-performance-v1", "results": results}, indent=2)

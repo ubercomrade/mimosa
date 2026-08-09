@@ -376,13 +376,7 @@ def reverse_complement_weights(weights):
     if weights.shape[0] == 4:
         return weights[::-1, ::-1].copy()
     elif weights.shape[0] == 5:
-        rc = np.empty_like(weights)
-        rc[0] = weights[3][::-1]
-        rc[1] = weights[2][::-1]
-        rc[2] = weights[1][::-1]
-        rc[3] = weights[0][::-1]
-        rc[4] = weights[4][::-1]
-        return rc
+        return weights[[3, 2, 1, 0, 4], ::-1].copy()
     else:
         raise ModelDimensionError(
             f"reverse_complement expects 4 or 5 rows, got {weights.shape[0]}."

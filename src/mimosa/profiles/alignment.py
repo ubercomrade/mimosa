@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from .._kernels import _score_shift_best, _score_shift_csr
-
-PROFILE_EPS = 1e-6
+from .._kernels import (
+    _score_shift_best,
+    _score_shift_best_parallel,
+    _score_shift_csr,
+    _score_shift_csr_parallel,
+)
+from ..parallel import use_parallel
 
 ORIENTATION_PAIRS = (("++", 0, 0), ("+-", 0, 1), ("-+", 1, 0), ("--", 1, 1))
 ORIENTATION_RANK = {"++": 0, "+-": 1, "-+": 2, "--": 3}
@@ -47,7 +51,6 @@ def _score_orientation_pair(
     target_anchors,
     query_strand,
     target_strand,
-    orientation_label,
     search_range,
     window_radius,
     realign_window,
@@ -60,11 +63,25 @@ def _score_orientation_pair(
     t_csr = target_anchors[target_strand]
 
     n_shifts = 2 * search_range + 1
-    scores = np.empty(n_shifts, dtype=np.float32)
-    site_counts = np.empty(n_shifts, dtype=np.int64)
     out_score = np.empty(1, dtype=np.float64)
     out_sites = np.empty(1, dtype=np.int64)
     kind, use_dice = _METRIC_KINDS[metric]
+    best_score = np.float32(0.0)
+    best_shift = 0
+    best_n_sites = 0
+    n_rows = query_scores.offsets.size - 1
+    parallel = use_parallel(
+        int(query_scores.data.size + target_scores.data.size), rows=n_rows
+    )
+
+    if parallel:
+        from numba import get_num_threads
+
+        row_scores = np.empty(n_rows, dtype=np.float64)
+        row_finite = np.empty(n_rows, dtype=np.int64)
+        row_sites = np.empty(n_rows, dtype=np.int64)
+    else:
+        row_scores = row_finite = row_sites = None
 
     if min_logerr > 0.0:
         max_row_length = (
@@ -72,10 +89,39 @@ def _score_orientation_pair(
             if query_scores.offsets.size > 1
             else 0
         )
-        seen = np.zeros(max_row_length, dtype=np.uint32)
-        candidates = np.empty(max_row_length, dtype=np.int64)
-        for shift_index in range(n_shifts):
-            shift = shift_index - search_range
+        if parallel:
+            seen = np.zeros((get_num_threads(), max_row_length), dtype=np.uint32)
+            candidates = np.empty((get_num_threads(), max_row_length), dtype=np.int64)
+        else:
+            seen = np.zeros(max_row_length, dtype=np.uint32)
+            candidates = np.empty(max_row_length, dtype=np.int64)
+    else:
+        seen = candidates = None
+
+    for shift_index in range(n_shifts):
+        shift = shift_index - search_range
+        if parallel and min_logerr > 0.0:
+            _score_shift_csr_parallel(
+                query_scores.data, query_scores.offsets,
+                target_scores.data, target_scores.offsets,
+                q_csr.positions, q_csr.offsets,
+                t_csr.positions, t_csr.offsets,
+                shift, window_radius, realign_window,
+                kind, use_dice, seen, candidates,
+                shift_index * n_rows + 1,
+                row_scores, row_finite, row_sites,
+            )
+        elif parallel:
+            _score_shift_best_parallel(
+                query_scores.data, query_scores.offsets,
+                target_scores.data, target_scores.offsets,
+                q_csr.positions, q_csr.offsets,
+                t_csr.positions, t_csr.offsets,
+                shift, window_radius, realign_window,
+                kind, use_dice,
+                row_scores, row_finite, row_sites,
+            )
+        elif min_logerr > 0.0:
             _score_shift_csr(
                 query_scores.data, query_scores.offsets,
                 target_scores.data, target_scores.offsets,
@@ -84,11 +130,7 @@ def _score_orientation_pair(
                 shift, window_radius, realign_window,
                 kind, use_dice, seen, candidates, out_score, out_sites,
             )
-            scores[shift_index] = out_score[0]
-            site_counts[shift_index] = out_sites[0]
-    else:
-        for shift_index in range(n_shifts):
-            shift = shift_index - search_range
+        else:
             _score_shift_best(
                 query_scores.data, query_scores.offsets,
                 target_scores.data, target_scores.offsets,
@@ -97,16 +139,20 @@ def _score_orientation_pair(
                 shift, window_radius, realign_window,
                 kind, use_dice, out_score, out_sites,
             )
-            scores[shift_index] = out_score[0]
-            site_counts[shift_index] = out_sites[0]
-
-    best_score = np.float32(0.0)
-    best_shift = 0
-    best_n_sites = 0
-    for shift_index in range(n_shifts):
-        shift = shift_index - search_range
-        score = scores[shift_index]
-        n_sites = site_counts[shift_index]
+        if parallel:
+            total_score = 0.0
+            total_finite = 0
+            n_sites = 0
+            for row in range(n_rows):
+                total_score += row_scores[row]
+                total_finite += row_finite[row]
+                n_sites += row_sites[row]
+            score = np.float32(
+                0.0 if n_sites == 0 or total_finite == 0 else total_score / total_finite
+            )
+        else:
+            score = np.float32(out_score[0])
+            n_sites = out_sites[0]
         if float(score) > float(best_score) or (
             float(score) == float(best_score)
             and (
@@ -117,7 +163,7 @@ def _score_orientation_pair(
             best_score = score
             best_shift = shift
             best_n_sites = n_sites
-    return best_score, best_shift, best_n_sites, orientation_label
+    return best_score, best_shift, best_n_sites
 
 
 class ProfileConfig:
@@ -153,14 +199,13 @@ def profile_compare(query_bundle, query_anchors, target_bundle, target_anchors, 
     best_rank = 2**63 - 1
 
     for label, q_strand, t_strand in _orientation_pairs(query_bundle, target_bundle):
-        score, shift, n_sites, _ = _score_orientation_pair(
+        score, shift, n_sites = _score_orientation_pair(
             query_bundle,
             target_bundle,
             query_anchors,
             target_anchors,
             q_strand,
             t_strand,
-            label,
             config.search_range,
             config.window_radius,
             config.realign_window,

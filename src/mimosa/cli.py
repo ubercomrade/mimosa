@@ -16,9 +16,8 @@ from .compare import compare
 from .errors import MimosaError
 from .io.bundles import write_null_bundle
 from .io.fasta import read_fasta, read_scores
-from .io.models import read_meme
 from .io.readers import read_model
-from .models import PWM, pwm_from_pfm
+from .models import PWM
 from .models import BaMM, Dimont, SiteGA, Slim
 from .profiles.normalization import HybridEmpiricalLogTail
 from .profiles.prepared import ScoreProfile
@@ -66,39 +65,6 @@ def _resolve_sequences(fasta_path, num_sequences, seq_length, seed):
     for _ in range(num_sequences):
         rows.append(rng.integers(0, 4, size=seq_length, dtype=np.uint8))
     return EncodedSequences.from_rows(rows)
-
-
-def _read_model_collection(path, model_type):
-    if os.path.isdir(path):
-        if model_type == "pwm":
-            files = sorted(f for f in os.listdir(path) if f.lower().endswith(".meme"))
-        elif model_type == "bamm":
-            files = sorted(f for f in os.listdir(path) if f.lower().endswith(".ihbcp"))
-        elif model_type == "sitega":
-            files = sorted(f for f in os.listdir(path) if f.lower().endswith(".mat"))
-        elif model_type in ("dimont", "slim"):
-            files = sorted(f for f in os.listdir(path) if f.lower().endswith(".xml"))
-        else:
-            raise CLIError(f"unsupported model type for directory: {model_type}")
-        if not files:
-            raise CLIError(f"no {model_type} files found in {path}.")
-        return [_read_typed_model(os.path.join(path, f), model_type) for f in files]
-    if model_type == "pwm":
-        models = []
-        idx = 0
-        while True:
-            try:
-                name, pfm = read_meme(path, index=idx)
-                models.append(pwm_from_pfm(pfm, background=0.25, name=name))
-                idx += 1
-            except MimosaError as e:
-                if "out of range" in str(e):
-                    break
-                raise
-        if not models:
-            raise CLIError(f"no motifs found in {path}.")
-        return models
-    return [_read_typed_model(path, model_type)]
 
 
 def _validate_null_compatibility(dist, *, strategy, metric, sequences, background, search_range, window_radius, realign_window, min_logerr, model_types=None):
@@ -169,34 +135,22 @@ def _run_profile(args):
 
     sequences = None
     bg_sequences = None
-    if isinstance(model1, ScoreProfile) and isinstance(model2, ScoreProfile):
-        result = compare(
-            model1,
-            model2,
-            metric=args.metric,
-            search_range=args.search_range,
-            window_radius=args.window_radius,
-            realign_window=args.realign_window,
-            min_logerr=args.min_logerr,
-            normalization=normalization,
-            cache=cache,
-        )
-    else:
+    if not (isinstance(model1, ScoreProfile) and isinstance(model2, ScoreProfile)):
         sequences = _resolve_sequences(args.fasta, args.num_sequences, args.seq_length, args.seed)
         bg_sequences = read_fasta(args.background)[0] if args.background else None
-        result = compare(
-            model1,
-            model2,
-            sequences,
-            metric=args.metric,
-            search_range=args.search_range,
-            window_radius=args.window_radius,
-            realign_window=args.realign_window,
-            min_logerr=args.min_logerr,
-            background=bg_sequences,
-            normalization=normalization,
-            cache=cache,
-        )
+    result = compare(
+        model1,
+        model2,
+        sequences,
+        metric=args.metric,
+        search_range=args.search_range,
+        window_radius=args.window_radius,
+        realign_window=args.realign_window,
+        min_logerr=args.min_logerr,
+        background=bg_sequences,
+        normalization=normalization,
+        cache=cache,
+    )
 
     annotated = _annotate_cli_result(
         result,
@@ -222,7 +176,12 @@ def _run_build_null(args):
         raise CLIError("motif collection path must be a directory.")
     if args.metric not in PROFILE_METRICS:
         raise CLIError(f"--metric must be one of: {', '.join(PROFILE_METRICS)}")
-    models = _read_model_collection(args.motifs, args.model_type)
+    files = sorted(
+        filename for filename in os.listdir(args.motifs) if filename.lower().endswith(".meme")
+    )
+    if not files:
+        raise CLIError(f"no pwm files found in {args.motifs}.")
+    models = [_read_typed_model(os.path.join(args.motifs, filename), "pwm") for filename in files]
     cache = Cache(args.cache_dir) if args.cache_dir else None
     sequences = _resolve_sequences(args.fasta, args.num_sequences, args.seq_length, args.seed)
     dist = build_null(

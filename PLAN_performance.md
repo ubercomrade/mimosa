@@ -1,5 +1,14 @@
 # План оптимизации производительности
 
+## Текущее состояние
+
+- `compare_many` подготавливает и сравнивает targets последовательно, без
+  target batching и повторного deduplication raw targets без cache.
+- Built-in scan использует только serial или row-parallel kernels; custom
+  models остаются serial.
+- Alignment использует row-parallel kernels на больших `1 vs 1` профилях и
+  сохраняет serial path для малых workloads.
+
 ## Ограничения
 
 - Основной API остаётся one-query: `compare_many(query, targets, ...)`.
@@ -25,9 +34,9 @@
 - время подготовки профилей;
 - время cache read, checksum и decode;
 - время normalization и anchors;
-- время packing и alignment kernel;
+- время полного alignment path;
 - peak RSS и размер cache на диске;
-- число Numba threads и выбранный dispatch path.
+- число Numba threads и фактически использованный serial/parallel path.
 
 Критерий сравнения: median минимум трёх повторов после отдельного JIT warmup.
 
@@ -42,9 +51,10 @@
 ### Правки
 
 - Вынести фазовые таймеры в benchmark, не добавляя постоянный logging в hot path.
-- Сравнить стоимость `_scan_models_batch`, `_fit_normalize`, `collect_both_anchors`, `_encode_prepared_profile` и `cache_set`.
+- Сравнить стоимость `_scan_batch_into`, `_fit_normalize`, `collect_both_anchors`, `_encode_prepared_profile` и `cache_set`.
 - Оптимизировать только фазу, которая занимает большую часть cold path.
-- Сохранить текущую batch-подготовку targets через `_prepare_profiles_batch`.
+- Готовить каждый target через `_prepare_profile`; cache остаётся единственным
+  способом повторно использовать готовый профиль.
 
 ### Файлы
 
@@ -59,18 +69,17 @@
 - Результаты до и после совпадают с текущими в тестах и на production fixture.
 - Cold wall time и peak RSS сравниваются отдельно; улучшение одного не должно скрывать ухудшение другого.
 
-## 2. Адаптивный dispatch для малых групп scan
+## 2. Row-parallel dispatch для scan
 
 ### Проблема
 
-`_scan_models_batch` использует kernels с `prange` по моделям. Для группы из
-одной-двух моделей такая распараллелка недогружает CPU, а накладные расходы
-многопоточности могут быть выше выигрыша.
+Одна модель уже является естественной единицей работы для `compare_many`.
+Распараллеливание по моделям добавляет packing и лишнюю память, поэтому scan
+параллелится только по строкам sequence batch.
 
 ### Правки
 
-- Оставить текущий model-parallel kernel для больших групп одного типа и одинаковой геометрии.
-- Для малых групп использовать serial kernel либо row-parallel `batch_scan_*_parallel` по числу строк.
+- Использовать serial kernel либо row-parallel `batch_scan_*_parallel` по числу строк.
 - Вынести порог в существующую политику `use_parallel`, не вводить отдельную систему настроек.
 - Для custom models сохранить текущий serial путь.
 - Не запускать вложенный `prange`: одновременно распараллеливать models и rows нельзя без риска oversubscription.
@@ -84,7 +93,7 @@
 ### Проверка
 
 - Численная эквивалентность serial и parallel scan.
-- Benchmark групп размером `1`, `2`, `4`, `16`, `64` на реальном размере sequence batch.
+- Benchmark serial и row-parallel scan на реальном размере sequence batch.
 - Проверить, что small workloads не становятся медленнее serial path.
 
 ## 3. Mmap-friendly формат дискового cache
@@ -147,21 +156,17 @@
 - Проверить отсутствие неконтролируемого роста RSS.
 - Сравнить hit rate для последовательного прохода по `1595` targets.
 
-## 5. Снизить стоимость target packing
+## 5. Target packing не добавлять
 
 ### Проблема
 
-`_compare_many_prepared_parallel` собирает target arrays через
-`np.concatenate`. Это необходимо для текущего kernel ABI, но создаёт копии и
-временный peak memory.
+Target packing был частью удалённого параллельного пути. Последовательная
+подготовка и сравнение не требуют отдельного packed representation.
 
 ### Правки
 
-- Сначала измерить долю packing в полном времени `compare_many` и его peak RSS.
-- Если доля существенна, заменить список частей + несколько `concatenate` на заранее рассчитанные offsets и один preallocated buffer с `copyto`.
-- Сохранить текущий special case для shared forward/reverse strands.
-- Не создавать reusable global packed cache для one-query API без подтверждённой пользы.
-- Не менять Numba kernel ABI до отдельного benchmark: packing может быть дешевле изменения kernel.
+- Не возвращать target packing и параллельный kernel без отдельного benchmark,
+  показывающего выигрыш без роста RSS.
 
 ### Файлы
 
@@ -171,9 +176,8 @@
 
 ### Проверка
 
-- Сравнить результаты serial/parallel и все три поддерживаемые metric.
-- Измерить packing time, peak RSS и время kernel отдельно.
-- Проверить target batches меньше и больше `MIN_PARALLEL_TARGETS`.
+- Сравнить serial и row-parallel результаты для всех трёх поддерживаемых metric.
+- Измерить peak RSS и время полного alignment path.
 
 ## 6. Уточнить блокировки cache
 
@@ -199,9 +203,9 @@ Process pool в runtime удалён. В обычном one-process запуск
 ## Порядок внедрения
 
 1. Добавить baseline benchmark и фазовые измерения.
-2. Проверить адаптивный scan dispatch для малых групп.
+2. Проверить row-parallel scan и alignment.
 3. Ввести byte-budgeted LRU и выбрать бюджет по RSS.
-4. Оптимизировать packing, только если benchmark подтвердит его стоимость.
+4. Не добавлять packing без подтверждённой стоимости.
 5. Реализовать mmap-friendly cache format как отдельную версию формата.
 6. Per-key locks оставить отложенными до подтверждения multi-process записи.
 
