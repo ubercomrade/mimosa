@@ -37,12 +37,7 @@ DINUC_MAP = {
     for j, b in enumerate("acgt")
 }
 
-DIMONT_MAX_LENGTH = MAX_DIMONT_SLIM_LENGTH
-DIMONT_MAX_SPAN = MAX_DIMONT_SLIM_ORDER
 LOG_UNIFORM_BASE = math.log(4.0)
-
-SLIM_MAX_LENGTH = MAX_DIMONT_SLIM_LENGTH
-SLIM_MAX_SPAN = MAX_DIMONT_SLIM_ORDER
 
 
 def _validate_probability_rows(rows, path, label):
@@ -540,11 +535,11 @@ def read_dimont(path):
     if not nodes:
         raise ModelFormatError(path, "no parameter trees found in Dimont model.")
     length_val = len(nodes)
-    if length_val > DIMONT_MAX_LENGTH:
-        raise ModelFormatError(path, f"Dimont length {length_val} exceeds limit {DIMONT_MAX_LENGTH}.")
+    if length_val > MAX_DIMONT_SLIM_LENGTH:
+        raise ModelFormatError(path, f"Dimont length {length_val} exceeds limit {MAX_DIMONT_SLIM_LENGTH}.")
     span = _dimont_span(context_positions_list)
-    if span > DIMONT_MAX_SPAN:
-        raise ModelFormatError(path, f"Dimont span {span} exceeds limit {DIMONT_MAX_SPAN}.")
+    if span > MAX_DIMONT_SLIM_ORDER:
+        raise ModelFormatError(path, f"Dimont span {span} exceeds limit {MAX_DIMONT_SLIM_ORDER}.")
     n_rows = 5 ** (span + 1)
     if n_rows * length_val > MAX_CONTEXT_REPRESENTATION_ELEMENTS:
         raise ModelFormatError(
@@ -698,8 +693,8 @@ def read_slim(path):
     if slim is None:
         raise ModelFormatError(path, "could not find Slim motif model (SLIM).")
     length_val = int(_xml_numeric(_xml_find(slim, "length"), path, "Slim length"))
-    if length_val > SLIM_MAX_LENGTH:
-        raise ModelFormatError(path, f"Slim length {length_val} exceeds limit {SLIM_MAX_LENGTH}.")
+    if length_val > MAX_DIMONT_SLIM_LENGTH:
+        raise ModelFormatError(path, f"Slim length {length_val} exceeds limit {MAX_DIMONT_SLIM_LENGTH}.")
     component_raw = _slim_parse_component_params(slim, path)
     ancestor_raw = _slim_parse_ancestor_params(slim, path)
     dependency_raw = _slim_parse_dependency_params(slim, path)
@@ -731,8 +726,8 @@ def read_slim(path):
                 f"Slim dependencyParameters position {position} has {len(dependency_raw[position])} components, expected {component_count}.",
             )
     span = _slim_span(component_raw, ancestor_raw, path)
-    if span > SLIM_MAX_SPAN:
-        raise ModelFormatError(path, f"Slim span {span} exceeds limit {SLIM_MAX_SPAN}.")
+    if span > MAX_DIMONT_SLIM_ORDER:
+        raise ModelFormatError(path, f"Slim span {span} exceeds limit {MAX_DIMONT_SLIM_ORDER}.")
     if not dependency_raw or not dependency_raw[0] or not dependency_raw[0][0] or not dependency_raw[0][0][0]:
         raise ModelFormatError(path, "malformed Slim model: empty dependency parameters.")
     alphabet = len(dependency_raw[0][0][0])

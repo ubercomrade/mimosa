@@ -34,7 +34,6 @@ from .arrays import (
     N_CODE,
     RaggedArray,
     StrandPair,
-    encode_base,
     encode_sequence,
     reverse_complement,
 )
@@ -100,7 +99,6 @@ __all__ = [
     "N_CODE",
     "RaggedArray",
     "StrandPair",
-    "encode_base",
     "encode_sequence",
     "reverse_complement",
     "ComparisonResult",

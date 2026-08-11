@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from mimosa.cli import CLIError, _validate_null_compatibility
+from mimosa.cli import _validate_null_compatibility
+from mimosa.errors import MimosaError
 
 MIMOSA = [sys.executable, "-m", "mimosa.cli"]
 
@@ -227,7 +228,7 @@ class TestCacheCommand:
             background_fingerprint="none",
             model_type="pwm",
         )
-        with pytest.raises(CLIError, match="alignment version"):
+        with pytest.raises(MimosaError, match="alignment version"):
             _validate_null_compatibility(
                 dist,
                 metric="co",

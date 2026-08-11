@@ -12,7 +12,6 @@ from mimosa.profiles.normalization import (
     EmpiricalLogTail,
     HybridEmpiricalLogTail,
     fit,
-    lookup_score,
     normalization_fingerprint,
     transform_scores,
 )
@@ -21,6 +20,26 @@ from mimosa.cache import Cache
 from mimosa.io.fasta import read_fasta, read_scores
 from mimosa.io.models import read_meme
 from mimosa.models import pwm_from_pfm
+
+
+def _lookup_score(table, score):
+    from mimosa.profiles.normalization import LogTailTable, HybridLogTailTable
+
+    if isinstance(table, LogTailTable):
+        idx = min(
+            int(np.searchsorted(-table.scores, -score, side="left")),
+            table.scores.size - 1,
+        )
+        return table.log_tail[idx]
+    if isinstance(table, HybridLogTailTable):
+        if table.exact_tail.scores.size and score >= table.exact_tail.scores[-1]:
+            return _lookup_score(table.exact_tail, score)
+        if table.log_tail.size == 0:
+            return np.float32(0.0)
+        index = 0 if table.bin_width == 0 else int((float(score) - float(table.minimum)) / table.bin_width)
+        index = min(max(index, 0), table.log_tail.size - 1)
+        return table.log_tail[index]
+    raise ValueError(f"unknown table type: {type(table)!r}")
 
 
 @pytest.fixture
@@ -49,9 +68,9 @@ class TestNormalization:
     def test_empirical_lookup(self):
         scores = np.array([1.0, 2.0, 3.0], dtype=np.float32)
         table = fit(EmpiricalLogTail(), scores)
-        assert lookup_score(table, np.float32(2.5)) == table.log_tail[1]
-        assert lookup_score(table, np.float32(0.0)) == table.log_tail[2]
-        assert lookup_score(table, np.float32(3.0)) == table.log_tail[0]
+        assert _lookup_score(table, np.float32(2.5)) == table.log_tail[1]
+        assert _lookup_score(table, np.float32(0.0)) == table.log_tail[2]
+        assert _lookup_score(table, np.float32(3.0)) == table.log_tail[0]
 
     def test_empty_scores(self):
         table = fit(EmpiricalLogTail(), np.array([], dtype=np.float32))
@@ -64,7 +83,7 @@ class TestNormalization:
     def test_hybrid_constant_scores(self):
         table = fit(HybridEmpiricalLogTail(), np.full(100, 5.0, dtype=np.float32))
         assert table.bin_width == 1.0
-        assert lookup_score(table, np.float32(5.0)) == 0.0
+        assert _lookup_score(table, np.float32(5.0)) == 0.0
 
     def test_hybrid_histogram_shape(self):
         rng = np.random.default_rng(1)
@@ -87,7 +106,7 @@ class TestNormalization:
         out = transform_scores(table, scores)
         for i in range(len(scores)):
             np.testing.assert_allclose(
-                out[i], [lookup_score(table, s) for s in scores[i]], rtol=1e-6
+                out[i], [_lookup_score(table, s) for s in scores[i]], rtol=1e-6
             )
 
     def test_hybrid_transform_matches_lookup(self):
@@ -98,7 +117,7 @@ class TestNormalization:
         scores = RaggedArray.from_rows([values[:1000], values[1000:]])
         table = fit(HybridEmpiricalLogTail(256), scores.data, tail_logerr=1.0)
         expected = np.array(
-            [lookup_score(table, value) for value in scores.data], dtype=np.float32
+            [_lookup_score(table, value) for value in scores.data], dtype=np.float32
         )
 
         serial = transform_scores(table, scores)
@@ -192,7 +211,10 @@ class TestCompare:
         query = prepare_profile(pwm_pair[0], batch)
         target = prepare_profile(pwm_pair[1], batch)
         monkeypatch.setattr(numba, "set_num_threads", calls.append)
-        compare_module._compare_prepared_with_threads(query, target, ProfileConfig(), 1)
+        compare_module._prepare_and_compare_with_threads(
+            query, target, batch, None, query.min_logerr, query.normalization,
+            ProfileConfig(), None, None, 1,
+        )
         assert calls == [1]
 
     @pytest.mark.parametrize("threshold", (0.0, 1.0))

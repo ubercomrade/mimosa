@@ -30,22 +30,18 @@ MODEL_TYPE_MAP = {
 PROFILE_MODEL_TYPES = ["scores", *MODEL_TYPE_MAP]
 
 
-class CLIError(Exception):
-    pass
-
-
 def _read_typed_model(path, model_type, background=0.25):
     if model_type == "scores":
         return read_scores(path)
     if model_type not in MODEL_TYPE_MAP:
-        raise CLIError(f"unknown model type: {model_type}")
+        raise MimosaError(f"unknown model type: {model_type}")
     kwargs = {"background": background}
     if model_type != "pwm":
         kwargs["format"] = model_type
     model = read_model(path, **kwargs)
     expected = MODEL_TYPE_MAP[model_type]
     if not isinstance(model, expected):
-        raise CLIError(
+        raise MimosaError(
             f"model at '{path}' is {type(model).__name__}, not the requested {model_type} type."
         )
     return model
@@ -79,19 +75,13 @@ def _validate_null_compatibility(dist, *, metric, sequences, background, search_
     ]
     for actual, expected, msg in checks:
         if actual != expected:
-            raise CLIError(msg)
+            raise MimosaError(msg)
     if not all(t == dist.model_type for t in model_types):
-        raise CLIError(
+        raise MimosaError(
             f"null distribution model type '{dist.model_type}' is incompatible with compared model types '{', '.join(model_types)}'."
         )
     if dist.contract["alignment_version"] != ALIGNMENT_VERSION:
-        raise CLIError("null distribution alignment version is incompatible with this comparison.")
-
-
-def _set_numba_threads(threads):
-    from numba import set_num_threads
-
-    set_num_threads(threads)
+        raise MimosaError("null distribution alignment version is incompatible with this comparison.")
 
 
 def _comparison_inputs(args):
@@ -120,13 +110,13 @@ def _annotate_comparison_results(results, args, sequences, background, model_typ
     if not args.pvalue:
         return results
     if not args.null_distribution:
-        raise CLIError("--pvalue requires an explicit --null-distribution bundle.")
+        raise MimosaError("--pvalue requires an explicit --null-distribution bundle.")
     from .io.bundles import read_null_bundle
     from .statistics import NullDistribution, annotate_results
 
     dist = NullDistribution(**read_null_bundle(args.null_distribution))
     if dist.contract["normalization_version"] != "hybrid-log-tail-v2;bins=65536":
-        raise CLIError("null distribution normalization is incompatible with this comparison.")
+        raise MimosaError("null distribution normalization is incompatible with this comparison.")
     _validate_null_compatibility(
         dist,
         metric=args.metric,
@@ -145,8 +135,9 @@ def _annotate_comparison_results(results, args, sequences, background, model_typ
 
 def _run_compare(args):
     from .compare import compare
+    from numba import set_num_threads
 
-    _set_numba_threads(args.numba_threads)
+    set_num_threads(args.numba_threads)
     query, targets, sequences, background, cache = _comparison_inputs(args)
     result = compare(
         query,
@@ -173,8 +164,9 @@ def _run_compare(args):
 
 def _run_compare_many(args):
     from .compare import compare_many
+    from numba import set_num_threads
 
-    _set_numba_threads(args.numba_threads)
+    set_num_threads(args.numba_threads)
     query, targets, sequences, background, cache = _comparison_inputs(args)
     results = compare_many(
         query,
@@ -205,12 +197,12 @@ def _run_build_null(args):
     from .statistics import build_null
 
     if not os.path.isdir(args.motifs):
-        raise CLIError("motif collection path must be a directory.")
+        raise MimosaError("motif collection path must be a directory.")
     files = sorted(
         filename for filename in os.listdir(args.motifs) if filename.lower().endswith(".meme")
     )
     if not files:
-        raise CLIError(f"no pwm files found in {args.motifs}.")
+        raise MimosaError(f"no pwm files found in {args.motifs}.")
     models = [_read_typed_model(os.path.join(args.motifs, filename), "pwm") for filename in files]
     cache = Cache(args.cache_dir) if args.cache_dir else None
     sequences = _resolve_sequences(args.fasta, args.num_sequences, args.seq_length, args.seed)
@@ -247,9 +239,9 @@ def _run_cache(args):
     cache_dir = args.cache_dir
     root = os.path.abspath(cache_dir)
     if root == os.path.dirname(root) or root == os.path.expanduser("~"):
-        raise CLIError("--cache-dir points to a dangerously broad directory.")
+        raise MimosaError("--cache-dir points to a dangerously broad directory.")
     if os.path.exists(root) and (not os.path.isdir(root) or os.path.islink(root)):
-        raise CLIError("--cache-dir must be a real directory, not a file or symlink.")
+        raise MimosaError("--cache-dir must be a real directory, not a file or symlink.")
     removed = clearcache(Cache(cache_dir))
     print(json.dumps({"cache_dir": cache_dir, "removed": removed}, indent=2, sort_keys=True))
     return 0
@@ -332,10 +324,7 @@ def main(argv=None):
             return _run_build_null(args)
         if args.command == "cache":
             return _run_cache(args)
-        raise CLIError(f"unknown command: {args.command}")
-    except CLIError as e:
-        print(f"error: {e}", file=sys.stderr)
-        return 1
+        raise MimosaError(f"unknown command: {args.command}")
     except (MimosaError, ValueError, TypeError, OSError) as e:
         print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
         return 2

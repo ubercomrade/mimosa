@@ -55,29 +55,21 @@ def _compare_prepared(query, target, config):
 
 
 _BUILTIN_MODELS = (PWM, BaMM, Dimont, SiteGA, Slim)
-_WORKER_CACHES = {}
+_worker_cache_path: str | None = None
+_worker_cache_obj = None
 
 
-def _compare_prepared_with_threads(query, target, config, threads):
-    from numba import set_num_threads
-
-    set_num_threads(threads)
-    return _compare_prepared(query, target, config)
-
-
-def _worker_cache(directory, token):
+def _worker_cache(directory):
+    global _worker_cache_path, _worker_cache_obj
     if directory is None:
         return None
-    key = (directory, token)
-    cache = _WORKER_CACHES.get(key)
-    if cache is None:
-        from .cache import Cache
+    if _worker_cache_path == directory:
+        return _worker_cache_obj
+    from .cache import Cache
 
-        # ponytail: retain only checksum state for the active disk cache.
-        _WORKER_CACHES.clear()
-        cache = Cache(directory)
-        _WORKER_CACHES[key] = cache
-    return cache
+    _worker_cache_path = directory
+    _worker_cache_obj = Cache(directory)
+    return _worker_cache_obj
 
 
 def _prepare_and_compare_with_threads(
@@ -89,7 +81,6 @@ def _prepare_and_compare_with_threads(
     normalization,
     config,
     cache_directory,
-    cache_token,
     preparation_context,
     threads,
 ):
@@ -102,7 +93,7 @@ def _prepare_and_compare_with_threads(
         background=background,
         threshold=threshold,
         normalization=normalization,
-        cache=_worker_cache(cache_directory, cache_token),
+        cache=_worker_cache(cache_directory),
         preparation_context=preparation_context,
     )
     if target is None:
@@ -192,14 +183,6 @@ def compare(query, target, sequences=None, *, background=None, metric="co", sear
     return _compare_prepared(pq, pt, config)
 
 
-def _positive_integer(value, name):
-    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
-        raise TypeError(f"{name} must be a positive integer.")
-    if value < 1:
-        raise ValueError(f"{name} must be a positive integer.")
-    return int(value)
-
-
 def compare_many(
     query,
     targets,
@@ -221,7 +204,11 @@ def compare_many(
     ``total_threads`` is divided between joblib target workers and Numba
     threads. Target preparation and alignment run in the same worker.
     """
-    total_threads = _positive_integer(total_threads, "total_threads")
+    if isinstance(total_threads, bool) or not isinstance(total_threads, (int, np.integer)):
+        raise TypeError("total_threads must be a positive integer.")
+    if total_threads < 1:
+        raise ValueError("total_threads must be a positive integer.")
+    total_threads = int(total_threads)
     if isinstance(inner_threads, bool) or not isinstance(inner_threads, (int, np.integer)):
         raise TypeError("inner_threads must be an integer from 1 through 4.")
     if not 1 <= inner_threads <= 4:
@@ -281,7 +268,6 @@ def compare_many(
                 norm,
                 config,
                 None if cache is None else cache.directory,
-                None if cache is None else cache._worker_token,
                 preparation_context,
                 int(inner_threads),
             )

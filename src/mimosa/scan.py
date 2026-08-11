@@ -15,11 +15,9 @@ from ._kernels import (
     batch_scan_reverse_parallel,
 )
 from .arrays import EncodedSequences, RaggedArray, StrandPair
-from .errors import ModelInterfaceError
 from .models import (
     BaMM,
     Dimont,
-    MotifModel,
     PWM,
     SiteGA,
     Slim,
@@ -106,10 +104,6 @@ def scan(model, sequences, *, strands="forward"):
     on the lower-overhead serial path.
     """
     _validate_strand_policy(strands)
-    if not isinstance(model, MotifModel):
-        raise ModelInterfaceError(
-            "compare", type(model).__name__, "model must be a MotifModel."
-        )
     if not isinstance(sequences, EncodedSequences):
         raise TypeError("sequences must be an EncodedSequences batch.")
     return _scan_batch_into(model, sequences, strands)

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .compare import compare
+from .compare import ComparisonResult, compare
 from .io.bundles import (
     content_fingerprint_float64,
     model_collection_fingerprint,
@@ -55,34 +55,9 @@ class NullDistribution:
         if not self.sampling_version:
             raise ValueError("null distribution sampling_version must not be empty.")
 
-    def to_dict(self):
-        return {
-            "strategy": self.strategy,
-            "metric": self.metric,
-            "raw_scores": self.raw_scores,
-            "pairs": self.pairs,
-            "n_null": self.n_null,
-            "n_models": self.n_models,
-            "model_type": self.model_type,
-            "shuffle": self.shuffle,
-            "seed": self.seed,
-            "sampling_version": self.sampling_version,
-            "model_collection_fingerprint": self.model_collection_fingerprint,
-            "sequence_fingerprint": self.sequence_fingerprint,
-            "background_fingerprint": self.background_fingerprint,
-            "contract": self.contract,
-        }
-
-
 @dataclass(frozen=True)
 class AnnotatedResult:
-    query: str
-    target: str
-    score: np.float32
-    offset: int
-    orientation: str
-    metric: str
-    n_sites: int
+    result: ComparisonResult
     p_value: float | None = None
     adj_p_value: float | None = None
     e_value: float | None = None
@@ -90,18 +65,12 @@ class AnnotatedResult:
     null_n: int | None = None
     null_estimator: str | None = None
 
+    def __getattr__(self, name):
+        return getattr(self.result, name)
+
     def to_dict(self):
-        d = {
-            "annotation_schema_version": 1,
-            "query": self.query,
-            "target": self.target,
-            "score": float(self.score),
-            "offset": self.offset,
-            "orientation": self.orientation,
-            "metric": self.metric,
-        }
-        if self.n_sites > 0:
-            d["n_sites"] = int(self.n_sites)
+        d = self.result.to_dict()
+        d["annotation_schema_version"] = 1
         if self.p_value is not None:
             d["p-value"] = self.p_value
         if self.adj_p_value is not None:
@@ -203,13 +172,7 @@ def annotate_results(results, dist, *, effective_number_of_targets=None):
     for idx, r in enumerate(results):
         annotated.append(
             AnnotatedResult(
-                r.query,
-                r.target,
-                r.score,
-                r.offset,
-                r.orientation,
-                r.metric,
-                r.n_sites,
+                r,
                 p_value=float(pvalues[idx]),
                 adj_p_value=float(adj[idx]),
                 e_value=evalue(pvalues[idx], effective),

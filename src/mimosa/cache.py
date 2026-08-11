@@ -3,14 +3,11 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
-import pickle
 import shutil
 import struct
 import tempfile
 import tomllib
-import uuid
 from contextlib import contextmanager
 from threading import RLock
 
@@ -25,6 +22,7 @@ from .io.bundles import (
     model_fingerprint,
     score_profile_fingerprint,
     sequence_fingerprint,
+    toml_value,
 )
 from .profiles.anchors import AnchorCSR
 from .profiles.normalization import (
@@ -57,7 +55,6 @@ class Cache:
         self.directory = str(directory)
         self._verified_entries = set()
         self._lock = RLock()
-        self._worker_token = uuid.uuid4().hex
 
     def __repr__(self):
         return f"Cache({self.directory!r})"
@@ -248,40 +245,9 @@ def _encode_prepared_profile_with_metadata(profile):
     return bytes(payload), metadata
 
 
-def _decode_prepared_profile(data):
-    try:
-        profile = pickle.loads(data)
-    except Exception:
-        return None
-    if not isinstance(profile, PreparedProfile):
-        return None
-    try:
-        return PreparedProfile(
-            profile.name,
-            profile.bundle,
-            profile.anchors,
-            profile.min_logerr,
-            profile.normalization,
-        )
-    except (TypeError, ValueError):
-        return None
-
-
-def _toml_value(value):
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        return repr(value)
-    if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=True)
-    raise TypeError(f"unsupported cache metadata type {type(value).__name__}")
-
-
 def _metadata_checksum(meta):
     payload = "".join(
-        f"{name} = {_toml_value(meta[name])}\n"
+        f"{name} = {toml_value(meta[name])}\n"
         for name in sorted(meta)
         if name != "metadata_checksum"
     )
@@ -536,7 +502,7 @@ def cache_set(cache, key, data, metadata=None):
                     f.write(data)
                 with open(os.path.join(entry_stage, _CACHE_META_NAME), "w", encoding="utf-8") as f:
                     for name in sorted(meta):
-                        f.write(f"{name} = {_toml_value(meta[name])}\n")
+                        f.write(f"{name} = {toml_value(meta[name])}\n")
                 target = _cache_entry_dir(cache, key)
                 if os.path.exists(target):
                     shutil.rmtree(target)
@@ -605,13 +571,7 @@ def _cached_prepared_profile(
         profile = _cached_mmap_prepared_profile(cache, key)
         if profile is not None and profile.min_logerr == np.float32(threshold) and profile.normalization == normalization:
             return key, profile
-        data = cache_get(cache, key)
-        if data is None:
-            return key, None
-        profile = _decode_prepared_profile(data)
-        if profile is None or profile.min_logerr != np.float32(threshold) or profile.normalization != normalization:
-            profile = None
-        return key, profile
+        return key, None
 
 
 def _store_prepared_profile(cache, key, profile):

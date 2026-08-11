@@ -33,15 +33,6 @@ def _validate_ragged_offsets(offsets, data_len):
         )
 
 
-def _validate_encoded_data(data):
-    if np.any(data > N_CODE):
-        bad = int(np.flatnonzero(data > N_CODE)[0])
-        raise InvariantError(
-            f"invalid encoded base 0x{int(data[bad]):x} at index {bad}; "
-            "valid codes are 0x00..0x04 (A,C,G,T,N)."
-        )
-
-
 def _validate_raw_encoded_data(data):
     if data.size == 0:
         return
@@ -85,7 +76,6 @@ class EncodedSequences:
         data = np.ascontiguousarray(raw_data, dtype=np.uint8)
         offsets = np.ascontiguousarray(raw_offsets, dtype=np.int64)
         _validate_ragged_offsets(offsets, data.size)
-        _validate_encoded_data(data)
         self.data = data
         self.offsets = offsets
 
@@ -116,10 +106,6 @@ class EncodedSequences:
 
     def __repr__(self):
         return f"EncodedSequences({len(self)} sequences, {self.data.size} bytes)"
-
-
-def encode_base(byte):
-    return int(_ENCODE_TABLE[byte])
 
 
 def encode_sequence(s):
