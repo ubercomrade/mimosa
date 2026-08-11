@@ -17,6 +17,7 @@ from mimosa.profiles.normalization import (
     transform_scores,
 )
 from mimosa.profiles.prepared import ScoreProfile
+from mimosa.cache import Cache
 from mimosa.io.fasta import read_fasta, read_scores
 from mimosa.io.models import read_meme
 from mimosa.models import pwm_from_pfm
@@ -162,6 +163,106 @@ class TestCompare:
         targets = [target, query, target, query, target]
         expected = [compare(query, target) for target in targets]
         assert compare_many(query, targets, batch) == expected
+
+    @pytest.mark.parametrize(
+        "total_threads, inner_threads",
+        ((1, 1), (4, 1), (4, 2), (4, 4)),
+    )
+    def test_compare_many_budgets_match_serial_and_preserve_order(
+        self, pwm_pair, batch, total_threads, inner_threads
+    ):
+        query = prepare_profile(pwm_pair[0], batch)
+        target = prepare_profile(pwm_pair[1], batch)
+        targets = [target, query, target, query]
+        expected = compare_many(query, targets, batch)
+        assert compare_many(
+            query,
+            targets,
+            batch,
+            total_threads=total_threads,
+            inner_threads=inner_threads,
+        ) == expected
+
+    def test_joblib_worker_disables_inner_numba_threads(self, pwm_pair, batch, monkeypatch):
+        import importlib
+        import numba
+
+        compare_module = importlib.import_module("mimosa.compare")
+        calls = []
+        query = prepare_profile(pwm_pair[0], batch)
+        target = prepare_profile(pwm_pair[1], batch)
+        monkeypatch.setattr(numba, "set_num_threads", calls.append)
+        compare_module._compare_prepared_with_threads(query, target, ProfileConfig(), 1)
+        assert calls == [1]
+
+    @pytest.mark.parametrize("threshold", (0.0, 1.0))
+    @pytest.mark.parametrize("metric", ("co", "dice", "cosine"))
+    def test_compare_many_joblib_matches_serial(
+        self, pwm_pair, batch, tmp_path, metric, threshold
+    ):
+        query = prepare_profile(pwm_pair[0], batch, min_logerr=threshold)
+        targets = [pwm_pair[1], pwm_pair[0], pwm_pair[1]]
+        serial = compare_many(
+            query,
+            targets,
+            batch,
+            metric=metric,
+            min_logerr=threshold,
+        )
+        parallel = compare_many(
+            query,
+            targets,
+            batch,
+            metric=metric,
+            min_logerr=threshold,
+            cache=Cache(str(tmp_path)),
+            total_threads=2,
+            inner_threads=1,
+        )
+        assert parallel == serial
+
+    def test_compare_many_joblib_cold_and_disk_cache_match(self, pwm_pair, batch, tmp_path):
+        targets = [pwm_pair[1], pwm_pair[1]]
+        expected = compare_many(pwm_pair[0], targets, batch)
+        cold = compare_many(
+            pwm_pair[0], targets, batch, cache=Cache(str(tmp_path)), total_threads=2
+        )
+        disk = compare_many(
+            pwm_pair[0], targets, batch, cache=Cache(str(tmp_path)), total_threads=2
+        )
+        assert cold == disk == expected
+
+    @pytest.mark.parametrize("total_threads", (False, 0, -1, 1.5, "2"))
+    def test_compare_many_rejects_invalid_total_threads(self, pwm_pair, batch, total_threads):
+        with pytest.raises((TypeError, ValueError), match="total_threads"):
+            compare_many(pwm_pair[0], [pwm_pair[1]], batch, total_threads=total_threads)
+
+    @pytest.mark.parametrize("inner_threads", (False, 0, -1, 5, 1.5, "2"))
+    def test_compare_many_rejects_invalid_inner_threads(self, pwm_pair, batch, inner_threads):
+        with pytest.raises((TypeError, ValueError), match="inner_threads"):
+            compare_many(pwm_pair[0], [pwm_pair[1]], batch, inner_threads=inner_threads)
+
+    def test_compare_many_rejects_non_divisible_budget(self, pwm_pair, batch):
+        with pytest.raises(ValueError, match="divisible"):
+            compare_many(pwm_pair[0], [pwm_pair[1]], batch, total_threads=3, inner_threads=2)
+
+    def test_compare_many_rejects_raw_custom_model_in_joblib_path(
+        self, pwm_pair, batch
+    ):
+        from mimosa import MotifModel
+
+        class CustomModel(MotifModel):
+            name = "custom"
+            motif_length = 1
+
+            def scan_into(self, sequence, forward, reverse, /):
+                forward.fill(0)
+                reverse.fill(0)
+
+        with pytest.raises(TypeError, match="custom models"):
+            compare_many(
+                pwm_pair[0], [CustomModel()], batch, total_threads=2, inner_threads=1
+            )
 
     def test_compare_many_reprepares_duplicate_raw_targets_without_cache(
         self, pwm_pair, batch, monkeypatch

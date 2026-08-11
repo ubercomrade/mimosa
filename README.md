@@ -74,16 +74,20 @@ uv sync
 Compare two PWM models on a FASTA batch:
 
 ```bash
-mimosa profile examples/foxa2.meme examples/gata2.meme \
-  --model1-type pwm --model2-type pwm \
+mimosa compare examples/foxa2.meme examples/gata2.meme \
+  --query-type pwm --target-type pwm \
   --fasta examples/foreground.fa --metric co
 ```
 
 Compare precomputed score profiles:
 
 ```bash
-mimosa profile examples/scores_1.fasta examples/scores_2.fasta \
-  --model1-type scores --model2-type scores --metric cosine
+mimosa compare examples/scores_1.fasta examples/scores_2.fasta \
+  --query-type scores --target-type scores --metric cosine
+
+mimosa compare-many examples/foxa2.meme examples/gata2.meme examples/gata4.meme \
+  --query-type pwm --target-type pwm --fasta examples/foreground.fa \
+  --total-threads 4 --numba-threads 1
 ```
 
 Build and use an empirical null distribution:
@@ -93,8 +97,8 @@ mimosa build-null examples/ \
   --output output/null_bundle \
   --fasta examples/foreground.fa --num-samples 2000 --seed 127
 
-mimosa profile examples/foxa2.meme examples/gata2.meme \
-  --model1-type pwm --model2-type pwm \
+mimosa compare examples/foxa2.meme examples/gata2.meme \
+  --query-type pwm --target-type pwm \
   --fasta examples/foreground.fa \
   --pvalue --null-distribution output/null_bundle
 ```
@@ -105,7 +109,8 @@ Manage the optional prepared-profile cache:
 mimosa cache clear --cache-dir .mimosa-cache
 ```
 
-Successful `profile` results are JSON on `stdout`. Diagnostics and errors are
+Successful `compare` results are one JSON object; `compare-many` results are an
+ordered JSON array on `stdout`. Diagnostics and errors are
 written to `stderr`. Run `mimosa --help` for the complete CLI reference.
 
 ## Python API
@@ -129,6 +134,11 @@ from mimosa import compare_many, prepare_profile
 prepared = prepare_profile(query, sequences)
 results = compare_many(prepared, [target], sequences, metric="cosine")
 ```
+
+`compare_many` derives `joblib_workers = total_threads / inner_threads`.
+`inner_threads` must be from 1 through 4, and `total_threads` must be divisible
+by it. Built-in models and prepared profiles can use outer parallelism; prepare
+custom models first or use serial comparison.
 
 The public API also includes `scan`, `read_scores`, `select_sites`,
 `reconstruct_pfm`, `build_null`, `annotate_results`, and `write_model`.
@@ -158,6 +168,10 @@ Run the production-path performance benchmark with:
 ```bash
 uv run python benchmarks/benchmark_performance.py
 ```
+
+The report measures full-pipeline cold and disk-cache modes. Use comma-separated
+`--total-threads` and `--numba-threads` values; only divisible pairs are run.
+Each result reports the total budget, Numba budget, and derived joblib workers.
 
 ## License
 

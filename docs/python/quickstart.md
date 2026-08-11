@@ -70,6 +70,27 @@ targets = [target, read_model("examples/gata4.meme")]
 results = compare_many(prepared_query, targets, sequences, metric="cosine")
 ```
 
+For target-level parallelism, divide a total thread budget between joblib
+workers and Numba threads:
+
+```bash
+NUMBA_NUM_THREADS=1 python compare_many.py
+```
+
+```python
+results = compare_many(
+    prepared_query,
+    targets,
+    total_threads=4,
+    inner_threads=1,
+    metric="cosine",
+)
+```
+
+The derived target worker count is `total_threads / inner_threads`. Numba
+threads are limited to 1 through 4, and the total budget must be divisible by
+the inner budget.
+
 For precomputed score tracks, use `read_scores`:
 
 ```python

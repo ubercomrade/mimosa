@@ -21,15 +21,15 @@ def run_cli(*args, **kwargs):
     return result
 
 
-class TestProfileCommand:
+class TestCompareCommand:
     def test_score_profiles(self):
         r = run_cli(
-            "profile",
+            "compare",
             "examples/scores_1.fasta",
             "examples/scores_2.fasta",
-            "--model1-type",
+            "--query-type",
             "scores",
-            "--model2-type",
+            "--target-type",
             "scores",
         )
         assert r.returncode == 0, r.stderr
@@ -43,12 +43,12 @@ class TestProfileCommand:
 
     def test_motif_models_with_fasta(self):
         r = run_cli(
-            "profile",
+            "compare",
             "examples/foxa2.meme",
             "examples/gata2.meme",
-            "--model1-type",
+            "--query-type",
             "pwm",
-            "--model2-type",
+            "--target-type",
             "pwm",
             "--fasta",
             "examples/foreground.fa",
@@ -59,18 +59,18 @@ class TestProfileCommand:
         assert d["n_sites"] == 199
 
     def test_missing_type(self):
-        r = run_cli("profile", "a", "b")
+        r = run_cli("compare", "a", "b")
         assert r.returncode != 0
         assert "error" in r.stderr
 
     def test_invalid_metric(self):
         r = run_cli(
-            "profile",
+            "compare",
             "examples/scores_1.fasta",
             "examples/scores_2.fasta",
-            "--model1-type",
+            "--query-type",
             "scores",
-            "--model2-type",
+            "--target-type",
             "scores",
             "--metric",
             "bogus",
@@ -79,30 +79,65 @@ class TestProfileCommand:
 
     def test_missing_file(self):
         r = run_cli(
-            "profile",
+            "compare",
             "nope.fa",
             "examples/scores_2.fasta",
-            "--model1-type",
+            "--query-type",
             "scores",
-            "--model2-type",
+            "--target-type",
             "scores",
         )
         assert r.returncode == 2
 
     def test_metric_variant(self):
         r = run_cli(
-            "profile",
+            "compare",
             "examples/scores_1.fasta",
             "examples/scores_2.fasta",
-            "--model1-type",
+            "--query-type",
             "scores",
-            "--model2-type",
+            "--target-type",
             "scores",
             "--metric",
             "cosine",
         )
         assert r.returncode == 0, r.stderr
         assert json.loads(r.stdout)["metric"] == "cosine"
+
+
+class TestCompareManyCommand:
+    def test_json_array_preserves_target_order_and_type(self):
+        r = run_cli(
+            "compare-many",
+            "examples/scores_1.fasta",
+            "examples/scores_2.fasta",
+            "examples/scores_1.fasta",
+            "--query-type",
+            "scores",
+            "--target-type",
+            "scores",
+        )
+        assert r.returncode == 0, r.stderr
+        results = json.loads(r.stdout)
+        assert isinstance(results, list)
+        assert [result["target"] for result in results] == ["scores_2", "scores_1"]
+
+    @pytest.mark.parametrize(
+        "option",
+        (("--total-threads", "3", "--numba-threads", "2"), ("--numba-threads", "5")),
+    )
+    def test_rejects_invalid_thread_budget(self, option):
+        r = run_cli(
+            "compare-many",
+            "examples/scores_1.fasta",
+            "examples/scores_2.fasta",
+            "--query-type",
+            "scores",
+            "--target-type",
+            "scores",
+            *option,
+        )
+        assert r.returncode != 0
 
 
 class TestBuildNullCommand:
@@ -120,6 +155,8 @@ class TestBuildNullCommand:
             str(out),
             "--num-samples",
             "10",
+            "--fasta",
+            "examples/foreground.fa",
         )
         assert r.returncode == 0, r.stderr
         d = json.loads(r.stdout)
@@ -127,6 +164,23 @@ class TestBuildNullCommand:
         assert d["n_null"] == 10
         assert out.is_dir()
         assert (out / "manifest.toml").is_file()
+        compared = run_cli(
+            "compare-many",
+            "examples/foxa2.meme",
+            "examples/gata2.meme",
+            "examples/gata4.meme",
+            "--query-type",
+            "pwm",
+            "--target-type",
+            "pwm",
+            "--fasta",
+            "examples/foreground.fa",
+            "--pvalue",
+            "--null-distribution",
+            str(out),
+        )
+        assert compared.returncode == 0, compared.stderr
+        assert all("p-value" in item for item in json.loads(compared.stdout))
 
     def test_build_null_requires_dir(self, tmp_path):
         r = run_cli(

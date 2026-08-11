@@ -78,8 +78,13 @@ compare(
 profiles. Prepared profiles used together must have compatible thresholds and
 normalization strategies.
 
-`compare_many(query, targets, sequences=None, **options)` keeps target order
-stable and reuses a prepared query.
+`compare_many(query, targets, sequences=None, total_threads=1,
+inner_threads=1, **options)` keeps target order stable and reuses a prepared
+query. It derives `joblib_workers = total_threads / inner_threads`; the
+complete target preparation and alignment pipeline runs in each joblib worker
+when that value is greater than one. `inner_threads` is limited to 1 through 4
+and `total_threads` must be divisible by it. Raw custom models require serial
+comparison or preparation before calling the parallel path.
 
 `ComparisonResult` is immutable and exposes `query`, `target`, `score`,
 `offset`, `orientation`, `metric`, and `n_sites`. Call `to_dict()` at an API or

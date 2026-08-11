@@ -6,13 +6,13 @@ With `uv`, use `uv run mimosa` from the repository checkout.
 Successful machine-readable output is written to `stdout`. Diagnostics,
 errors, and progress reporting are written to `stderr`.
 
-## `profile`
+## `compare`
 
 Compare two model-derived or precomputed profiles:
 
 ```bash
-uv run mimosa profile MODEL1 MODEL2 \
-  --model1-type TYPE1 --model2-type TYPE2 \
+uv run mimosa compare QUERY TARGET \
+  --query-type QUERY_TYPE --target-type TARGET_TYPE \
   [--fasta FASTA] [--background FASTA] [options]
 ```
 
@@ -26,17 +26,35 @@ Important options:
 - `--background PATH` supplies a separate sequence batch for normalization.
 - `--search-range`, `--window-radius`, and `--realign-window` configure alignment.
 - `--min-logerr` controls anchor selection and exact-tail calibration.
-- `--cache-dir PATH` enables prepared-profile caching.
+- `--cache-dir PATH` enables prepared-profile disk/mmap caching.
 - `--pvalue --null-distribution PATH` adds empirical significance annotations.
 - `--effective-number-of-targets N` changes E-values without changing BH adjustment.
 
 Example:
 
 ```bash
-uv run mimosa profile examples/foxa2.meme examples/gata2.meme \
-  --model1-type pwm --model2-type pwm \
+uv run mimosa compare examples/foxa2.meme examples/gata2.meme \
+  --query-type pwm --target-type pwm \
   --fasta examples/foreground.fa --metric cosine
 ```
+
+## `compare-many`
+
+Compare one query against an ordered list of targets. All targets use the same
+`--target-type`:
+
+```bash
+uv run mimosa compare-many QUERY TARGET [TARGET ...] \
+  --query-type QUERY_TYPE --target-type TARGET_TYPE \
+  [--total-threads TOTAL] [--numba-threads NUMBA] [options]
+```
+
+`--numba-threads` is limited to 1 through 4. `TOTAL` must be positive and
+divisible by `NUMBA`; the derived joblib worker count is `TOTAL / NUMBA`.
+Results are emitted as an ordered JSON array. `--pvalue` annotates every result
+after validating the query and shared target types against the null bundle.
+`--cache-dir` is optional; without it no cache directory or mmap reuse is
+created.
 
 ## `build-null`
 
@@ -64,7 +82,7 @@ uv run mimosa cache clear --cache-dir .mimosa-cache
 
 - `--version` prints the package version.
 - `--help` prints command and option help.
-- `profile` returns JSON for successful comparisons.
+- `compare` returns one JSON object; `compare-many` returns an ordered JSON array.
 - `CLIError` failures return exit code `1`.
 - Runtime, input, and model failures return exit code `2`.
 - Standard argparse usage errors also use argparse's exit code `2`.

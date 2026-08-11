@@ -59,15 +59,15 @@ from mimosa import prepare_profile
 prepared = prepare_profile(
     model,
     sequences,
-    cache=Cache(".mimosa-cache", memory_budget_bytes=1 << 30),
+    cache=Cache(".mimosa-cache"),
 )
 ```
 
 Disk hits verify the payload checksum once per cache instance and expose the
-numeric sections through read-only memory maps. The in-process LRU is limited by
-backing-array bytes rather than profile count. Entries written by older
-versions use the legacy pickle fallback and should only be opened from a
-trusted cache directory.
+numeric sections through read-only memory maps. The cache does not retain
+prepared profiles in a process-local store, so each disk hit maps the prepared
+sections from the cache entry. Entries written by older versions use the legacy
+pickle fallback and should only be opened from a trusted cache directory.
 
 Cache keys include the model or score-profile fingerprint, sequence and
 background fingerprints, the Float32 `min_logerr` bit pattern, normalization

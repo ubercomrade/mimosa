@@ -1,6 +1,33 @@
 """Mimosa: motif scanning, comparison, and statistical evaluation in Python."""
 
+# Imports below intentionally follow the CLI thread-budget bootstrap.
+# ruff: noqa: E402
+
+import os
+import sys
 from importlib.metadata import version
+
+
+def _configure_cli_numba_threads():
+    if len(sys.argv) < 2 or sys.argv[1] not in {"compare", "compare-many"}:
+        return
+    for index, argument in enumerate(sys.argv[2:], start=2):
+        if argument.startswith("--numba-threads="):
+            value = argument.split("=", 1)[1]
+        elif argument == "--numba-threads" and index + 1 < len(sys.argv):
+            value = sys.argv[index + 1]
+        else:
+            continue
+        try:
+            value = int(value)
+        except ValueError:
+            return
+        if 1 <= value <= 4:
+            os.environ["NUMBA_NUM_THREADS"] = str(value)
+        return
+
+
+_configure_cli_numba_threads()
 
 from .arrays import (
     EncodedSequences,
