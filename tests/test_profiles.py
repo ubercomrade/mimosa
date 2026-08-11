@@ -12,14 +12,34 @@ from mimosa.profiles.normalization import (
     EmpiricalLogTail,
     HybridEmpiricalLogTail,
     fit,
-    lookup_score,
     normalization_fingerprint,
     transform_scores,
 )
 from mimosa.profiles.prepared import ScoreProfile
+from mimosa.cache import Cache
 from mimosa.io.fasta import read_fasta, read_scores
 from mimosa.io.models import read_meme
 from mimosa.models import pwm_from_pfm
+
+
+def _lookup_score(table, score):
+    from mimosa.profiles.normalization import LogTailTable, HybridLogTailTable
+
+    if isinstance(table, LogTailTable):
+        idx = min(
+            int(np.searchsorted(-table.scores, -score, side="left")),
+            table.scores.size - 1,
+        )
+        return table.log_tail[idx]
+    if isinstance(table, HybridLogTailTable):
+        if table.exact_tail.scores.size and score >= table.exact_tail.scores[-1]:
+            return _lookup_score(table.exact_tail, score)
+        if table.log_tail.size == 0:
+            return np.float32(0.0)
+        index = 0 if table.bin_width == 0 else int((float(score) - float(table.minimum)) / table.bin_width)
+        index = min(max(index, 0), table.log_tail.size - 1)
+        return table.log_tail[index]
+    raise ValueError(f"unknown table type: {type(table)!r}")
 
 
 @pytest.fixture
@@ -48,9 +68,9 @@ class TestNormalization:
     def test_empirical_lookup(self):
         scores = np.array([1.0, 2.0, 3.0], dtype=np.float32)
         table = fit(EmpiricalLogTail(), scores)
-        assert lookup_score(table, np.float32(2.5)) == table.log_tail[1]
-        assert lookup_score(table, np.float32(0.0)) == table.log_tail[2]
-        assert lookup_score(table, np.float32(3.0)) == table.log_tail[0]
+        assert _lookup_score(table, np.float32(2.5)) == table.log_tail[1]
+        assert _lookup_score(table, np.float32(0.0)) == table.log_tail[2]
+        assert _lookup_score(table, np.float32(3.0)) == table.log_tail[0]
 
     def test_empty_scores(self):
         table = fit(EmpiricalLogTail(), np.array([], dtype=np.float32))
@@ -63,7 +83,7 @@ class TestNormalization:
     def test_hybrid_constant_scores(self):
         table = fit(HybridEmpiricalLogTail(), np.full(100, 5.0, dtype=np.float32))
         assert table.bin_width == 1.0
-        assert lookup_score(table, np.float32(5.0)) == 0.0
+        assert _lookup_score(table, np.float32(5.0)) == 0.0
 
     def test_hybrid_histogram_shape(self):
         rng = np.random.default_rng(1)
@@ -86,7 +106,7 @@ class TestNormalization:
         out = transform_scores(table, scores)
         for i in range(len(scores)):
             np.testing.assert_allclose(
-                out[i], [lookup_score(table, s) for s in scores[i]], rtol=1e-6
+                out[i], [_lookup_score(table, s) for s in scores[i]], rtol=1e-6
             )
 
     def test_hybrid_transform_matches_lookup(self):
@@ -97,7 +117,7 @@ class TestNormalization:
         scores = RaggedArray.from_rows([values[:1000], values[1000:]])
         table = fit(HybridEmpiricalLogTail(256), scores.data, tail_logerr=1.0)
         expected = np.array(
-            [lookup_score(table, value) for value in scores.data], dtype=np.float32
+            [_lookup_score(table, value) for value in scores.data], dtype=np.float32
         )
 
         serial = transform_scores(table, scores)
@@ -162,6 +182,109 @@ class TestCompare:
         targets = [target, query, target, query, target]
         expected = [compare(query, target) for target in targets]
         assert compare_many(query, targets, batch) == expected
+
+    @pytest.mark.parametrize(
+        "total_threads, inner_threads",
+        ((1, 1), (4, 1), (4, 2), (4, 4)),
+    )
+    def test_compare_many_budgets_match_serial_and_preserve_order(
+        self, pwm_pair, batch, total_threads, inner_threads
+    ):
+        query = prepare_profile(pwm_pair[0], batch)
+        target = prepare_profile(pwm_pair[1], batch)
+        targets = [target, query, target, query]
+        expected = compare_many(query, targets, batch)
+        assert compare_many(
+            query,
+            targets,
+            batch,
+            total_threads=total_threads,
+            inner_threads=inner_threads,
+        ) == expected
+
+    def test_joblib_worker_disables_inner_numba_threads(self, pwm_pair, batch, monkeypatch):
+        import importlib
+        import numba
+
+        compare_module = importlib.import_module("mimosa.compare")
+        calls = []
+        query = prepare_profile(pwm_pair[0], batch)
+        target = prepare_profile(pwm_pair[1], batch)
+        monkeypatch.setattr(numba, "set_num_threads", calls.append)
+        compare_module._prepare_and_compare_with_threads(
+            query, target, batch, None, query.min_logerr, query.normalization,
+            ProfileConfig(), None, None, 1,
+        )
+        assert calls == [1]
+
+    @pytest.mark.parametrize("threshold", (0.0, 1.0))
+    @pytest.mark.parametrize("metric", ("co", "dice", "cosine"))
+    def test_compare_many_joblib_matches_serial(
+        self, pwm_pair, batch, tmp_path, metric, threshold
+    ):
+        query = prepare_profile(pwm_pair[0], batch, min_logerr=threshold)
+        targets = [pwm_pair[1], pwm_pair[0], pwm_pair[1]]
+        serial = compare_many(
+            query,
+            targets,
+            batch,
+            metric=metric,
+            min_logerr=threshold,
+        )
+        parallel = compare_many(
+            query,
+            targets,
+            batch,
+            metric=metric,
+            min_logerr=threshold,
+            cache=Cache(str(tmp_path)),
+            total_threads=2,
+            inner_threads=1,
+        )
+        assert parallel == serial
+
+    def test_compare_many_joblib_cold_and_disk_cache_match(self, pwm_pair, batch, tmp_path):
+        targets = [pwm_pair[1], pwm_pair[1]]
+        expected = compare_many(pwm_pair[0], targets, batch)
+        cold = compare_many(
+            pwm_pair[0], targets, batch, cache=Cache(str(tmp_path)), total_threads=2
+        )
+        disk = compare_many(
+            pwm_pair[0], targets, batch, cache=Cache(str(tmp_path)), total_threads=2
+        )
+        assert cold == disk == expected
+
+    @pytest.mark.parametrize("total_threads", (False, 0, -1, 1.5, "2"))
+    def test_compare_many_rejects_invalid_total_threads(self, pwm_pair, batch, total_threads):
+        with pytest.raises((TypeError, ValueError), match="total_threads"):
+            compare_many(pwm_pair[0], [pwm_pair[1]], batch, total_threads=total_threads)
+
+    @pytest.mark.parametrize("inner_threads", (False, 0, -1, 5, 1.5, "2"))
+    def test_compare_many_rejects_invalid_inner_threads(self, pwm_pair, batch, inner_threads):
+        with pytest.raises((TypeError, ValueError), match="inner_threads"):
+            compare_many(pwm_pair[0], [pwm_pair[1]], batch, inner_threads=inner_threads)
+
+    def test_compare_many_rejects_non_divisible_budget(self, pwm_pair, batch):
+        with pytest.raises(ValueError, match="divisible"):
+            compare_many(pwm_pair[0], [pwm_pair[1]], batch, total_threads=3, inner_threads=2)
+
+    def test_compare_many_rejects_raw_custom_model_in_joblib_path(
+        self, pwm_pair, batch
+    ):
+        from mimosa import MotifModel
+
+        class CustomModel(MotifModel):
+            name = "custom"
+            motif_length = 1
+
+            def scan_into(self, sequence, forward, reverse, /):
+                forward.fill(0)
+                reverse.fill(0)
+
+        with pytest.raises(TypeError, match="custom models"):
+            compare_many(
+                pwm_pair[0], [CustomModel()], batch, total_threads=2, inner_threads=1
+            )
 
     def test_compare_many_reprepares_duplicate_raw_targets_without_cache(
         self, pwm_pair, batch, monkeypatch

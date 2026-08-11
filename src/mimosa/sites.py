@@ -55,14 +55,6 @@ class SiteCollection:
     def __len__(self):
         return self.seq_indices.size
 
-    def to_dict(self):
-        return {
-            "seq_indices": self.seq_indices.tolist(),
-            "starts": self.starts.tolist(),
-            "strands": self.strands.tolist(),
-            "scores": self.scores.tolist(),
-        }
-
 
 def _collect_best_hits(bundle):
     n = len(bundle.forward)

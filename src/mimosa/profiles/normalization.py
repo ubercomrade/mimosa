@@ -116,27 +116,6 @@ def fit(strategy, scores, *, tail_logerr=0.0):
     return HybridLogTailTable(lo, width, histogram_log_tail, exact)
 
 
-def lookup_score(table, score):
-    if isinstance(table, LogTailTable):
-        idx = min(
-            int(np.searchsorted(-table.scores, -score, side="left")),
-            table.scores.size - 1,
-        )
-        return table.log_tail[idx]
-    if isinstance(table, HybridLogTailTable):
-        if table.exact_tail.scores.size and score >= table.exact_tail.scores[-1]:
-            return lookup_score(table.exact_tail, score)
-        if table.log_tail.size == 0:
-            return np.float32(0.0)
-        if table.bin_width == 0:
-            index = 0
-        else:
-            index = int(math.floor((float(score) - float(table.minimum)) / table.bin_width))
-        index = min(max(index, 0), table.log_tail.size - 1)
-        return table.log_tail[index]
-    raise ValueError(f"unknown table type: {type(table)!r}")
-
-
 def transform_scores(table, scores):
     out = np.empty(scores.data.size, dtype=np.float32)
     parallel = use_parallel(scores.data.size)

@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from joblib import Parallel, delayed
 
-from .models import MotifModel
+from .models import BaMM, Dimont, MotifModel, PWM, SiteGA, Slim
 from .profiles.alignment import ProfileConfig, parse_profile_metric, profile_compare
 from .profiles.prepared import (
     PreparedProfile,
@@ -51,6 +52,57 @@ def _compare_prepared(query, target, config):
     return ComparisonResult(
         query.name, target.name, score, shift, orientation, metric_str, n_sites
     )
+
+
+_BUILTIN_MODELS = (PWM, BaMM, Dimont, SiteGA, Slim)
+_worker_cache_path: str | None = None
+_worker_cache_obj = None
+
+
+def _worker_cache(directory):
+    global _worker_cache_path, _worker_cache_obj
+    if directory is None:
+        return None
+    if _worker_cache_path == directory:
+        return _worker_cache_obj
+    from .cache import Cache
+
+    _worker_cache_path = directory
+    _worker_cache_obj = Cache(directory)
+    return _worker_cache_obj
+
+
+def _prepare_and_compare_with_threads(
+    query,
+    target_source,
+    sequences,
+    background,
+    threshold,
+    normalization,
+    config,
+    cache_directory,
+    preparation_context,
+    threads,
+):
+    from numba import set_num_threads
+
+    set_num_threads(threads)
+    target = _prepare_side(
+        target_source,
+        sequences,
+        background=background,
+        threshold=threshold,
+        normalization=normalization,
+        cache=_worker_cache(cache_directory),
+        preparation_context=preparation_context,
+    )
+    if target is None:
+        raise TypeError(f"unsupported comparison target: {type(target_source).__name__}")
+    if target.min_logerr != threshold:
+        raise ValueError("prepared profiles use different min_logerr thresholds.")
+    if target.normalization != normalization:
+        raise ValueError("prepared profiles use different normalization strategies.")
+    return _compare_prepared(query, target, config)
 
 
 def _prepare_side(
@@ -131,11 +183,53 @@ def compare(query, target, sequences=None, *, background=None, metric="co", sear
     return _compare_prepared(pq, pt, config)
 
 
-def compare_many(query, targets, sequences=None, *, background=None, metric="co", search_range=10, window_radius=10, realign_window=3, min_logerr=None, normalization=None, cache=None):
+def compare_many(
+    query,
+    targets,
+    sequences=None,
+    *,
+    background=None,
+    metric="co",
+    search_range=10,
+    window_radius=10,
+    realign_window=3,
+    min_logerr=None,
+    normalization=None,
+    cache=None,
+    total_threads=1,
+    inner_threads=1,
+):
     """Compare one query against targets in stable order.
 
-    Targets are prepared immediately before their comparison.
+    ``total_threads`` is divided between joblib target workers and Numba
+    threads. Target preparation and alignment run in the same worker.
     """
+    if isinstance(total_threads, bool) or not isinstance(total_threads, (int, np.integer)):
+        raise TypeError("total_threads must be a positive integer.")
+    if total_threads < 1:
+        raise ValueError("total_threads must be a positive integer.")
+    total_threads = int(total_threads)
+    if isinstance(inner_threads, bool) or not isinstance(inner_threads, (int, np.integer)):
+        raise TypeError("inner_threads must be an integer from 1 through 4.")
+    if not 1 <= inner_threads <= 4:
+        raise ValueError("inner_threads must be an integer from 1 through 4.")
+    inner_threads = int(inner_threads)
+    if total_threads % inner_threads:
+        raise ValueError("total_threads must be divisible by inner_threads.")
+    joblib_workers = total_threads // inner_threads
+    target_sources = list(targets)
+    if joblib_workers > 1:
+        if isinstance(query, MotifModel) and not isinstance(query, _BUILTIN_MODELS):
+            raise TypeError(
+                "custom models must be prepared before parallel compare_many or compared serially."
+            )
+        if any(
+            isinstance(target, MotifModel) and not isinstance(target, _BUILTIN_MODELS)
+            for target in target_sources
+        ):
+            raise TypeError(
+                "custom models must be prepared before parallel compare_many or compared serially."
+            )
     preparation_context = None
     if cache is not None and sequences is not None:
         from .cache import _make_preparation_context
@@ -163,8 +257,26 @@ def compare_many(query, targets, sequences=None, *, background=None, metric="co"
     norm = query.normalization
     config = ProfileConfig(metric=parse_profile_metric(metric), search_range=search_range, window_radius=window_radius, realign_window=realign_window, min_logerr=threshold)
 
+    if joblib_workers > 1:
+        return Parallel(n_jobs=joblib_workers, backend="loky")(
+            delayed(_prepare_and_compare_with_threads)(
+                query,
+                target_source,
+                sequences,
+                background,
+                threshold,
+                norm,
+                config,
+                None if cache is None else cache.directory,
+                preparation_context,
+                int(inner_threads),
+            )
+            for target_source in target_sources
+        )
+
+    # Serial mode keeps preparation and comparison in one target-at-a-time pipeline.
     results = []
-    for target_source in targets:
+    for target_source in target_sources:
         target = _prepare_side(
             target_source,
             sequences,

@@ -298,7 +298,7 @@ def _read_npy(path, expected_dtype, expected_shape):
     return arr
 
 
-def _toml_value(v):
+def toml_value(v):
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, int):
@@ -308,7 +308,7 @@ def _toml_value(v):
     if isinstance(v, str):
         return json.dumps(v, ensure_ascii=True)
     if isinstance(v, list):
-        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
+        return "[" + ", ".join(toml_value(x) for x in v) + "]"
     raise InvariantError(f"unsupported TOML value type {type(v).__name__}")
 
 
@@ -319,7 +319,7 @@ def _toml_dump(manifest):
         scalars = {k: v for k, v in table.items() if not isinstance(v, dict)}
         tables = {k: v for k, v in table.items() if isinstance(v, dict)}
         for key in sorted(scalars):
-            lines.append(f"{key} = {_toml_value(scalars[key])}")
+            lines.append(f"{key} = {toml_value(scalars[key])}")
         for key in sorted(tables):
             path = f"{prefix}{key}"
             lines.append(f"[{path}]")

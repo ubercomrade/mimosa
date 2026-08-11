@@ -157,17 +157,12 @@ class TestPreparedProfileCache:
         p1 = prepare_profile(pwm, batch, cache=cache)
         p2 = prepare_profile(pwm, batch, cache=cache)
         assert p1 == p2
-        assert p1 is p2
 
-    def test_prepare_memory_hit_skips_disk(self, pwm, batch, tmp_path, monkeypatch):
+    def test_prepare_cache_has_no_in_memory_profile_store(self, pwm, batch, tmp_path):
         cache = Cache(str(tmp_path))
-        prepared = prepare_profile(pwm, batch, cache=cache)
-
-        def unexpected_disk_read(*args, **kwargs):
-            raise AssertionError("memory cache miss")
-
-        monkeypatch.setattr("mimosa.cache.cache_get", unexpected_disk_read)
-        assert prepare_profile(pwm, batch, cache=cache) is prepared
+        prepare_profile(pwm, batch, cache=cache)
+        assert not hasattr(cache, "_prepared_profiles")
+        assert not hasattr(cache, "memory_budget_bytes")
 
     def test_prepare_disk_hit_maps_read_only_arrays(self, pwm, batch, tmp_path):
         cache = Cache(str(tmp_path))
@@ -224,49 +219,3 @@ class TestPreparedProfileCache:
         pwm2 = PWM(pwm.name, w, pwm.background)
         p2 = prepare_profile(pwm2, batch, cache=cache)
         assert not np.array_equal(p1.bundle.forward.data, p2.bundle.forward.data)
-
-    def test_memory_cache_eviction_uses_bytes(self, pwm, batch, tmp_path):
-        from mimosa.cache import (
-            _memory_cache_get,
-            _memory_cache_set,
-            _prepared_profile_nbytes,
-        )
-
-        p1 = prepare_profile(pwm, batch)
-        p2 = prepare_profile(pwm, batch, min_logerr=1.0)
-        budget = max(_prepared_profile_nbytes(p1), _prepared_profile_nbytes(p2))
-        cache = Cache(str(tmp_path), memory_budget_bytes=budget)
-        _memory_cache_set(cache, "one", p1)
-        _memory_cache_set(cache, "two", p2)
-        assert _memory_cache_get(cache, "one") is None
-        assert _memory_cache_get(cache, "two") is p2
-        assert cache._prepared_profiles_bytes == _prepared_profile_nbytes(p2)
-
-    def test_memory_cache_hit_updates_lru(self, pwm, batch, tmp_path):
-        from mimosa.cache import _memory_cache_get, _memory_cache_set, _prepared_profile_nbytes
-
-        profiles = [
-            prepare_profile(pwm, batch, min_logerr=value)
-            for value in (0.0, 1.0, 2.0)
-        ]
-        sizes = [_prepared_profile_nbytes(profile) for profile in profiles]
-        budget = max(sizes[0] + sizes[1], sizes[0] + sizes[2])
-        cache = Cache(str(tmp_path), memory_budget_bytes=budget)
-        _memory_cache_set(cache, "one", profiles[0])
-        _memory_cache_set(cache, "two", profiles[1])
-        assert _memory_cache_get(cache, "one") is profiles[0]
-        _memory_cache_set(cache, "three", profiles[2])
-        assert _memory_cache_get(cache, "two") is None
-        assert _memory_cache_get(cache, "one") is profiles[0]
-
-    def test_memory_cache_does_not_keep_oversized_entry(self, pwm, batch, tmp_path):
-        from mimosa.cache import _memory_cache_set, _prepared_profile_nbytes
-
-        profile = prepare_profile(pwm, batch)
-        cache = Cache(
-            str(tmp_path),
-            memory_budget_bytes=_prepared_profile_nbytes(profile) - 1,
-        )
-        _memory_cache_set(cache, "oversized", profile)
-        assert not cache._prepared_profiles
-        assert cache._prepared_profiles_bytes == 0

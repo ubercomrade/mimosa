@@ -25,20 +25,20 @@
 
 - Numba row-parallel work requires more than one thread, at least `50_000` items, and at least `64` rows; normalization uses the item/thread thresholds.
 - Built-in scan uses row-parallel kernels when eligible; custom models remain serial.
-- `compare_many` prepares and compares targets sequentially, preserving target order.
-- Do not add nested `prange`, a thread pool, or a process pool without measurements; parallelism is intentionally kept inside Numba kernels.
+- `compare_many` derives joblib target workers from `total_threads / inner_threads`, runs the complete target pipeline in parallel workers when eligible, and preserves target order.
+- Do not add nested `prange` or another process pool; joblib outer parallelism and Numba inner parallelism are the measured execution layers.
 
 ## Cache
 
 - Prepared-profile cache format v4 stores raw score, offset, and anchor sections in read-only mmap-backed arrays; legacy pickle entries are still accepted.
 - Never load an untrusted cache directory: the legacy fallback executes pickle, and checksums detect corruption but do not make pickle safe.
-- The in-process prepared-profile LRU defaults to `1 GiB` of backing-array bytes; configure it with `Cache(..., memory_budget_bytes=...)`.
+- The disk cache does not retain prepared profiles in a process-local store; verified-entry state is per cache instance and prepared arrays are read-only mmap-backed sections.
 - Cache keys include model, sequences, background, Float32 `min_logerr`, normalization, and algorithm versions. Clear stale entries with `uv run mimosa cache clear --cache-dir .mimosa-cache`.
 
 ## Benchmarks
 
 - Production-path benchmark: `uv run python benchmarks/benchmark_performance.py`; it includes one-target and larger target workloads.
-- The production benchmark defaults to `10_000` sequences, real example FASTA inputs, `1/64/128/256` targets, three repeats, and `1/2/4/6/8` Numba threads; it is memory-heavy. Write results outside the repository with `--output /tmp/mimosa-performance.json`.
+- The production benchmark defaults to `10_000` sequences, real example FASTA inputs, `1/64/128/256` targets, three repeats, and divisible comma-separated total/Numba budgets; it is memory-heavy. Write results outside the repository with `--output /tmp/mimosa-performance.json`.
 - Keep `.mimosa-cache`, build/test caches, benchmark output, and Numba cache files out of version control.
 
 ## CI And Release

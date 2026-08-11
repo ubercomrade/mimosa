@@ -5,7 +5,6 @@ from mimosa import (
     EncodedSequences,
     RaggedArray,
     StrandPair,
-    encode_base,
     encode_sequence,
     reverse_complement,
 )
@@ -13,15 +12,6 @@ from mimosa.errors import InvariantError
 
 
 class TestEncoding:
-    def test_encode_base(self):
-        assert encode_base(ord("A")) == 0
-        assert encode_base(ord("C")) == 1
-        assert encode_base(ord("G")) == 2
-        assert encode_base(ord("T")) == 3
-        assert encode_base(ord("a")) == 0
-        assert encode_base(ord("N")) == 4
-        assert encode_base(ord("R")) == 4
-
     def test_encode_sequence(self):
         seq = encode_sequence("ACGTNacgt")
         assert seq.tolist() == [0, 1, 2, 3, 4, 0, 1, 2, 3]

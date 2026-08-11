@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
-import pickle
 import shutil
 import struct
 import tempfile
 import tomllib
 from contextlib import contextmanager
-from collections import OrderedDict
+from threading import RLock
 
 if os.name == "nt":
     import msvcrt
@@ -24,6 +22,7 @@ from .io.bundles import (
     model_fingerprint,
     score_profile_fingerprint,
     sequence_fingerprint,
+    toml_value,
 )
 from .profiles.anchors import AnchorCSR
 from .profiles.normalization import (
@@ -51,20 +50,11 @@ _PREPARED_PROFILE_SECTION_NAMES = (
     "forward_anchor_offsets",
     "reverse_anchor_offsets",
 )
-DEFAULT_MEMORY_CACHE_BYTES = 1 << 30
-
-
 class Cache:
-    def __init__(self, directory, memory_budget_bytes=DEFAULT_MEMORY_CACHE_BYTES):
-        if isinstance(memory_budget_bytes, bool) or not isinstance(memory_budget_bytes, (int, np.integer)):
-            raise TypeError("memory_budget_bytes must be a non-negative integer.")
-        if memory_budget_bytes < 0:
-            raise ValueError("memory_budget_bytes must be non-negative.")
+    def __init__(self, directory):
         self.directory = str(directory)
-        self.memory_budget_bytes = int(memory_budget_bytes)
-        self._prepared_profiles = OrderedDict()
-        self._prepared_profiles_bytes = 0
         self._verified_entries = set()
+        self._lock = RLock()
 
     def __repr__(self):
         return f"Cache({self.directory!r})"
@@ -255,40 +245,9 @@ def _encode_prepared_profile_with_metadata(profile):
     return bytes(payload), metadata
 
 
-def _decode_prepared_profile(data):
-    try:
-        profile = pickle.loads(data)
-    except Exception:
-        return None
-    if not isinstance(profile, PreparedProfile):
-        return None
-    try:
-        return PreparedProfile(
-            profile.name,
-            profile.bundle,
-            profile.anchors,
-            profile.min_logerr,
-            profile.normalization,
-        )
-    except (TypeError, ValueError):
-        return None
-
-
-def _toml_value(value):
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        return repr(value)
-    if isinstance(value, str):
-        return json.dumps(value, ensure_ascii=True)
-    raise TypeError(f"unsupported cache metadata type {type(value).__name__}")
-
-
 def _metadata_checksum(meta):
     payload = "".join(
-        f"{name} = {_toml_value(meta[name])}\n"
+        f"{name} = {toml_value(meta[name])}\n"
         for name in sorted(meta)
         if name != "metadata_checksum"
     )
@@ -529,55 +488,55 @@ def cache_set(cache, key, data, metadata=None):
         if name not in ("format_version", "checksum", "size"):
             meta[name] = value
     meta["metadata_checksum"] = _metadata_checksum(meta)
-    root = _cache_root(cache)
-    os.makedirs(root, exist_ok=True)
-    # ponytail: one cache-wide lock; per-key locks only if write contention matters.
-    with _cache_lock(root):
-        with tempfile.TemporaryDirectory(
-            prefix=".mimosa-cache-stage-", dir=root, ignore_cleanup_errors=True
-        ) as stage:
-            entry_stage = os.path.join(stage, _validate_cache_key(key))
-            os.makedirs(entry_stage)
-            with open(os.path.join(entry_stage, _CACHE_DATA_NAME), "wb") as f:
-                f.write(data)
-            with open(os.path.join(entry_stage, _CACHE_META_NAME), "w", encoding="utf-8") as f:
-                for name in sorted(meta):
-                    f.write(f"{name} = {_toml_value(meta[name])}\n")
-            target = _cache_entry_dir(cache, key)
-            if os.path.exists(target):
-                shutil.rmtree(target)
-            os.rename(entry_stage, target)
-            cache._verified_entries = {
-                item for item in cache._verified_entries if item[0] != key
-            }
-            return path
+    with cache._lock:
+        root = _cache_root(cache)
+        os.makedirs(root, exist_ok=True)
+        # ponytail: one cache-wide lock; per-key locks only if write contention matters.
+        with _cache_lock(root):
+            with tempfile.TemporaryDirectory(
+                prefix=".mimosa-cache-stage-", dir=root, ignore_cleanup_errors=True
+            ) as stage:
+                entry_stage = os.path.join(stage, _validate_cache_key(key))
+                os.makedirs(entry_stage)
+                with open(os.path.join(entry_stage, _CACHE_DATA_NAME), "wb") as f:
+                    f.write(data)
+                with open(os.path.join(entry_stage, _CACHE_META_NAME), "w", encoding="utf-8") as f:
+                    for name in sorted(meta):
+                        f.write(f"{name} = {toml_value(meta[name])}\n")
+                target = _cache_entry_dir(cache, key)
+                if os.path.exists(target):
+                    shutil.rmtree(target)
+                os.rename(entry_stage, target)
+                cache._verified_entries = {
+                    item for item in cache._verified_entries if item[0] != key
+                }
+                return path
 
 
 def clearcache(cache):
-    root = _cache_root(cache)
-    if not os.path.isdir(root):
-        _clear_memory_cache(cache)
-        cache._verified_entries.clear()
-        return 0
-    with _cache_lock(root):
-        _clear_memory_cache(cache)
-        cache._verified_entries.clear()
-        count = 0
-        for name in os.listdir(root):
-            entry = os.path.join(root, name)
-            if name.startswith(".mimosa-cache-stage-") or ".backup-" in name:
-                shutil.rmtree(entry, ignore_errors=True)
-                continue
-            if os.path.isdir(entry) and not os.path.islink(entry):
-                try:
-                    _validate_cache_key(name)
-                    valid_metadata = _read_cache_metadata(cache, name) is not None
-                except (OSError, TypeError, ValueError):
-                    valid_metadata = False
-                if valid_metadata and os.path.isfile(os.path.join(entry, _CACHE_DATA_NAME)):
-                    shutil.rmtree(entry)
-                    count += 1
-        return count
+    with cache._lock:
+        root = _cache_root(cache)
+        if not os.path.isdir(root):
+            cache._verified_entries.clear()
+            return 0
+        with _cache_lock(root):
+            cache._verified_entries.clear()
+            count = 0
+            for name in os.listdir(root):
+                entry = os.path.join(root, name)
+                if name.startswith(".mimosa-cache-stage-") or ".backup-" in name:
+                    shutil.rmtree(entry, ignore_errors=True)
+                    continue
+                if os.path.isdir(entry) and not os.path.islink(entry):
+                    try:
+                        _validate_cache_key(name)
+                        valid_metadata = _read_cache_metadata(cache, name) is not None
+                    except (OSError, TypeError, ValueError):
+                        valid_metadata = False
+                    if valid_metadata and os.path.isfile(os.path.join(entry, _CACHE_DATA_NAME)):
+                        shutil.rmtree(entry)
+                        count += 1
+            return count
 
 
 def _make_preparation_context(sequences, background):
@@ -588,53 +547,6 @@ def _make_preparation_context(sequences, background):
         else sequence_fingerprint(background)
     )
     return sequence_fp, background_fp
-
-
-def _memory_cache_get(cache, key):
-    profile = cache._prepared_profiles.pop(key, None)
-    if profile is not None:
-        cache._prepared_profiles[key] = profile
-    return profile
-
-
-def _prepared_profile_nbytes(profile):
-    arrays = (
-        profile.bundle.forward.data,
-        profile.bundle.forward.offsets,
-        profile.bundle.reverse.data,
-        profile.bundle.reverse.offsets,
-        profile.anchors[0].positions,
-        profile.anchors[0].offsets,
-        profile.anchors[1].positions,
-        profile.anchors[1].offsets,
-    )
-    seen = set()
-    total = 0
-    for array in arrays:
-        identity = id(array)
-        if identity not in seen:
-            seen.add(identity)
-            total += int(array.nbytes)
-    return total
-
-
-def _clear_memory_cache(cache):
-    cache._prepared_profiles.clear()
-    cache._prepared_profiles_bytes = 0
-
-
-def _memory_cache_set(cache, key, profile):
-    previous = cache._prepared_profiles.pop(key, None)
-    if previous is not None:
-        cache._prepared_profiles_bytes -= _prepared_profile_nbytes(previous)
-    size = _prepared_profile_nbytes(profile)
-    if size > cache.memory_budget_bytes:
-        return
-    cache._prepared_profiles[key] = profile
-    cache._prepared_profiles_bytes += size
-    while cache._prepared_profiles_bytes > cache.memory_budget_bytes:
-        _, evicted = cache._prepared_profiles.popitem(last=False)
-        cache._prepared_profiles_bytes -= _prepared_profile_nbytes(evicted)
 
 
 def _cached_prepared_profile(
@@ -655,22 +567,11 @@ def _cached_prepared_profile(
         sequence_fp=None if context is None else context[0],
         background_fp=None if context is None else context[1],
     )
-    cached = _memory_cache_get(cache, key)
-    if cached is not None and cached.min_logerr == np.float32(threshold) and cached.normalization == normalization:
-        return key, cached
-    profile = _cached_mmap_prepared_profile(cache, key)
-    if profile is not None and profile.min_logerr == np.float32(threshold) and profile.normalization == normalization:
-        _memory_cache_set(cache, key, profile)
-        return key, profile
-    data = cache_get(cache, key)
-    if data is None:
+    with cache._lock:
+        profile = _cached_mmap_prepared_profile(cache, key)
+        if profile is not None and profile.min_logerr == np.float32(threshold) and profile.normalization == normalization:
+            return key, profile
         return key, None
-    profile = _decode_prepared_profile(data)
-    if profile is not None and profile.min_logerr == np.float32(threshold) and profile.normalization == normalization:
-        _memory_cache_set(cache, key, profile)
-    else:
-        profile = None
-    return key, profile
 
 
 def _store_prepared_profile(cache, key, profile):
@@ -681,4 +582,3 @@ def _store_prepared_profile(cache, key, profile):
         data,
         metadata=metadata,
     )
-    _memory_cache_set(cache, key, profile)

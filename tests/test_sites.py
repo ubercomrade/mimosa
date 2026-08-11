@@ -80,18 +80,7 @@ class TestSiteCollection:
                 np.array([1], dtype=np.int64),
                 np.array([2], dtype=np.int8),
                 np.array([1.0], dtype=np.float32),
-            )
-
-    def test_to_dict(self):
-        coll = SiteCollection(
-            np.array([0], dtype=np.int64),
-            np.array([5], dtype=np.int64),
-            np.array([1], dtype=np.int8),
-            np.array([3.5], dtype=np.float32),
         )
-        d = coll.to_dict()
-        assert d["starts"] == [5]
-        assert d["strands"] == [1]
 
 
 class TestPfmReconstruction:
