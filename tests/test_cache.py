@@ -7,7 +7,6 @@ import pytest
 
 from mimosa.cache import (
     Cache,
-    cache_set,
     clearcache,
     prepared_profile_cache_key,
 )
@@ -32,21 +31,28 @@ def _wait_for_cache_lock(directory, acquired):
         acquired.set()
 
 
-class TestCache:
-    def test_set_writes_checksum_protected_entry(self, tmp_path):
-        cache = Cache(str(tmp_path))
-        cache_set(cache, "abc123", b"payload")
-        with open(tmp_path / "abc123" / "meta.toml", "rb") as f:
-            metadata = tomllib.load(f)
-        assert metadata["size"] == len(b"payload")
-        assert metadata["checksum"].startswith("sha256:")
+@pytest.fixture
+def pwm():
+    name, pfm = read_meme("examples/foxa2.meme")
+    return pwm_from_pfm(pfm, name=name)
 
-    def test_clear(self, tmp_path):
-        cache = Cache(str(tmp_path))
-        cache_set(cache, "a", b"1")
-        cache_set(cache, "b", b"2")
-        assert clearcache(cache) == 2
-        assert not (tmp_path / "a").exists()
+
+@pytest.fixture
+def batch():
+    return read_fasta("examples/foreground.fa")[0]
+
+
+def _cache_profile(directory, pwm, batch):
+    cache = Cache(str(directory))
+    prepare_profile(pwm, batch, cache=cache)
+    return cache, prepared_profile_cache_key(pwm, batch)
+
+
+class TestCache:
+    def test_clear(self, tmp_path, pwm, batch):
+        cache, key = _cache_profile(tmp_path, pwm, batch)
+        assert clearcache(cache) == 1
+        assert not (tmp_path / key).exists()
         assert not cache._verified_entries
 
     def test_clear_preserves_unrelated_directory(self, tmp_path):
@@ -56,10 +62,9 @@ class TestCache:
         assert clearcache(Cache(str(tmp_path))) == 0
         assert unrelated.exists()
 
-    def test_clear_preserves_checksum_invalid_entry(self, tmp_path):
-        cache = Cache(str(tmp_path))
-        cache_set(cache, "damaged", b"payload")
-        data_path = tmp_path / "damaged" / "data.bin"
+    def test_clear_preserves_checksum_invalid_entry(self, tmp_path, pwm, batch):
+        cache, key = _cache_profile(tmp_path, pwm, batch)
+        data_path = tmp_path / key / "data.bin"
         data_path.write_bytes(b"changed")
 
         assert clearcache(cache) == 0
@@ -79,22 +84,15 @@ class TestCache:
         assert clearcache(Cache(str(tmp_path))) == 0
         assert user_file.read_text() == "do not delete"
 
-    def test_clear_rejects_symlinked_cache_root(self, tmp_path):
+    def test_clear_rejects_symlinked_cache_root(self, tmp_path, pwm, batch):
         target = tmp_path / "real-cache"
-        cache_set(Cache(str(target)), "abc", b"payload")
+        _, key = _cache_profile(target, pwm, batch)
         link = tmp_path / "cache-link"
         link.symlink_to(target, target_is_directory=True)
 
         with pytest.raises(ValueError, match="real directory"):
             clearcache(Cache(str(link)))
-        assert (target / "abc").exists()
-
-    def test_key_validation(self, tmp_path):
-        cache = Cache(str(tmp_path))
-        with pytest.raises(ValueError):
-            cache_set(cache, "../escape", b"x")
-        with pytest.raises(ValueError):
-            cache_set(cache, "a/b", b"x")
+        assert (target / key).exists()
 
     def test_lock_serializes_processes(self, tmp_path):
         context = multiprocessing.get_context("spawn")
@@ -124,15 +122,6 @@ class TestCache:
         assert waiter is not None and waiter.exitcode == 0
 
 class TestPreparedProfileCache:
-    @pytest.fixture
-    def pwm(self):
-        name, pfm = read_meme("examples/foxa2.meme")
-        return pwm_from_pfm(pfm, name=name)
-
-    @pytest.fixture
-    def batch(self):
-        return read_fasta("examples/foreground.fa")[0]
-
     def test_key_content_addressed(self, pwm, batch):
         k1 = prepared_profile_cache_key(pwm, batch)
         k2 = prepared_profile_cache_key(pwm, batch)
@@ -239,20 +228,6 @@ class TestPreparedProfileCache:
             metadata = tomllib.load(f)
         assert metadata["format"] == "prepared_profile_mmap"
         assert metadata["n_rows"] == len(prepared.bundle.forward)
-
-    def test_prepared_cache_streams_sections_without_legacy_payload_encoder(
-        self, pwm, batch, tmp_path, monkeypatch
-    ):
-        from mimosa import cache as cache_module
-
-        def fail(*args, **kwargs):
-            raise AssertionError("prepared cache writes must stream sections")
-
-        monkeypatch.setattr(cache_module, "_encode_prepared_profile_with_metadata", fail)
-        cache = Cache(str(tmp_path))
-        prepared = prepare_profile(pwm, batch, cache=cache)
-
-        assert prepared == prepare_profile(pwm, batch, cache=Cache(str(tmp_path)))
 
     def test_prepared_cache_exposes_write_and_hit_phase_timings(
         self, pwm, batch, tmp_path

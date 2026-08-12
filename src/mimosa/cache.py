@@ -261,16 +261,6 @@ def _prepared_profile_serialization_plan(profile):
     return metadata, writes, payload_size
 
 
-def _encode_prepared_profile_with_metadata(profile):
-    """Build an in-memory payload for diagnostics and focused tests only."""
-    metadata, writes, payload_size = _prepared_profile_serialization_plan(profile)
-    payload = bytearray(payload_size)
-    payload[: len(_PREPARED_PROFILE_BINARY_MAGIC)] = _PREPARED_PROFILE_BINARY_MAGIC
-    for offset, values in writes:
-        payload[offset : offset + values.nbytes] = memoryview(values).cast("B")
-    return bytes(payload), metadata
-
-
 def _metadata_checksum(meta):
     payload = "".join(
         f"{name} = {toml_value(meta[name])}\n"
@@ -501,46 +491,6 @@ def _cached_mmap_prepared_profile(cache, key):
         return decoded
     except (OSError, TypeError, ValueError):
         return None
-
-
-def cache_set(cache, key, data, metadata=None):
-    path = _cache_file_path(cache, key, _CACHE_DATA_NAME)
-    data = bytes(data)
-    checksum = hashlib.sha256(data).hexdigest()
-    meta = {
-        "format_version": CACHE_FORMAT_VERSION,
-        "checksum": f"sha256:{checksum}",
-        "size": len(data),
-    }
-    for name, value in (metadata or {}).items():
-        if name not in ("format_version", "checksum", "size"):
-            meta[name] = value
-    meta["metadata_checksum"] = _metadata_checksum(meta)
-    with cache._lock:
-        root = _cache_root(cache)
-        os.makedirs(root, exist_ok=True)
-        # ponytail: one cache-wide lock; per-key locks only if write contention matters.
-        lock_started = time.perf_counter()
-        with _cache_lock(root):
-            _record_timing(cache, "cache_lock_wait", time.perf_counter() - lock_started)
-            with tempfile.TemporaryDirectory(
-                prefix=".mimosa-cache-stage-", dir=root, ignore_cleanup_errors=True
-            ) as stage:
-                entry_stage = os.path.join(stage, _validate_cache_key(key))
-                os.makedirs(entry_stage)
-                with open(os.path.join(entry_stage, _CACHE_DATA_NAME), "wb") as f:
-                    f.write(data)
-                with open(os.path.join(entry_stage, _CACHE_META_NAME), "w", encoding="utf-8") as f:
-                    for name in sorted(meta):
-                        f.write(f"{name} = {toml_value(meta[name])}\n")
-                target = _cache_entry_dir(cache, key)
-                if os.path.exists(target):
-                    shutil.rmtree(target)
-                os.rename(entry_stage, target)
-                cache._verified_entries = {
-                    item for item in cache._verified_entries if item[0] != key
-                }
-                return path
 
 
 def _cache_set_prepared_profile(cache, key, profile):

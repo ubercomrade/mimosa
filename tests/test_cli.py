@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from mimosa import read_model
+from mimosa import prepare_profile, read_fasta, read_model
 from mimosa.cli import _validate_null_compatibility
 from mimosa.errors import MimosaError
 from mimosa.io.bundles import model_collection_fingerprint, read_null_bundle
@@ -284,9 +284,13 @@ class TestBuildNullCommand:
 class TestCacheCommand:
     def test_clear(self, tmp_path):
         cache_dir = tmp_path / "cache"
-        from mimosa.cache import Cache, cache_set
+        from mimosa.cache import Cache
 
-        cache_set(Cache(str(cache_dir)), "abc", b"x")
+        prepare_profile(
+            read_model("examples/foxa2.meme"),
+            read_fasta("examples/foreground.fa")[0],
+            cache=Cache(str(cache_dir)),
+        )
         r = run_cli("cache", "clear", "--cache-dir", str(cache_dir))
         assert r.returncode == 0, r.stderr
         d = json.loads(r.stdout)
