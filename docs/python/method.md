@@ -11,7 +11,8 @@ Mimosa compares models by their behavior on a shared sequence batch.
 5. Select the best result and report its score, offset, orientation, and contributing site count.
 
 The four orientation labels are `++`, `+-`, `-+`, and `--`. Offset is the target
-displacement relative to the query; positive values move the target right.
+physical site displacement relative to the query; positive values move the
+target right. Model scoring context does not affect this public coordinate.
 Final ties are resolved by larger score, larger `n_sites`, smaller absolute
 offset, and orientation rank in the order listed above. Within an orientation,
 shifts are visited from most negative to most positive.

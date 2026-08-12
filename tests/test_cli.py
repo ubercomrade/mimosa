@@ -1,12 +1,16 @@
 import json
+import os
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from mimosa import read_model
 from mimosa.cli import _validate_null_compatibility
 from mimosa.errors import MimosaError
+from mimosa.io.bundles import model_collection_fingerprint, read_null_bundle
 
 MIMOSA = [sys.executable, "-m", "mimosa.cli"]
 
@@ -105,6 +109,43 @@ class TestCompareCommand:
         assert r.returncode == 0, r.stderr
         assert json.loads(r.stdout)["metric"] == "cosine"
 
+    @pytest.mark.parametrize("option", ("--fasta", "--background"))
+    def test_scores_only_rejects_unused_sequence_options(self, option):
+        r = run_cli(
+            "compare",
+            "examples/scores_1.fasta",
+            "examples/scores_2.fasta",
+            "--query-type",
+            "scores",
+            "--target-type",
+            "scores",
+            option,
+            "examples/foreground.fa",
+        )
+        assert r.returncode == 2
+        assert "scores-only" in r.stderr
+
+    @pytest.mark.parametrize(
+        "option",
+        (
+            ("--null-distribution", "some-null"),
+            ("--effective-number-of-targets", "2"),
+        ),
+    )
+    def test_significance_options_require_pvalue(self, option):
+        r = run_cli(
+            "compare",
+            "examples/scores_1.fasta",
+            "examples/scores_2.fasta",
+            "--query-type",
+            "scores",
+            "--target-type",
+            "scores",
+            *option,
+        )
+        assert r.returncode == 2
+        assert "requires --pvalue" in r.stderr
+
 
 class TestCompareManyCommand:
     def test_json_array_preserves_target_order_and_type(self):
@@ -158,6 +199,8 @@ class TestBuildNullCommand:
             "10",
             "--fasta",
             "examples/foreground.fa",
+            "--background",
+            "examples/background.fa",
         )
         assert r.returncode == 0, r.stderr
         d = json.loads(r.stdout)
@@ -176,6 +219,8 @@ class TestBuildNullCommand:
             "pwm",
             "--fasta",
             "examples/foreground.fa",
+            "--background",
+            "examples/background.fa",
             "--pvalue",
             "--null-distribution",
             str(out),
@@ -191,6 +236,49 @@ class TestBuildNullCommand:
             str(tmp_path / "n"),
         )
         assert r.returncode != 0
+
+    def test_build_null_uses_first_motif_from_each_meme_file(self, tmp_path):
+        motifs = tmp_path / "motifs"
+        motifs.mkdir()
+        multi = motifs / "multi.meme"
+        multi.write_text(
+            (Path("examples/foxa2.meme").read_text(encoding="utf-8"))
+            + "\n"
+            + Path("examples/gata4.meme").read_text(encoding="utf-8")
+        )
+        single = motifs / "single.meme"
+        single.write_text(Path("examples/gata2.meme").read_text(encoding="utf-8"))
+        output = tmp_path / "null"
+
+        r = run_cli(
+            "build-null",
+            str(motifs),
+            "--output",
+            str(output),
+            "--num-samples",
+            "2",
+            "--fasta",
+            "examples/foreground.fa",
+        )
+
+        assert r.returncode == 0, r.stderr
+        stored = read_null_bundle(output)
+        assert stored["model_collection_fingerprint"] == model_collection_fingerprint(
+            [read_model(multi), read_model(single)]
+        )
+
+    @pytest.mark.parametrize("option", ("--num-sequences", "--seq-length", "--num-samples"))
+    def test_build_null_rejects_non_positive_generation_limits(self, tmp_path, option):
+        r = run_cli(
+            "build-null",
+            "examples",
+            "--output",
+            str(tmp_path / "null"),
+            option,
+            "0",
+        )
+        assert r.returncode == 2
+        assert "must be between" in r.stderr
 
 
 class TestCacheCommand:
@@ -247,6 +335,20 @@ class TestVersion:
         r = run_cli("--version")
         assert r.returncode == 0
         assert "mimosa" in r.stdout
+
+    def test_import_does_not_rewrite_numba_environment_from_host_argv(self):
+        code = (
+            "import os, sys; "
+            "sys.argv = ['host', 'compare', '--numba-threads=2']; "
+            "import mimosa; "
+            "print(os.environ['NUMBA_NUM_THREADS'])"
+        )
+        env = {**os.environ, "NUMBA_NUM_THREADS": "7"}
+        result = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, env=env
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "7"
 
     def test_no_command(self):
         r = run_cli()

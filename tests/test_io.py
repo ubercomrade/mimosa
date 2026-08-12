@@ -16,6 +16,7 @@ from mimosa.io.bundles import (
     write_model,
     write_null_bundle,
 )
+from mimosa.io import fasta
 from mimosa.io.fasta import read_fasta, read_scores
 from mimosa.io.models import (
     _slim_symbol_log_probs,
@@ -53,6 +54,24 @@ class TestFasta:
         assert len(batch) == 1
         assert batch[0].size == 0
 
+    def test_read_fasta_enforces_total_base_limit(self, tmp_path, monkeypatch):
+        p = tmp_path / "too-many-bases.fa"
+        p.write_text(">first\nACG\n>second\nTAC\n")
+        monkeypatch.setattr(fasta, "MAX_FASTA_TOTAL_BASES", 5)
+
+        with pytest.raises(ModelFormatError, match="total bases"):
+            read_fasta(p)
+
+    def test_read_fasta_keeps_empty_rows_in_single_buffer_layout(self, tmp_path):
+        p = tmp_path / "rows.fa"
+        p.write_text(">empty\n>nonempty\nAC\n")
+
+        batch, names = read_fasta(p)
+
+        assert names == ("empty", "nonempty")
+        assert batch.offsets.tolist() == [0, 0, 2]
+        assert batch[1].tolist() == [0, 1]
+
 
 class TestScores:
     def test_read_scores(self):
@@ -80,6 +99,12 @@ class TestScores:
         p.write_text(">a\n1.0 xyz\n")
         with pytest.raises(ModelFormatError):
             read_scores(str(p))
+
+    def test_read_scores_rejects_non_finite_vectorized_values(self, tmp_path):
+        p = tmp_path / "s.fasta"
+        p.write_text(">a\n1e999\n")
+        with pytest.raises(ModelFormatError, match="finite"):
+            read_scores(p)
 
 
 class TestPwmReaders:
@@ -132,6 +157,11 @@ class TestBammReader:
         m = read_bamm("examples/myog.ihbcp", order=100)
         assert m.order == 4
 
+    @pytest.mark.parametrize("order", (True, 1.9, "1"))
+    def test_read_bamm_rejects_non_integer_order(self, order):
+        with pytest.raises(ModelFormatError, match="order must be an integer"):
+            read_bamm("examples/myog.ihbcp", order=order)
+
     @pytest.mark.parametrize(
         "path",
         [
@@ -157,6 +187,12 @@ class TestBammReader:
         p.write_text("0.2 0.2 0.2\n")
         with pytest.raises(ModelFormatError):
             read_bamm(str(p))
+
+    def test_read_bamm_rejects_invalid_conditional_probability_group(self, tmp_path):
+        p = tmp_path / "bad-probabilities.ihbcp"
+        p.write_text("0.1 0.1 0.1 0.1\n")
+        with pytest.raises(ModelFormatError, match="conditional probability group"):
+            read_bamm(p)
 
 
 class TestSitega:
@@ -211,6 +247,17 @@ class TestXmlReaders:
         with pytest.raises(ModelFormatError, match="exceeds limit 30"):
             read_slim(p)
 
+    def test_slim_rejects_fractional_xml_length(self, tmp_path):
+        source = "tests/fixtures/slim/example-model-1.xml"
+        p = tmp_path / "slim.xml"
+        p.write_text(open(source, encoding="utf-8").read().replace(
+            "<length><className>java.lang.Integer</className>15</length>",
+            "<length><className>java.lang.Integer</className>15.9</length>",
+            1,
+        ))
+        with pytest.raises(ModelFormatError, match="no integer value for Slim length"):
+            read_slim(p)
+
     def test_slim_uses_alphabet_not_motif_length_for_contexts(self):
         good = [0.0, -100.0, -100.0, -100.0]
         bad = [-100.0, 0.0, -100.0, -100.0]
@@ -257,6 +304,26 @@ class TestXmlReaders:
         p.write_text("<not-valid>")
         with pytest.raises(ModelFormatError):
             read_dimont(str(p))
+
+    def test_xml_depth_limit_is_checked_before_model_traversal(self, tmp_path, monkeypatch):
+        from mimosa.io import models
+
+        p = tmp_path / "deep.xml"
+        p.write_text("<x>" * 5 + "</x>" * 5)
+        monkeypatch.setattr(models, "MAX_XML_DEPTH", 4)
+
+        with pytest.raises(ModelFormatError, match="nesting exceeds"):
+            read_dimont(p)
+
+    def test_xml_size_limit_is_checked_before_parsing(self, tmp_path, monkeypatch):
+        from mimosa.io import models
+
+        p = tmp_path / "large.xml"
+        p.write_text("<root/>")
+        monkeypatch.setattr(models, "MAX_XML_BYTES", 1)
+
+        with pytest.raises(ModelFormatError, match="exceeds size limit"):
+            read_slim(p)
 
 
 class TestFingerprints:
@@ -386,6 +453,35 @@ class TestModelBundle:
         with pytest.raises(ModelFormatError):
             read_model_bundle(path)
 
+    def test_model_payload_is_hashed_from_the_single_read_buffer(self, tmp_path, monkeypatch):
+        import hashlib
+
+        model = PWM("x", np.zeros((5, 3), dtype=np.float32), (0.25,) * 4)
+        path = str(tmp_path / "m")
+        write_model(path, model)
+        calls = 0
+        original = hashlib.file_digest
+
+        def counted(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(hashlib, "file_digest", counted)
+        assert read_model_bundle(path).name == model.name
+        assert calls == 0
+
+    def test_rejects_symlinked_data_directory(self, tmp_path):
+        model = PWM("x", np.zeros((5, 3), dtype=np.float32), (0.25,) * 4)
+        path = tmp_path / "bundle"
+        write_model(path, model)
+        external_data = tmp_path / "external-data"
+        (path / "data").rename(external_data)
+        (path / "data").symlink_to(external_data, target_is_directory=True)
+
+        with pytest.raises(ModelFormatError, match="symbolic-link component"):
+            read_model_bundle(path)
+
     def test_rejects_wrong_version(self, tmp_path):
         name, pfm = read_meme("examples/foxa2.meme")
         m = pwm_from_pfm(pfm, name=name)
@@ -421,7 +517,7 @@ class TestNullBundle:
         path = str(tmp_path / "null")
         write_null_bundle(path, dist)
         manifest = tmp_path / "null" / "manifest.toml"
-        manifest.write_text(manifest.read_text().replace("format_version = 8", "format_version = 7"))
+        manifest.write_text(manifest.read_text().replace("format_version = 9", "format_version = 8"))
         with pytest.raises(ModelFormatError):
             read_null_bundle(path)
 
@@ -455,26 +551,24 @@ class TestNullBundle:
             read_null_bundle(path)
 
     def test_rejects_non_finite(self, tmp_path, dist):
-        dist2 = NullDistribution(
-            strategy=dist.strategy,
-            metric=dist.metric,
-            raw_scores=np.array([1.0, np.nan]),
-            pairs=dist.pairs[:2],
-            n_null=2,
-            n_models=dist.n_models,
-            model_type=dist.model_type,
-            shuffle=dist.shuffle,
-            seed=dist.seed,
-            sampling_version=dist.sampling_version,
-            model_collection_fingerprint=dist.model_collection_fingerprint,
-            sequence_fingerprint=dist.sequence_fingerprint,
-            background_fingerprint=dist.background_fingerprint,
-            contract=dist.contract,
-        )
-        with pytest.raises(Exception):
-            write_null_bundle(str(tmp_path / "bad"), dist2)
+        with pytest.raises(ValueError, match="raw_scores must be finite"):
+            NullDistribution(
+                strategy=dist.strategy,
+                metric=dist.metric,
+                raw_scores=np.array([1.0, np.nan]),
+                pairs=dist.pairs[:2],
+                n_null=2,
+                n_models=dist.n_models,
+                model_type=dist.model_type,
+                shuffle=dist.shuffle,
+                seed=dist.seed,
+                sampling_version=dist.sampling_version,
+                model_collection_fingerprint=dist.model_collection_fingerprint,
+                sequence_fingerprint=dist.sequence_fingerprint,
+                background_fingerprint=dist.background_fingerprint,
+                contract=dict(dist.contract),
+            )
 
     def test_rejects_stale_raw_fingerprint(self, tmp_path, dist):
-        stale = replace(dist, contract={**dist.contract, "raw_scores_fingerprint": "0" * 64})
-        with pytest.raises(InvariantError, match="fingerprint"):
-            write_null_bundle(str(tmp_path / "bad"), stale)
+        with pytest.raises(ValueError, match="fingerprint"):
+            replace(dist, contract={**dist.contract, "raw_scores_fingerprint": "0" * 64})

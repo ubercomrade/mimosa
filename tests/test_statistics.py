@@ -11,9 +11,11 @@ from mimosa import (
     evalue,
 )
 from mimosa.compare import ComparisonResult
+from mimosa.io.bundles import content_fingerprint_float64
 from mimosa.io.fasta import read_fasta
 from mimosa.io.models import read_meme
 from mimosa.models import pwm_from_pfm
+from mimosa.profiles.normalization import HybridEmpiricalLogTail, normalization_fingerprint
 
 
 @pytest.fixture
@@ -31,10 +33,11 @@ def batch():
 
 
 def make_dist(scores):
+    raw_scores = np.array(scores, dtype=np.float64)
     return NullDistribution(
         strategy="profile",
         metric="co",
-        raw_scores=np.array(scores, dtype=np.float64),
+        raw_scores=raw_scores,
         pairs=[("a", "b", float(s)) for s in scores],
         n_null=len(scores),
         n_models=2,
@@ -51,11 +54,11 @@ def make_dist(scores):
             "window_radius": 10,
             "realign_window": 3,
             "min_logerr": np.float32(0.0),
-            "normalization_version": "hybrid-log-tail-v2;bins=65536",
-            "alignment_version": "profile-alignment-v1",
+            "normalization_version": normalization_fingerprint(HybridEmpiricalLogTail()),
+            "alignment_version": "profile-alignment-v2",
             "sequence_fingerprint": "s" * 64,
             "background_fingerprint": "none",
-            "raw_scores_fingerprint": "r" * 64,
+            "raw_scores_fingerprint": content_fingerprint_float64(raw_scores),
         },
     )
 
@@ -106,6 +109,31 @@ class TestNullDistribution:
                 "profile", "co", np.array([]), [], 0, 2, "pwm", True, 0, "v", None, "s", "n", {}
             )
 
+    def test_owns_and_freezes_raw_scores_contract_and_pairs(self):
+        source = np.array([0.2, 0.4], dtype=np.float64)
+        dist = make_dist(source)
+        source[0] = 0.9
+
+        np.testing.assert_array_equal(dist.raw_scores, [0.2, 0.4])
+        assert not dist.raw_scores.flags.writeable
+        assert isinstance(dist.pairs, tuple)
+        with pytest.raises(ValueError):
+            dist.raw_scores[0] = 0.9
+        with pytest.raises(TypeError):
+            dist.contract["metric"] = "dice"
+
+    def test_rejects_raw_scores_with_stale_fingerprint(self):
+        dist = make_dist([0.2, 0.4])
+        with pytest.raises(ValueError, match="fingerprint"):
+            NullDistribution(
+                **{
+                    **dist.__dict__,
+                    "raw_scores": np.array([0.3, 0.4]),
+                    "pairs": (("a", "b", 0.3), ("a", "b", 0.4)),
+                    "contract": dict(dist.contract),
+                }
+            )
+
     def test_build_null_reproducible(self, pwm_models, batch):
         d1 = build_null(pwm_models, sequences=batch, n_samples=30, seed=42)
         d2 = build_null(pwm_models, sequences=batch, n_samples=30, seed=42)
@@ -119,6 +147,11 @@ class TestNullDistribution:
         assert d.model_type == "pwm"
         assert d.sampling_version == "original-shuffled-ordered-pairs-v3"
         assert np.all(np.isfinite(d.raw_scores))
+        assert all(
+            pair[0].startswith(("original:", "shuffled:"))
+            and pair[1].startswith(("original:", "shuffled:"))
+            for pair in d.pairs
+        )
         # sampled pairs obey the exclusion contract (checked at the item level)
         from mimosa.statistics import _next_null_work_item
 
@@ -164,6 +197,26 @@ class TestNullDistribution:
 
 
 class TestAnnotation:
+    def test_annotate_sorts_the_null_scores_once(self, monkeypatch):
+        dist = make_dist([0.5, 0.6, 0.7])
+        calls = 0
+        original = np.sort
+
+        def counted(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(np, "sort", counted)
+        annotate_results(
+            [
+                ComparisonResult("a", "b", np.float32(0.6), 0, "++", "co", 1),
+                ComparisonResult("a", "c", np.float32(0.7), 0, "++", "co", 1),
+            ],
+            dist,
+        )
+        assert calls == 1
+
     def test_annotate_results(self):
         dist = make_dist([0.5, 0.6, 0.7, 0.8, 0.9])
         results = [

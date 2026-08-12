@@ -135,14 +135,14 @@ def transform_scores(table, scores):
         )
     else:
         raise ValueError(f"unknown table type: {type(table)!r}")
-    return RaggedArray(out, scores.offsets.copy())
+    return RaggedArray(out, scores.offsets)
 
 
 def flatten_bundle(bundle):
     fwd = bundle.forward.data
     rev = bundle.reverse.data
     if bundle.forward is bundle.reverse:
-        return fwd.copy()
+        return fwd
     return np.concatenate([fwd, rev])
 
 

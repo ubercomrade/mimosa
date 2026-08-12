@@ -18,17 +18,23 @@ from ..models import (
     Dimont,
     SiteGA,
     Slim,
+    strict_integer,
 )
 
 MAX_MEME_MOTIF_LENGTH = 10_000
 MAX_PFM_LENGTH = 10_000
 MAX_LINE_LENGTH = 1_000_000
+MAX_XML_BYTES = 134_217_728
+MAX_XML_DEPTH = 1_024
 
 MAX_BAMM_POSITIONS = 10_000
 MAX_BAMM_ORDER = 10
 MAX_BAMM_LINE_LENGTH = 1_000_000
 MAX_BAMM_REPRESENTATION_ELEMENTS = 100_000_000
 BAMM_EPSILON = 1e-10
+# BaMM files emitted by the supported toolchain contain rounded conditional
+# groups; the bundled reference files deviate by up to roughly 17%.
+BAMM_GROUP_SUM_REL_TOL = 0.20
 
 MAX_SITEGA_LENGTH = 10_000
 DINUC_MAP = {
@@ -38,6 +44,13 @@ DINUC_MAP = {
 }
 
 LOG_UNIFORM_BASE = math.log(4.0)
+
+
+def _parse_integer(value, path, label):
+    try:
+        return strict_integer(value, label, allow_text=True)
+    except TypeError as exc:
+        raise ModelFormatError(path, f"{label} must be an integer.") from exc
 
 
 def _validate_probability_rows(rows, path, label):
@@ -59,6 +72,10 @@ def _validate_probability_rows(rows, path, label):
 
 
 def read_meme(path, index=0):
+    try:
+        index = strict_integer(index, "motif index")
+    except TypeError as exc:
+        raise ModelFormatError(path, "motif index must be an integer.") from exc
     if index < 0:
         raise ModelFormatError(path, f"motif index must be non-negative, got {index}.")
     motif_count = 0
@@ -80,8 +97,10 @@ def read_meme(path, index=0):
                 header_parts = header.strip().split()
                 try:
                     w_idx = header_parts.index("w=")
-                    motif_length = int(header_parts[w_idx + 1])
-                except (ValueError, IndexError):
+                    motif_length = _parse_integer(
+                        header_parts[w_idx + 1], path, f"motif {name} length"
+                    )
+                except (ModelFormatError, IndexError):
                     raise ModelFormatError(
                         path, f"motif {name} header has no valid 'w=' length field."
                     )
@@ -216,8 +235,27 @@ def _parse_bamm_blocks(path):
             if not all(math.isfinite(v) for v in row):
                 raise ModelFormatError(path, "non-finite values in BaMM data.")
             if any(v < 0 for v in row):
-                raise ModelFormatError(path, "BaMM values must be non-negative.")
-            current_block.append(row)
+                raise ModelFormatError(path, "BaMM probabilities must be non-negative.")
+            normalized_row = []
+            for group_start in range(0, len(row), 4):
+                group = row[group_start : group_start + 4]
+                group_sum = sum(group)
+                if not math.isclose(
+                    group_sum, 1.0, rel_tol=BAMM_GROUP_SUM_REL_TOL, abs_tol=1e-3
+                ):
+                    raise ModelFormatError(
+                        path,
+                        "BaMM conditional probability group "
+                        f"{group_start // 4} at order {order_index} sums to "
+                        f"{group_sum}, expected approximately 1.0.",
+                    )
+                normalized_group = [value / group_sum for value in group]
+                if any(value > 1.0 for value in normalized_group):
+                    raise ModelFormatError(
+                        path, "BaMM probabilities must lie in [0, 1]."
+                    )
+                normalized_row.extend(normalized_group)
+            current_block.append(normalized_row)
     if current_block:
         if len(blocks) >= MAX_BAMM_POSITIONS:
             raise ModelFormatError(path, f"BaMM has more than {MAX_BAMM_POSITIONS} positions.")
@@ -274,10 +312,15 @@ def _build_bamm_representation(blocks, target_order, n_positions, path):
 
 
 def read_bamm(path, order=None):
+    try:
+        requested_order = None if order is None else strict_integer(order, "order")
+    except TypeError as exc:
+        raise ModelFormatError(path, "order must be an integer.") from exc
     blocks = _parse_bamm_blocks(path)
     n_positions = len(blocks)
     max_order = len(blocks[0]) - 1
-    requested_order = max_order if order is None else int(order)
+    if requested_order is None:
+        requested_order = max_order
     target_order = min(requested_order, max_order)
     if target_order < 0:
         raise ModelFormatError(path, f"order must be non-negative, got {order}.")
@@ -289,71 +332,77 @@ def read_bamm(path, order=None):
 
 def read_sitega(path):
     with open(path, "r", encoding="ascii", errors="replace") as f:
-        lines = f.readlines()
-    if not lines:
-        raise ModelFormatError(path, "empty file: missing model name.")
-    name = lines[0].strip()
-    if not name:
-        raise ModelFormatError(path, "missing model name.")
-    if len(lines) < 2:
-        raise ModelFormatError(path, "missing LPD count line.")
-    lpd_parts = lines[1].strip().split()
-    if not lpd_parts:
-        raise ModelFormatError(path, "missing LPD count.")
-    try:
-        lpd_count = int(lpd_parts[0])
-    except ValueError:
-        raise ModelFormatError(path, f"invalid LPD count: {lpd_parts[0]}.")
-    if lpd_count < 0:
-        raise ModelFormatError(path, "LPD count must be non-negative.")
-    if len(lines) < 3:
-        raise ModelFormatError(path, "missing model length line.")
-    len_parts = lines[2].strip().split()
-    if not len_parts:
-        raise ModelFormatError(path, "missing model length.")
-    try:
-        motif_length = int(len_parts[0])
-    except ValueError:
-        raise ModelFormatError(path, f"invalid model length: {len_parts[0]}.")
-    if motif_length <= 0:
-        raise ModelFormatError(path, f"model length must be positive, got {motif_length}.")
-    if motif_length > MAX_SITEGA_LENGTH:
-        raise ModelFormatError(
-            path, f"model length {motif_length} exceeds limit {MAX_SITEGA_LENGTH}."
-        )
-    rep = np.zeros((25, motif_length), dtype=np.float32)
-    parsed_segments = 0
-    for line_idx, line in enumerate(lines[5:]):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        parsed_segments += 1
-        parts = stripped.split()
-        if len(parts) != 5:
-            raise ModelFormatError(
-                path, f"line {line_idx + 6} must contain 5 fields, got {len(parts)}."
-            )
         try:
-            start_idx = int(parts[0])
-            stop_idx = int(parts[1])
-            value = float(parts[2])
-        except ValueError:
-            raise ModelFormatError(path, f"invalid numeric field on line {line_idx + 6}.")
-        dinucleotide = parts[4].lower()
-        if dinucleotide not in DINUC_MAP:
+            name = next(f).strip()
+        except StopIteration:
+            raise ModelFormatError(path, "empty file: missing model name.")
+        if not name:
+            raise ModelFormatError(path, "missing model name.")
+        try:
+            lpd_parts = next(f).strip().split()
+        except StopIteration:
+            raise ModelFormatError(path, "missing LPD count line.")
+        if not lpd_parts:
+            raise ModelFormatError(path, "missing LPD count.")
+        try:
+            lpd_count = _parse_integer(lpd_parts[0], path, "LPD count")
+        except ModelFormatError:
+            raise ModelFormatError(path, f"invalid LPD count: {lpd_parts[0]}.")
+        if lpd_count < 0:
+            raise ModelFormatError(path, "LPD count must be non-negative.")
+        try:
+            len_parts = next(f).strip().split()
+        except StopIteration:
+            raise ModelFormatError(path, "missing model length line.")
+        if not len_parts:
+            raise ModelFormatError(path, "missing model length.")
+        try:
+            motif_length = _parse_integer(len_parts[0], path, "model length")
+        except ModelFormatError:
+            raise ModelFormatError(path, f"invalid model length: {len_parts[0]}.")
+        if motif_length <= 0:
+            raise ModelFormatError(path, f"model length must be positive, got {motif_length}.")
+        if motif_length > MAX_SITEGA_LENGTH:
             raise ModelFormatError(
-                path, f"invalid dinucleotide: {dinucleotide} on line {line_idx + 6}."
+                path, f"model length {motif_length} exceeds limit {MAX_SITEGA_LENGTH}."
             )
-        if start_idx < 0 or stop_idx < start_idx or stop_idx >= motif_length:
-            raise ModelFormatError(
-                path,
-                f"range {start_idx}-{stop_idx} is outside model length {motif_length} on line {line_idx + 6}.",
-            )
-        nuc1, nuc2 = DINUC_MAP[dinucleotide]
-        row_code = nuc1 * 5 + nuc2
-        n_positions = stop_idx - start_idx + 1
-        per_position = np.float32(value / n_positions)
-        rep[row_code, start_idx : stop_idx + 1] += per_position
+        rep = np.zeros((25, motif_length), dtype=np.float32)
+        parsed_segments = 0
+        for line_idx, line in enumerate(f, start=4):
+            if len(line) > MAX_LINE_LENGTH:
+                raise ModelFormatError(path, "line exceeds length limit.")
+            if line_idx < 6:
+                continue
+            stripped = line.strip()
+            if not stripped:
+                continue
+            parsed_segments += 1
+            parts = stripped.split()
+            if len(parts) != 5:
+                raise ModelFormatError(
+                    path, f"line {line_idx} must contain 5 fields, got {len(parts)}."
+                )
+            try:
+                start_idx = _parse_integer(parts[0], path, "SiteGA range start")
+                stop_idx = _parse_integer(parts[1], path, "SiteGA range stop")
+                value = float(parts[2])
+            except (ModelFormatError, ValueError):
+                raise ModelFormatError(path, f"invalid numeric field on line {line_idx}.")
+            dinucleotide = parts[4].lower()
+            if dinucleotide not in DINUC_MAP:
+                raise ModelFormatError(
+                    path, f"invalid dinucleotide: {dinucleotide} on line {line_idx}."
+                )
+            if start_idx < 0 or stop_idx < start_idx or stop_idx >= motif_length:
+                raise ModelFormatError(
+                    path,
+                    f"range {start_idx}-{stop_idx} is outside model length {motif_length} on line {line_idx}.",
+                )
+            nuc1, nuc2 = DINUC_MAP[dinucleotide]
+            row_code = nuc1 * 5 + nuc2
+            n_positions = stop_idx - start_idx + 1
+            per_position = np.float32(value / n_positions)
+            rep[row_code, start_idx : stop_idx + 1] += per_position
     if parsed_segments != lpd_count:
         raise ModelFormatError(
             path,
@@ -375,6 +424,31 @@ class _DimontTreeNode:
         self.children = children
 
 
+def parse_limited_xml(path):
+    """Parse an XML model only after bounded-size and nesting checks."""
+    try:
+        if Path(path).stat().st_size > MAX_XML_BYTES:
+            raise ModelFormatError(path, f"XML input exceeds size limit {MAX_XML_BYTES} bytes.")
+        depth = 0
+        root = None
+        for event, elem in ET.iterparse(path, events=("start", "end")):
+            if event == "start":
+                depth += 1
+                if depth > MAX_XML_DEPTH:
+                    raise ModelFormatError(path, f"XML nesting exceeds depth limit {MAX_XML_DEPTH}.")
+                if root is None:
+                    root = elem
+            else:
+                depth -= 1
+    except ET.ParseError as exc:
+        raise ModelFormatError(path, f"malformed XML: {exc}.") from exc
+    except OSError as exc:
+        raise ModelFormatError(path, f"could not read XML: {exc}.") from exc
+    if root is None:
+        raise ModelFormatError(path, "malformed XML: missing root element.")
+    return root
+
+
 def _xml_numeric(elem, path, label):
     if elem is None:
         raise ModelFormatError(path, f"malformed XML: missing {label}.")
@@ -390,12 +464,28 @@ def _xml_numeric(elem, path, label):
     raise ModelFormatError(path, f"malformed XML: no numeric value for {label}.")
 
 
+def _xml_integer(elem, path, label):
+    if elem is None:
+        raise ModelFormatError(path, f"malformed XML: missing {label}.")
+    text = " ".join(
+        t for t in (elem.text, *(c.tail or "" for c in elem)) if t and t.strip()
+    )
+    for token in reversed(text.split()):
+        try:
+            return _parse_integer(token, path, label)
+        except ModelFormatError:
+            continue
+    raise ModelFormatError(path, f"malformed XML: no integer value for {label}.")
+
+
 def _xml_find(elem, path):
     return elem.find("." + path if path.startswith("/") else path)
 
 
 def _parse_tree_element(elem, path):
-    ctx_pos = int(_xml_numeric(_xml_find(elem, "contextPos"), path, "Dimont tree contextPos"))
+    ctx_pos = _xml_integer(
+        _xml_find(elem, "contextPos"), path, "Dimont tree contextPos"
+    )
     pars = _xml_find(elem, "pars")
     if pars is not None:
         pars_pos_children = [c for c in pars if c.tag == "pos"]
@@ -405,7 +495,11 @@ def _parse_tree_element(elem, path):
                 par = _xml_find(par_pos, "parameter")
                 if par is None:
                     raise ModelFormatError(path, "malformed Dimont tree: missing parameter.")
-                symbol = int(_xml_numeric(_xml_find(par, "symbol"), path, "Dimont tree parameter symbol"))
+                symbol = _xml_integer(
+                    _xml_find(par, "symbol"),
+                    path,
+                    "Dimont tree parameter symbol",
+                )
                 value = _xml_numeric(_xml_find(par, "value"), path, "Dimont tree parameter value")
                 if symbol < 0 or symbol > 3:
                     raise ModelFormatError(path, f"Dimont tree parameter symbol out of range: {symbol}.")
@@ -417,7 +511,9 @@ def _parse_tree_element(elem, path):
         for child_pos in children_elem:
             if child_pos.tag != "pos":
                 continue
-            child_idx = int(child_pos.get("val"))
+            child_idx = _parse_integer(
+                child_pos.get("val"), path, "Dimont tree child index"
+            )
             if child_idx < 0 or child_idx > 3:
                 raise ModelFormatError(path, f"Dimont tree child index out of range: {child_idx}.")
             child_elem = _xml_find(child_pos, "treeElement")
@@ -502,11 +598,7 @@ def _build_position_column(context_scores, span, pos_idx, rep):
 
 
 def read_dimont(path):
-    try:
-        tree = ET.parse(path)
-    except ET.ParseError as exc:
-        raise ModelFormatError(path, f"malformed XML: {exc}.") from exc
-    root = tree.getroot()
+    root = parse_limited_xml(path)
     model = _xml_find(root, "//MarkovModelDiffSM")
     if model is None:
         raise ModelFormatError(path, "could not find Dimont motif model (MarkovModelDiffSM).")
@@ -526,7 +618,11 @@ def read_dimont(path):
         if ctx_poss is not None:
             for cp_child in ctx_poss:
                 if cp_child.tag == "pos":
-                    ctx_positions.append(int(_xml_numeric(cp_child, path, "Dimont contextPoss position")))
+                    ctx_positions.append(
+                        _xml_integer(
+                            cp_child, path, "Dimont contextPoss position"
+                        )
+                    )
         root_elem = _xml_find(pt, "root/treeElement")
         if root_elem is None:
             raise ModelFormatError(path, "malformed Dimont model: missing root treeElement.")
@@ -684,15 +780,11 @@ def _slim_symbol_log_probs(position, symbol, full_context, params, path):
 
 
 def read_slim(path):
-    try:
-        tree = ET.parse(path)
-    except ET.ParseError as exc:
-        raise ModelFormatError(path, f"malformed XML: {exc}.") from exc
-    root = tree.getroot()
+    root = parse_limited_xml(path)
     slim = _xml_find(root, "//SLIM")
     if slim is None:
         raise ModelFormatError(path, "could not find Slim motif model (SLIM).")
-    length_val = int(_xml_numeric(_xml_find(slim, "length"), path, "Slim length"))
+    length_val = _xml_integer(_xml_find(slim, "length"), path, "Slim length")
     if length_val > MAX_DIMONT_SLIM_LENGTH:
         raise ModelFormatError(path, f"Slim length {length_val} exceeds limit {MAX_DIMONT_SLIM_LENGTH}.")
     component_raw = _slim_parse_component_params(slim, path)

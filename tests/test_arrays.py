@@ -59,11 +59,17 @@ class TestEncodedSequences:
         assert len(batch) == 2
         assert batch[0].size == 0
 
-    def test_slices_are_views(self):
+    def test_owns_and_freezes_validated_buffers(self):
         data = np.array([0, 1, 2, 3], dtype=np.uint8)
-        batch = EncodedSequences(data, np.array([0, 4], dtype=np.int64))
-        batch[0][0] = 9
-        assert data[0] == 9
+        offsets = np.array([0, 4], dtype=np.int64)
+        batch = EncodedSequences(data, offsets)
+        data[0] = 3
+        offsets[1] = 1
+        assert batch[0].tolist() == [0, 1, 2, 3]
+        assert not batch.data.flags.writeable
+        assert not batch.offsets.flags.writeable
+        with pytest.raises(ValueError):
+            batch[0][0] = 3
 
     def test_from_strings(self):
         batch = EncodedSequences.from_strings(["ACGT", "", "NN"])

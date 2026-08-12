@@ -80,7 +80,33 @@ class TestSiteCollection:
                 np.array([1], dtype=np.int64),
                 np.array([2], dtype=np.int8),
                 np.array([1.0], dtype=np.float32),
+            )
+
+    def test_normalizes_freezes_and_serializes_inputs(self):
+        seq_indices = [0.0, 1.0]
+        starts = np.array([3, 4], dtype=np.int32)
+        strands = [0, 1]
+        scores = [0.5, 1.5]
+        coll = SiteCollection(seq_indices, starts, strands, scores)
+
+        assert coll.seq_indices.dtype == np.int64
+        assert coll.starts.dtype == np.int64
+        assert coll.strands.dtype == np.int8
+        assert coll.scores.dtype == np.float32
+        assert all(
+            not values.flags.writeable
+            for values in (coll.seq_indices, coll.starts, coll.strands, coll.scores)
         )
+        assert coll.to_dict() == {
+            "seq_indices": [0, 1],
+            "starts": [3, 4],
+            "strands": [0, 1],
+            "scores": [0.5, 1.5],
+        }
+
+    def test_rejects_fractional_indices_before_cast(self):
+        with pytest.raises(ValueError, match="fractional"):
+            SiteCollection([0.5], [0], [0], [1.0])
 
 
 class TestPfmReconstruction:
@@ -104,6 +130,20 @@ class TestPfmReconstruction:
             pcm_to_pfm(pcm, pseudocount=0.0)
         pfm = pcm_to_pfm(pcm, pseudocount=0.25)
         np.testing.assert_allclose(pfm.sum(axis=0), 1.0)
+
+    def test_build_pcm_rejects_negative_dna_codes(self):
+        with pytest.raises(ValueError, match="invalid DNA codes"):
+            build_pcm(np.array([[-1]], dtype=np.int8), 1)
+
+    @pytest.mark.parametrize("threshold", (np.nan, np.inf, -np.inf, 1e100))
+    def test_threshold_hits_requires_finite_float32_threshold(self, threshold):
+        with pytest.raises(ValueError, match="finite Float32"):
+            ThresholdHits(threshold)
+
+    def test_pcm_to_pfm_large_pseudocount_is_finite_and_normalized(self):
+        pfm = pcm_to_pfm(np.array([[1], [2], [3], [4]], dtype=np.float32), 1e100)
+        assert np.all(np.isfinite(pfm))
+        np.testing.assert_allclose(pfm.sum(axis=0), [1.0], rtol=1e-6)
 
     def test_build_pcm_skips_n(self):
         sites = np.array([[0, 4], [1, 2], [2, 1], [3, 0]], dtype=np.uint8)

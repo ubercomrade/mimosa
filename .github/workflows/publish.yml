@@ -5,6 +5,9 @@ on:
     tags:
       - v*
 
+permissions:
+  contents: read
+
 jobs:
   build_dist:
     name: Build distribution artifacts
@@ -33,13 +36,21 @@ jobs:
       - name: Check distribution metadata
         run: uvx twine check dist/*
 
-      - name: Test sdist installation
+      - name: Test sdist installation and console entry point
         run: |
            uv venv test_env
            source test_env/bin/activate
            uv pip install dist/*.tar.gz
            uv pip install pytest
+           mimosa --version
            pytest -q tests
+
+      - name: Test wheel console entry point
+        run: |
+           uv venv wheel_env
+           source wheel_env/bin/activate
+           uv pip install dist/*.whl
+           mimosa --version
 
       - uses: actions/upload-artifact@v4
         with:

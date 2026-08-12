@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-import xml.etree.ElementTree as ET
 
 from ..errors import ModelFormatError, ModelInterfaceError
 from ..models import MotifModel, _validate_model_contract, pwm_from_pfm
 from .bundles import read_model_bundle
-from .models import read_bamm, read_dimont, read_meme, read_pfm, read_sitega, read_slim
+from .models import (
+    parse_limited_xml,
+    read_bamm,
+    read_dimont,
+    read_meme,
+    read_pfm,
+    read_sitega,
+    read_slim,
+)
 
 
 def _normalise_format(value, path):
@@ -19,8 +26,8 @@ def _normalise_format(value, path):
 
 def _probe_xml(path, element_name):
     try:
-        root = ET.parse(path).getroot()
-    except (ET.ParseError, OSError):
+        root = parse_limited_xml(path)
+    except ModelFormatError:
         return False
     return root.find(f".//{element_name}") is not None
 

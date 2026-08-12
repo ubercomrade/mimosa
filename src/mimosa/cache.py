@@ -7,6 +7,7 @@ import os
 import shutil
 import struct
 import tempfile
+import time
 import tomllib
 from contextlib import contextmanager
 from threading import RLock
@@ -38,7 +39,8 @@ _CACHE_DATA_NAME = "data.bin"
 _CACHE_META_NAME = "meta.toml"
 _CACHE_LOCK_NAME = ".mimosa-cache.lock"
 
-PREPARED_PROFILE_CACHE_FORMAT_VERSION = 4
+PREPARED_PROFILE_CACHE_FORMAT_VERSION = 5
+PREPARED_PROFILE_ALGORITHM_VERSION = 5
 _PREPARED_PROFILE_BINARY_MAGIC = b"MIMOSA-PREP-MMAP-1\0"
 _PREPARED_PROFILE_SECTION_NAMES = (
     "forward_scores",
@@ -51,13 +53,19 @@ _PREPARED_PROFILE_SECTION_NAMES = (
     "reverse_anchor_offsets",
 )
 class Cache:
-    def __init__(self, directory):
+    def __init__(self, directory, *, timings=None):
         self.directory = str(directory)
         self._verified_entries = set()
         self._lock = RLock()
+        self.timings = timings
 
     def __repr__(self):
         return f"Cache({self.directory!r})"
+
+
+def _record_timing(cache, phase, elapsed):
+    if cache.timings is not None:
+        cache.timings[phase] = cache.timings.get(phase, 0.0) + elapsed
 
 
 def _validate_cache_key(key):
@@ -136,15 +144,17 @@ def _prepared_profile_cache_key(
     sequence_fp=None,
     background_fp=None,
 ):
-    from .models import MotifModel
+    from .models import MotifModel, site_start_offset
 
     is_motif = isinstance(source, MotifModel)
     if is_motif and sequences is None:
         raise ValueError("motif prepared-profile cache keys require comparison sequences.")
     if is_motif:
         source_fingerprint = model_fingerprint(source)
+        source_site_start_offset = site_start_offset(source)
     elif isinstance(source, ScoreProfile):
         source_fingerprint = score_profile_fingerprint(source)
+        source_site_start_offset = 0
     else:
         raise ValueError(f"unsupported cache source {type(source).__name__}.")
     if sequences is not None and sequence_fp is None:
@@ -171,8 +181,13 @@ def _prepared_profile_cache_key(
         background_part,
         f"min_logerr=0x{bits:08X}",
         f"normalization={normalization_fingerprint(normalization)}",
+        f"site_start_offset={source_site_start_offset}",
     )
-    lines = [f"v={CACHE_FORMAT_VERSION}\n", "algo=prepared_profile\n", "algo_ver=4\n"]
+    lines = [
+        f"v={CACHE_FORMAT_VERSION}\n",
+        "algo=prepared_profile\n",
+        f"algo_ver={PREPARED_PROFILE_ALGORITHM_VERSION}\n",
+    ]
     for part in parts:
         lines.extend((part, "\n"))
     return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()[:16]
@@ -203,11 +218,12 @@ def _prepared_profile_sections(profile):
     return sections
 
 
-def _encode_prepared_profile_with_metadata(profile):
-    payload = bytearray(_PREPARED_PROFILE_BINARY_MAGIC)
+def _prepared_profile_serialization_plan(profile):
+    payload_size = len(_PREPARED_PROFILE_BINARY_MAGIC)
     specs = {}
     written = {}
     sections = _prepared_profile_sections(profile)
+    writes = []
     for name in _PREPARED_PROFILE_SECTION_NAMES:
         array, dtype = sections[name]
         identity = (id(array), dtype)
@@ -216,10 +232,8 @@ def _encode_prepared_profile_with_metadata(profile):
             continue
         values = np.ascontiguousarray(array, dtype=np.dtype(dtype))
         itemsize = values.dtype.itemsize
-        offset = (len(payload) + itemsize - 1) // itemsize * itemsize
-        payload.extend(b"\0" * (offset - len(payload)))
-        raw = values.astype(dtype, copy=False).tobytes(order="C")
-        payload.extend(raw)
+        offset = (payload_size + itemsize - 1) // itemsize * itemsize
+        payload_size = offset + values.nbytes
         spec = {
             "offset": offset,
             "count": int(values.size),
@@ -227,6 +241,7 @@ def _encode_prepared_profile_with_metadata(profile):
         }
         specs[name] = spec
         written[identity] = spec
+        writes.append((offset, values))
     metadata = {
         "format": "prepared_profile_mmap",
         "algorithm": "prepared_profile",
@@ -234,6 +249,7 @@ def _encode_prepared_profile_with_metadata(profile):
         "name": profile.name,
         "min_logerr": float(profile.min_logerr),
         "normalization": normalization_fingerprint(profile.normalization),
+        "site_start_offset": profile.site_start_offset,
         "n_rows": len(profile.bundle.forward),
         "shared_reverse_scores": profile.bundle.forward is profile.bundle.reverse,
         "shared_reverse_anchors": profile.anchors[0] is profile.anchors[1],
@@ -242,6 +258,16 @@ def _encode_prepared_profile_with_metadata(profile):
         metadata[f"{name}_offset"] = spec["offset"]
         metadata[f"{name}_count"] = spec["count"]
         metadata[f"{name}_dtype"] = spec["dtype"]
+    return metadata, writes, payload_size
+
+
+def _encode_prepared_profile_with_metadata(profile):
+    """Build an in-memory payload for diagnostics and focused tests only."""
+    metadata, writes, payload_size = _prepared_profile_serialization_plan(profile)
+    payload = bytearray(payload_size)
+    payload[: len(_PREPARED_PROFILE_BINARY_MAGIC)] = _PREPARED_PROFILE_BINARY_MAGIC
+    for offset, values in writes:
+        payload[offset : offset + values.nbytes] = memoryview(values).cast("B")
     return bytes(payload), metadata
 
 
@@ -279,14 +305,25 @@ def _read_cache_metadata(cache, key):
 
 def _verify_cache_data(cache, key, path, meta):
     expected = meta["checksum"][7:]
-    size = os.path.getsize(path)
+    stat = os.stat(path)
+    size = stat.st_size
     declared_size = meta.get("size", size)
     if isinstance(declared_size, bool) or not isinstance(declared_size, int) or declared_size != size:
         return False
-    verification_key = (key, expected, size)
+    verification_key = (
+        key,
+        expected,
+        size,
+        stat.st_dev,
+        stat.st_ino,
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+    )
     if verification_key not in cache._verified_entries:
+        started = time.perf_counter()
         with open(path, "rb") as f:
             actual = hashlib.file_digest(f, "sha256").hexdigest()
+        _record_timing(cache, "cache_checksum", time.perf_counter() - started)
         if actual != expected:
             return False
         cache._verified_entries.add(verification_key)
@@ -355,6 +392,7 @@ def _decode_mmap_prepared_profile(path, meta):
         n_rows = meta.get("n_rows")
         threshold = meta.get("min_logerr")
         normalization_tag = meta.get("normalization")
+        site_start_offset = meta.get("site_start_offset")
         if (
             not isinstance(name, str)
             or isinstance(n_rows, bool)
@@ -364,6 +402,9 @@ def _decode_mmap_prepared_profile(path, meta):
             or not isinstance(threshold, (int, float))
             or not np.isfinite(threshold)
             or not isinstance(normalization_tag, str)
+            or isinstance(site_start_offset, bool)
+            or not isinstance(site_start_offset, int)
+            or site_start_offset < 0
         ):
             return None
         normalization = _normalization_from_fingerprint(normalization_tag)
@@ -440,6 +481,7 @@ def _decode_mmap_prepared_profile(path, meta):
             anchors,
             np.float32(threshold),
             normalization,
+            site_start_offset,
         )
     except (OSError, TypeError, ValueError):
         return None
@@ -453,25 +495,11 @@ def _cached_mmap_prepared_profile(cache, key):
             return None
         if not _verify_cache_data(cache, key, path, meta):
             return None
-        return _decode_mmap_prepared_profile(path, meta)
+        started = time.perf_counter()
+        decoded = _decode_mmap_prepared_profile(path, meta)
+        _record_timing(cache, "cache_semantic_validation", time.perf_counter() - started)
+        return decoded
     except (OSError, TypeError, ValueError):
-        return None
-
-
-def cache_get(cache, key):
-    path = _cache_file_path(cache, key, _CACHE_DATA_NAME)
-    try:
-        meta = _read_cache_metadata(cache, key)
-        if meta is None:
-            return None
-        with open(path, "rb") as f:
-            data = f.read()
-        if hashlib.sha256(data).hexdigest() != meta["checksum"][7:]:
-            return None
-        if "size" in meta and meta["size"] != len(data):
-            return None
-        return data
-    except Exception:
         return None
 
 
@@ -492,7 +520,9 @@ def cache_set(cache, key, data, metadata=None):
         root = _cache_root(cache)
         os.makedirs(root, exist_ok=True)
         # ponytail: one cache-wide lock; per-key locks only if write contention matters.
+        lock_started = time.perf_counter()
         with _cache_lock(root):
+            _record_timing(cache, "cache_lock_wait", time.perf_counter() - lock_started)
             with tempfile.TemporaryDirectory(
                 prefix=".mimosa-cache-stage-", dir=root, ignore_cleanup_errors=True
             ) as stage:
@@ -513,29 +543,110 @@ def cache_set(cache, key, data, metadata=None):
                 return path
 
 
+def _cache_set_prepared_profile(cache, key, profile):
+    """Atomically stream a prepared profile into one cache payload.
+
+    The data sections are written directly to the staging file while the SHA-256
+    is updated incrementally, avoiding an additional full-size Python payload.
+    """
+    encode_started = time.perf_counter()
+    metadata, writes, payload_size = _prepared_profile_serialization_plan(profile)
+    _record_timing(cache, "cache_encode", time.perf_counter() - encode_started)
+    with cache._lock:
+        root = _cache_root(cache)
+        os.makedirs(root, exist_ok=True)
+        lock_started = time.perf_counter()
+        with _cache_lock(root):
+            _record_timing(cache, "cache_lock_wait", time.perf_counter() - lock_started)
+            with tempfile.TemporaryDirectory(
+                prefix=".mimosa-cache-stage-", dir=root, ignore_cleanup_errors=True
+            ) as stage:
+                entry_stage = os.path.join(stage, _validate_cache_key(key))
+                os.makedirs(entry_stage)
+                data_path = os.path.join(entry_stage, _CACHE_DATA_NAME)
+                checksum = hashlib.sha256()
+                write_started = time.perf_counter()
+                with open(data_path, "wb") as f:
+                    cursor = 0
+                    magic = _PREPARED_PROFILE_BINARY_MAGIC
+                    f.write(magic)
+                    checksum.update(magic)
+                    cursor += len(magic)
+                    for offset, values in writes:
+                        padding = offset - cursor
+                        if padding:
+                            zeros = b"\0" * padding
+                            f.write(zeros)
+                            checksum.update(zeros)
+                            cursor += padding
+                        raw = memoryview(values).cast("B")
+                        f.write(raw)
+                        checksum.update(raw)
+                        cursor += raw.nbytes
+                    if cursor != payload_size:
+                        raise RuntimeError("prepared-profile payload size mismatch.")
+                _record_timing(cache, "cache_write", time.perf_counter() - write_started)
+                meta = {
+                    "format_version": CACHE_FORMAT_VERSION,
+                    "checksum": f"sha256:{checksum.hexdigest()}",
+                    "size": payload_size,
+                    **metadata,
+                }
+                meta["metadata_checksum"] = _metadata_checksum(meta)
+                with open(
+                    os.path.join(entry_stage, _CACHE_META_NAME), "w", encoding="utf-8"
+                ) as f:
+                    for name in sorted(meta):
+                        f.write(f"{name} = {toml_value(meta[name])}\n")
+                target = _cache_entry_dir(cache, key)
+                if os.path.exists(target):
+                    shutil.rmtree(target)
+                os.rename(entry_stage, target)
+                cache._verified_entries = {
+                    item for item in cache._verified_entries if item[0] != key
+                }
+                return os.path.join(target, _CACHE_DATA_NAME)
+
+
 def clearcache(cache):
     with cache._lock:
         root = _cache_root(cache)
+        home = os.path.abspath(os.path.expanduser("~"))
+        if root == os.path.dirname(root) or root == home:
+            raise ValueError("cache directory is too broad to clear.")
         if not os.path.isdir(root):
+            if os.path.lexists(root):
+                raise ValueError("cache directory must be a real directory, not a file or symlink.")
             cache._verified_entries.clear()
             return 0
+        if os.path.islink(root):
+            raise ValueError("cache directory must be a real directory, not a file or symlink.")
         with _cache_lock(root):
             cache._verified_entries.clear()
             count = 0
             for name in os.listdir(root):
                 entry = os.path.join(root, name)
-                if name.startswith(".mimosa-cache-stage-") or ".backup-" in name:
-                    shutil.rmtree(entry, ignore_errors=True)
-                    continue
                 if os.path.isdir(entry) and not os.path.islink(entry):
+                    data_path = os.path.join(entry, _CACHE_DATA_NAME)
                     try:
                         _validate_cache_key(name)
-                        valid_metadata = _read_cache_metadata(cache, name) is not None
+                        metadata = _read_cache_metadata(cache, name)
+                        valid_entry = (
+                            metadata is not None
+                            and os.path.isfile(data_path)
+                            and not os.path.islink(data_path)
+                            and _verify_cache_data(cache, name, data_path, metadata)
+                        )
                     except (OSError, TypeError, ValueError):
-                        valid_metadata = False
-                    if valid_metadata and os.path.isfile(os.path.join(entry, _CACHE_DATA_NAME)):
+                        valid_entry = False
+                    if (
+                        valid_entry
+                    ):
                         shutil.rmtree(entry)
                         count += 1
+            # Verification above can repopulate this set.  Removed entries
+            # must never remain trusted if their key is reused later.
+            cache._verified_entries.clear()
             return count
 
 
@@ -575,10 +686,4 @@ def _cached_prepared_profile(
 
 
 def _store_prepared_profile(cache, key, profile):
-    data, metadata = _encode_prepared_profile_with_metadata(profile)
-    cache_set(
-        cache,
-        key,
-        data,
-        metadata=metadata,
-    )
+    _cache_set_prepared_profile(cache, key, profile)

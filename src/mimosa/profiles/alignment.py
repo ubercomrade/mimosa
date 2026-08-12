@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..models import strict_integer
 from .._kernels import (
     _score_shift_best,
     _score_shift_csr,
     _score_orientation_best_parallel,
     _score_orientation_csr_parallel,
 )
-from ..parallel import use_parallel
+from ..parallel import use_alignment_parallel
 
 ORIENTATION_PAIRS = (("++", 0, 0), ("+-", 0, 1), ("-+", 1, 0), ("--", 1, 1))
 ORIENTATION_RANK = {"++": 0, "+-": 1, "-+": 2, "--": 3}
@@ -56,6 +57,8 @@ def _score_orientation_pair(
     realign_window,
     metric,
     min_logerr=0.0,
+    query_site_start_offset=0,
+    target_site_start_offset=0,
 ):
     query_scores = query_bundle.forward if query_strand == 0 else query_bundle.reverse
     target_scores = target_bundle.forward if target_strand == 0 else target_bundle.reverse
@@ -70,8 +73,12 @@ def _score_orientation_pair(
     best_shift = 0
     best_n_sites = 0
     n_rows = query_scores.offsets.size - 1
-    parallel = use_parallel(
-        int(query_scores.data.size + target_scores.data.size), rows=n_rows
+    parallel = use_alignment_parallel(
+        int(query_scores.data.size + target_scores.data.size),
+        rows=n_rows,
+        shifts=n_shifts,
+        window_radius=window_radius,
+        anchor_count=max(q_csr.positions.size, t_csr.positions.size),
     )
 
     if parallel:
@@ -106,6 +113,7 @@ def _score_orientation_pair(
             target_scores.data, target_scores.offsets,
             q_csr.positions, q_csr.offsets,
             t_csr.positions, t_csr.offsets,
+            query_site_start_offset, target_site_start_offset,
             search_range, window_radius, realign_window,
             kind, use_dice, seen,
             row_scores, row_finite, row_sites, out_scores, out_sites,
@@ -116,6 +124,7 @@ def _score_orientation_pair(
             target_scores.data, target_scores.offsets,
             q_csr.positions, q_csr.offsets,
             t_csr.positions, t_csr.offsets,
+            query_site_start_offset, target_site_start_offset,
             search_range, window_radius, realign_window,
             kind, use_dice,
             row_scores, row_finite, row_sites, out_scores, out_sites,
@@ -132,8 +141,14 @@ def _score_orientation_pair(
                 target_scores.data, target_scores.offsets,
                 q_csr.positions, q_csr.offsets,
                 t_csr.positions, t_csr.offsets,
+                query_site_start_offset, target_site_start_offset,
                 shift, window_radius, realign_window,
-                kind, use_dice, seen, out_score, out_sites_one,
+                kind,
+                use_dice,
+                seen,
+                shift_index * n_rows,
+                out_score,
+                out_sites_one,
             )
             score = np.float32(out_score[0])
             n_sites = out_sites_one[0]
@@ -143,6 +158,7 @@ def _score_orientation_pair(
                 target_scores.data, target_scores.offsets,
                 q_csr.positions, q_csr.offsets,
                 t_csr.positions, t_csr.offsets,
+                query_site_start_offset, target_site_start_offset,
                 shift, window_radius, realign_window,
                 kind, use_dice, out_score, out_sites_one,
             )
@@ -170,6 +186,9 @@ class ProfileConfig:
         realign_window=3,
         min_logerr=0.0,
     ):
+        search_range = strict_integer(search_range, "search_range")
+        window_radius = strict_integer(window_radius, "window_radius")
+        realign_window = strict_integer(realign_window, "realign_window")
         if search_range < 0:
             raise ValueError("search_range must be non-negative.")
         if window_radius < 0:
@@ -179,13 +198,22 @@ class ProfileConfig:
         if not np.isfinite(min_logerr):
             raise ValueError("min_logerr must be finite.")
         self.metric = parse_profile_metric(metric)
-        self.search_range = int(search_range)
-        self.window_radius = int(window_radius)
-        self.realign_window = int(realign_window)
+        self.search_range = search_range
+        self.window_radius = window_radius
+        self.realign_window = realign_window
         self.min_logerr = np.float32(min_logerr)
 
 
-def profile_compare(query_bundle, query_anchors, target_bundle, target_anchors, config):
+def profile_compare(
+    query_bundle,
+    query_anchors,
+    target_bundle,
+    target_anchors,
+    config,
+    *,
+    query_site_start_offset=0,
+    target_site_start_offset=0,
+):
     metric = config.metric
     best_score = np.float32(0.0)
     best_shift = 0
@@ -206,6 +234,8 @@ def profile_compare(query_bundle, query_anchors, target_bundle, target_anchors, 
             config.realign_window,
             metric,
             config.min_logerr,
+            query_site_start_offset,
+            target_site_start_offset,
         )
         rank = ORIENTATION_RANK[label]
         if float(score) > float(best_score) or (

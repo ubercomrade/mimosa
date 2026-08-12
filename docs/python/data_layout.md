@@ -56,9 +56,13 @@ For built-in models:
 
 ## Public coordinates
 
-All public Python and CLI coordinates are zero-based half-open. Scan and anchor
-positions are zero-based indices. Site extraction returns the physical motif
-interval, excluding model context.
+All public Python and CLI coordinates are zero-based. Scan indices address the
+complete model scoring window; anchor positions and comparison offsets address
+the physical motif start, excluding left context. Thus equivalent PWM and
+higher-order models align with offset `0` even when their scoring windows have
+different context. A positive comparison offset moves the target physical site
+right relative to the query. Site extraction returns a zero-based, half-open
+physical motif interval.
 
 `SiteCollection.strands` uses `0` for forward and `1` for reverse. Reverse
 sites are reverse-complemented before PFM reconstruction.

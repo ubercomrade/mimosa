@@ -1,7 +1,9 @@
 import numpy as np
 import pytest
 
-from mimosa import PWM, EncodedSequences, pwm_from_pfm, reverse_complement, scan
+from mimosa import MotifModel, PWM, EncodedSequences, pwm_from_pfm, reverse_complement, scan
+from mimosa._kernels import ho_kmer_codes
+from mimosa.errors import ModelFormatError, ModelInterfaceError
 from mimosa.io.models import read_meme
 
 
@@ -26,6 +28,38 @@ def batch():
 
 
 class TestScan:
+    def test_max_supported_context_uses_int32_rolling_codes(self):
+        sequence = np.full(11, 4, dtype=np.uint8)
+        codes = np.empty(1, dtype=np.int32)
+
+        ho_kmer_codes(sequence, 11, 0, 1, False, codes)
+
+        assert codes.dtype == np.dtype(np.int32)
+        assert int(codes[0]) == 5**11 - 1
+
+    def test_custom_model_must_fill_both_finite_output_tracks(self, batch):
+        class IncompleteModel(MotifModel):
+            name = "incomplete"
+            motif_length = 1
+
+            def scan_into(self, sequence, forward, reverse, /):
+                forward.fill(0.0)
+
+        with pytest.raises(ModelInterfaceError, match="fill both output tracks"):
+            scan(IncompleteModel(), batch, strands="both")
+
+    def test_builtin_scan_rejects_float32_overflow(self):
+        huge = np.finfo(np.float32).max
+        model = PWM(
+            "overflow",
+            np.full((5, 2), huge, dtype=np.float32),
+            (0.25, 0.25, 0.25, 0.25),
+        )
+        batch = EncodedSequences.from_rows([_seq(0, 0, 0)])
+
+        with pytest.raises(ModelFormatError, match="non-finite"):
+            scan(model, batch)
+
     def test_forward_matches_manual(self, pwm):
         seq = _seq(0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3)
         batch = EncodedSequences.from_rows([seq])

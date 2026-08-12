@@ -23,6 +23,19 @@ def _validate_model_name(name, model_type):
         raise ValueError(f"{model_type} name must be a non-empty string.")
 
 
+def strict_integer(value, field, *, allow_text=False):
+    """Return an integer without silently truncating numeric geometry values."""
+    if isinstance(value, bool):
+        raise TypeError(f"{field} must be an integer, not bool.")
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if allow_text and isinstance(value, str):
+        text = value.strip()
+        if text and text.lstrip("+-").isdigit():
+            return int(text)
+    raise TypeError(f"{field} must be an integer.")
+
+
 def _validate_pwm_background(background):
     bg = np.asarray(background, dtype=np.float64)
     if bg.shape != (4,):
@@ -58,6 +71,8 @@ def _validate_pwm_weights(weights, background):
 
 
 def _validate_context_model(representation, context, motif_length, model_name, context_name):
+    context = strict_integer(context, f"{model_name} {context_name}")
+    motif_length = strict_integer(motif_length, f"{model_name} motif_length")
     if representation.ndim != 2:
         raise ModelDimensionError(
             f"{model_name} representation must be two-dimensional, got {representation.ndim} dimensions."
@@ -99,9 +114,11 @@ def _validate_context_model(representation, context, motif_length, model_name, c
         )
     if not np.all(np.isfinite(representation)):
         raise ModelFormatError("", f"{model_name} representation contains non-finite values.")
+    return context, motif_length
 
 
 def _validate_sitega(representation, motif_length):
+    motif_length = strict_integer(motif_length, "SiteGA motif_length")
     if representation.ndim != 2:
         raise ModelDimensionError(
             f"SiteGA representation must be two-dimensional, got {representation.ndim} dimensions."
@@ -120,6 +137,7 @@ def _validate_sitega(representation, motif_length):
         )
     if not np.all(np.isfinite(representation)):
         raise ModelFormatError("", "SiteGA representation contains non-finite values.")
+    return motif_length
 
 
 def _as_float32_readonly(arr):
@@ -171,11 +189,13 @@ def _validate_model_contract(model, capability="scan"):
         ("right_context", right_context),
     )
     for field, value in values:
-        if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        try:
+            integer = strict_integer(value, field)
+        except TypeError:
             raise ModelInterfaceError(
                 capability, model_type, f"{field} must be an integer."
             )
-        if value < 0 or (field == "motif_length" and value == 0):
+        if integer < 0 or (field == "motif_length" and integer == 0):
             requirement = "positive" if field == "motif_length" else "non-negative"
             raise ModelInterfaceError(
                 capability, model_type, f"{field} must be {requirement}."
@@ -222,10 +242,12 @@ class _ContextModel(MotifModel):
     def __post_init__(self):
         _validate_model_name(self.name, type(self).__name__)
         weights = _as_float32_readonly(self.weights)
-        _validate_context_model(
+        order, motif_length = _validate_context_model(
             weights, self.order, self.motif_length, type(self).__name__, "order"
         )
         object.__setattr__(self, "weights", weights)
+        object.__setattr__(self, "order", order)
+        object.__setattr__(self, "motif_length", motif_length)
 
     @property
     def left_context(self):
@@ -265,8 +287,9 @@ class SiteGA(MotifModel):
     def __post_init__(self):
         _validate_model_name(self.name, "SiteGA")
         weights = _as_float32_readonly(self.weights)
-        _validate_sitega(weights, self.motif_length)
+        motif_length = _validate_sitega(weights, self.motif_length)
         object.__setattr__(self, "weights", weights)
+        object.__setattr__(self, "motif_length", motif_length)
 
     def scan_into(self, sequence, forward, reverse, /):
         from ._kernels import rolling_scan_forward, rolling_scan_reverse
@@ -280,10 +303,15 @@ class SiteGA(MotifModel):
 # ── Geometry ─────────────────────────────────────────────────────────────────
 
 def window_size(model):
-    return model.left_context + model.motif_length + model.right_context
+    return (
+        strict_integer(model.left_context, "left_context")
+        + strict_integer(model.motif_length, "motif_length")
+        + strict_integer(model.right_context, "right_context")
+    )
 
 
 def n_positions(model, sequence_length):
+    sequence_length = strict_integer(sequence_length, "sequence_length")
     if sequence_length < 0:
         raise ValueError("sequence length must be non-negative.")
     width = window_size(model)
@@ -293,13 +321,17 @@ def n_positions(model, sequence_length):
 
 
 def site_start_offset(model):
-    return model.left_context
+    return strict_integer(model.left_context, "left_context")
 
 
 # ── PFM/PWM conversion ────────────────────────────────────────────────────────
 
 def pfm_to_pwm(pfm, background=0.25):
     pfm = np.asarray(pfm, dtype=np.float32)
+    if pfm.ndim != 2:
+        raise ModelDimensionError(
+            f"PFM must be two-dimensional, got {pfm.ndim} dimensions."
+        )
     if pfm.shape[0] != NUCLEOTIDE_CARDINALITY:
         raise ModelDimensionError(f"PFM must have 4 rows, got {pfm.shape[0]}.")
     if pfm.shape[1] < 1:
@@ -324,6 +356,10 @@ def pfm_to_pwm(pfm, background=0.25):
 
 def extend_pwm_with_n(weights4):
     weights4 = np.asarray(weights4, dtype=np.float32)
+    if weights4.ndim != 2:
+        raise ModelDimensionError(
+            f"PWM weights must be two-dimensional, got {weights4.ndim} dimensions."
+        )
     if weights4.shape[0] != NUCLEOTIDE_CARDINALITY:
         raise ModelDimensionError(
             f"PWM weights must have 4 rows to extend, got {weights4.shape[0]}."

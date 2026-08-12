@@ -38,7 +38,7 @@ class AnchorCSR:
         return f"AnchorCSR({self.positions.size} anchors, {self.offsets.size - 1} rows)"
 
 
-def collect_anchor_csr(scores, threshold):
+def collect_anchor_csr(scores, threshold, *, position_offset=0):
     n = len(scores)
     positions = np.empty(
         scores.data.size if threshold > 0.0 else n,
@@ -55,11 +55,24 @@ def collect_anchor_csr(scores, threshold):
         )
     else:
         count = collect_best_anchors_csr(scores.data, scores.offsets, positions, offsets)
-    return AnchorCSR(positions[:count], offsets)
+    positions = positions[:count]
+    if positions.size * 2 < scores.data.size:
+        positions = positions.copy()
+    if position_offset:
+        positions += position_offset
+    return AnchorCSR(positions, offsets)
 
 
-def collect_both_anchors(bundle, threshold):
-    fwd_csr = collect_anchor_csr(bundle.forward, threshold)
+def collect_both_anchors(bundle, threshold, *, position_offset=0):
+    """Collect anchors in physical site coordinates, not scan-array indices."""
+    fwd_csr = collect_anchor_csr(
+        bundle.forward, threshold, position_offset=position_offset
+    )
     if bundle.forward is bundle.reverse:
         return (fwd_csr, fwd_csr)
-    return (fwd_csr, collect_anchor_csr(bundle.reverse, threshold))
+    return (
+        fwd_csr,
+        collect_anchor_csr(
+            bundle.reverse, threshold, position_offset=position_offset
+        ),
+    )

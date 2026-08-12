@@ -7,7 +7,6 @@ import pytest
 
 from mimosa.cache import (
     Cache,
-    cache_get,
     cache_set,
     clearcache,
     prepared_profile_cache_key,
@@ -34,31 +33,21 @@ def _wait_for_cache_lock(directory, acquired):
 
 
 class TestCache:
-    def test_set_get(self, tmp_path):
+    def test_set_writes_checksum_protected_entry(self, tmp_path):
         cache = Cache(str(tmp_path))
         cache_set(cache, "abc123", b"payload")
-        assert cache_get(cache, "abc123") == b"payload"
-
-    def test_missing(self, tmp_path):
-        cache = Cache(str(tmp_path))
-        assert cache_get(cache, "nope") is None
-
-    def test_corrupt_checksum(self, tmp_path):
-        cache = Cache(str(tmp_path))
-        cache_set(cache, "abc", b"payload")
-        entry = os.path.join(str(tmp_path), "abc")
-        data_path = os.path.join(entry, "data.bin")
-        with open(data_path, "r+b") as f:
-            f.seek(0)
-            f.write(bytes([f.read(1)[0] ^ 0xFF]))
-        assert cache_get(cache, "abc") is None
+        with open(tmp_path / "abc123" / "meta.toml", "rb") as f:
+            metadata = tomllib.load(f)
+        assert metadata["size"] == len(b"payload")
+        assert metadata["checksum"].startswith("sha256:")
 
     def test_clear(self, tmp_path):
         cache = Cache(str(tmp_path))
         cache_set(cache, "a", b"1")
         cache_set(cache, "b", b"2")
         assert clearcache(cache) == 2
-        assert cache_get(cache, "a") is None
+        assert not (tmp_path / "a").exists()
+        assert not cache._verified_entries
 
     def test_clear_preserves_unrelated_directory(self, tmp_path):
         unrelated = tmp_path / "not-a-cache-entry"
@@ -67,12 +56,38 @@ class TestCache:
         assert clearcache(Cache(str(tmp_path))) == 0
         assert unrelated.exists()
 
-    def test_metadata_tampering_invalidates_entry(self, tmp_path):
+    def test_clear_preserves_checksum_invalid_entry(self, tmp_path):
         cache = Cache(str(tmp_path))
-        cache_set(cache, "abc", b"payload", metadata={"min_logerr": 0.0})
-        meta = tmp_path / "abc" / "meta.toml"
-        meta.write_text(meta.read_text().replace("min_logerr = 0.0", "min_logerr = 1.0"))
-        assert cache_get(cache, "abc") is None
+        cache_set(cache, "damaged", b"payload")
+        data_path = tmp_path / "damaged" / "data.bin"
+        data_path.write_bytes(b"changed")
+
+        assert clearcache(cache) == 0
+        assert data_path.exists()
+
+    @pytest.mark.parametrize(
+        "name", ("user.backup-data", ".mimosa-cache-stage-user-data")
+    )
+    def test_clear_preserves_user_directories_that_match_old_cleanup_names(
+        self, tmp_path, name
+    ):
+        user_directory = tmp_path / name
+        user_directory.mkdir()
+        user_file = user_directory / "important.txt"
+        user_file.write_text("do not delete")
+
+        assert clearcache(Cache(str(tmp_path))) == 0
+        assert user_file.read_text() == "do not delete"
+
+    def test_clear_rejects_symlinked_cache_root(self, tmp_path):
+        target = tmp_path / "real-cache"
+        cache_set(Cache(str(target)), "abc", b"payload")
+        link = tmp_path / "cache-link"
+        link.symlink_to(target, target_is_directory=True)
+
+        with pytest.raises(ValueError, match="real directory"):
+            clearcache(Cache(str(link)))
+        assert (target / "abc").exists()
 
     def test_key_validation(self, tmp_path):
         cache = Cache(str(tmp_path))
@@ -186,17 +201,33 @@ class TestPreparedProfileCache:
         loaded = prepare_profile(pwm, batch, cache=Cache(str(tmp_path)))
         assert loaded == expected
 
-    def test_prepare_legacy_pickle_fallback(self, pwm, batch, tmp_path):
-        import pickle
-
-        from mimosa.cache import cache_set
+    def test_verified_entry_rechecks_same_size_payload_mutation(
+        self, pwm, batch, tmp_path, monkeypatch
+    ):
+        import hashlib
 
         cache = Cache(str(tmp_path))
-        expected = prepare_profile(pwm, batch)
+        prepare_profile(pwm, batch, cache=cache)
+        prepare_profile(pwm, batch, cache=cache)
         key = prepared_profile_cache_key(pwm, batch)
-        cache_set(cache, key, pickle.dumps(expected, protocol=pickle.HIGHEST_PROTOCOL))
-        loaded = prepare_profile(pwm, batch, cache=Cache(str(tmp_path)))
-        assert loaded == expected
+        data_path = tmp_path / key / "data.bin"
+        with open(data_path, "r+b") as f:
+            f.seek(-1, os.SEEK_END)
+            value = f.read(1)[0]
+            f.seek(-1, os.SEEK_END)
+            f.write(bytes([value ^ 0xFF]))
+
+        calls = 0
+        original = hashlib.file_digest
+
+        def counted(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(hashlib, "file_digest", counted)
+        prepare_profile(pwm, batch, cache=cache)
+        assert calls == 1
 
     def test_prepare_payload_is_mmap_profile(self, pwm, batch, tmp_path):
         cache = Cache(str(tmp_path))
@@ -208,6 +239,32 @@ class TestPreparedProfileCache:
             metadata = tomllib.load(f)
         assert metadata["format"] == "prepared_profile_mmap"
         assert metadata["n_rows"] == len(prepared.bundle.forward)
+
+    def test_prepared_cache_streams_sections_without_legacy_payload_encoder(
+        self, pwm, batch, tmp_path, monkeypatch
+    ):
+        from mimosa import cache as cache_module
+
+        def fail(*args, **kwargs):
+            raise AssertionError("prepared cache writes must stream sections")
+
+        monkeypatch.setattr(cache_module, "_encode_prepared_profile_with_metadata", fail)
+        cache = Cache(str(tmp_path))
+        prepared = prepare_profile(pwm, batch, cache=cache)
+
+        assert prepared == prepare_profile(pwm, batch, cache=Cache(str(tmp_path)))
+
+    def test_prepared_cache_exposes_write_and_hit_phase_timings(
+        self, pwm, batch, tmp_path
+    ):
+        timings = {}
+        cache = Cache(str(tmp_path), timings=timings)
+        prepare_profile(pwm, batch, cache=cache)
+        assert {"cache_encode", "cache_lock_wait", "cache_write"} <= timings.keys()
+
+        hit_timings = {}
+        prepare_profile(pwm, batch, cache=Cache(str(tmp_path), timings=hit_timings))
+        assert {"cache_checksum", "cache_semantic_validation"} <= hit_timings.keys()
 
     def test_prepare_miss_on_model_change(self, pwm, batch, tmp_path):
         from mimosa import PWM

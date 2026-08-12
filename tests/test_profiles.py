@@ -2,7 +2,9 @@ import numpy as np
 import pytest
 
 from mimosa import (
+    BaMM,
     ComparisonResult,
+    EncodedSequences,
     ProfileConfig,
     compare,
     compare_many,
@@ -27,7 +29,10 @@ def _lookup_score(table, score):
 
     if isinstance(table, LogTailTable):
         idx = min(
-            int(np.searchsorted(-table.scores, -score, side="left")),
+            max(
+                0,
+                int(np.searchsorted(-table.scores, -score, side="right")) - 1,
+            ),
             table.scores.size - 1,
         )
         return table.log_tail[idx]
@@ -68,9 +73,39 @@ class TestNormalization:
     def test_empirical_lookup(self):
         scores = np.array([1.0, 2.0, 3.0], dtype=np.float32)
         table = fit(EmpiricalLogTail(), scores)
-        assert _lookup_score(table, np.float32(2.5)) == table.log_tail[1]
+        assert _lookup_score(table, np.float32(2.5)) == table.log_tail[0]
         assert _lookup_score(table, np.float32(0.0)) == table.log_tail[2]
         assert _lookup_score(table, np.float32(3.0)) == table.log_tail[0]
+        assert _lookup_score(table, np.float32(4.0)) == table.log_tail[0]
+
+    def test_empirical_uses_upper_tail_from_separate_calibration(self):
+        from mimosa import RaggedArray, StrandPair
+        from mimosa.profiles.normalization import _fit_normalize
+
+        foreground = RaggedArray.from_rows([[2.5]])
+        calibration = RaggedArray.from_rows([[1.0, 2.0, 3.0]])
+        _, normalized = _fit_normalize(
+            EmpiricalLogTail(),
+            StrandPair(foreground, foreground),
+            calibration=StrandPair(calibration, calibration),
+        )
+
+        assert normalized.forward[0][0] == pytest.approx(-np.log10(1 / 3))
+
+    def test_hybrid_exact_tail_uses_upper_tail_lookup(self):
+        from mimosa import RaggedArray
+        from mimosa.profiles.normalization import HybridLogTailTable, LogTailTable
+
+        exact = LogTailTable(
+            np.array([3.0, 2.0, 1.0], dtype=np.float32),
+            np.array([-np.log10(1 / 3), -np.log10(2 / 3), 0.0], dtype=np.float32),
+        )
+        table = HybridLogTailTable(
+            0.0, 1.0, np.zeros(4, dtype=np.float32), exact
+        )
+
+        normalized = transform_scores(table, RaggedArray.from_rows([[2.5]]))
+        assert normalized[0][0] == pytest.approx(-np.log10(1 / 3))
 
     def test_empty_scores(self):
         table = fit(EmpiricalLogTail(), np.array([], dtype=np.float32))
@@ -123,6 +158,18 @@ class TestNormalization:
         serial = transform_scores(table, scores)
         np.testing.assert_array_equal(serial.data, expected)
 
+    def test_sparse_anchor_positions_do_not_retain_full_candidate_buffer(self):
+        from mimosa import RaggedArray
+        from mimosa.profiles.anchors import collect_anchor_csr
+
+        scores = RaggedArray.from_rows(
+            [np.concatenate(([1.0], np.zeros(9_999, dtype=np.float32)))]
+        )
+        anchors = collect_anchor_csr(scores, threshold=0.5)
+
+        assert anchors.positions.nbytes == np.dtype(np.int64).itemsize
+        assert anchors.positions.base is None
+
     def test_fingerprint(self):
         assert normalization_fingerprint(EmpiricalLogTail()) == "empirical-log-tail-v1"
         assert (
@@ -132,6 +179,59 @@ class TestNormalization:
 
 
 class TestCompare:
+    def test_prepared_profile_arrays_are_read_only(self, pwm_pair, batch):
+        prepared = prepare_profile(pwm_pair[0], batch, min_logerr=1.0)
+        arrays = (
+            prepared.bundle.forward.data,
+            prepared.bundle.forward.offsets,
+            prepared.bundle.reverse.data,
+            prepared.bundle.reverse.offsets,
+            prepared.anchors[0].positions,
+            prepared.anchors[0].offsets,
+            prepared.anchors[1].positions,
+            prepared.anchors[1].offsets,
+        )
+        assert all(not values.flags.writeable for values in arrays)
+        with pytest.raises(ValueError):
+            prepared.bundle.forward.data[0] = 0.0
+
+    def test_equivalent_pwm_and_order_one_bamm_align_at_physical_zero(self):
+        rng = np.random.default_rng(8)
+        pwm_weights = rng.normal(size=(5, 4)).astype(np.float32)
+        bamm_weights = np.empty((25, 4), dtype=np.float32)
+        for code in range(25):
+            bamm_weights[code] = pwm_weights[code % 5]
+        from mimosa import PWM
+
+        pwm = PWM("pwm", pwm_weights, (0.25, 0.25, 0.25, 0.25))
+        bamm = BaMM("bamm", bamm_weights, 1, 4)
+        sequences = EncodedSequences.from_rows(
+            [rng.integers(0, 4, size=200, dtype=np.uint8) for _ in range(5)]
+        )
+
+        prepared_pwm = prepare_profile(pwm, sequences)
+        prepared_bamm = prepare_profile(bamm, sequences)
+        assert prepared_pwm.site_start_offset == 0
+        assert prepared_bamm.site_start_offset == 1
+        assert all(
+            positions.size == 0 or positions.min() >= 1
+            for positions in (
+                prepared_bamm.anchors[0].positions,
+                prepared_bamm.anchors[1].positions,
+            )
+        )
+
+        for query, target in ((pwm, bamm), (bamm, pwm)):
+            result = compare(
+                query,
+                target,
+                sequences,
+                search_range=0,
+                window_radius=0,
+            )
+            assert result.offset == 0
+            assert result.score == pytest.approx(1.0)
+
     def test_compare_models_matches_reference(self, pwm_pair, batch):
         m1, m2 = pwm_pair
         result = compare(m1, m2, batch)
@@ -215,7 +315,35 @@ class TestCompare:
             query, target, batch, None, query.min_logerr, query.normalization,
             ProfileConfig(), None, None, 1,
         )
-        assert calls == [1]
+        assert calls[0] == 1
+        assert calls[1] >= 1
+
+    def test_compare_many_applies_thread_budget_to_query_and_serial_target(
+        self, pwm_pair, batch, monkeypatch
+    ):
+        import importlib
+        import numba
+
+        compare_module = importlib.import_module("mimosa.compare")
+        observed_threads = []
+        original = compare_module._prepare_profile
+
+        def observed(*args, **kwargs):
+            observed_threads.append(numba.get_num_threads())
+            return original(*args, **kwargs)
+
+        previous_threads = numba.get_num_threads()
+        monkeypatch.setattr(compare_module, "_prepare_profile", observed)
+        compare_many(
+            pwm_pair[0],
+            [pwm_pair[1]],
+            batch,
+            total_threads=2,
+            inner_threads=2,
+        )
+
+        assert observed_threads == [2, 2]
+        assert numba.get_num_threads() == previous_threads
 
     @pytest.mark.parametrize("threshold", (0.0, 1.0))
     @pytest.mark.parametrize("metric", ("co", "dice", "cosine"))
@@ -283,7 +411,11 @@ class TestCompare:
 
         with pytest.raises(TypeError, match="custom models"):
             compare_many(
-                pwm_pair[0], [CustomModel()], batch, total_threads=2, inner_threads=1
+                pwm_pair[0],
+                [CustomModel(), CustomModel()],
+                batch,
+                total_threads=2,
+                inner_threads=1,
             )
 
     def test_compare_many_reprepares_duplicate_raw_targets_without_cache(
@@ -385,9 +517,13 @@ class TestCompare:
         alignment_module = importlib.import_module("mimosa.profiles.alignment")
         query = prepare_profile(pwm_pair[0], batch, min_logerr=threshold)
         target = prepare_profile(pwm_pair[1], batch, min_logerr=threshold)
-        monkeypatch.setattr(alignment_module, "use_parallel", lambda *args, **kwargs: False)
+        monkeypatch.setattr(
+            alignment_module, "use_alignment_parallel", lambda *args, **kwargs: False
+        )
         serial = compare(query, target, metric=metric)
-        monkeypatch.setattr(alignment_module, "use_parallel", lambda *args, **kwargs: True)
+        monkeypatch.setattr(
+            alignment_module, "use_alignment_parallel", lambda *args, **kwargs: True
+        )
         parallel = compare(query, target, metric=metric)
         assert parallel == serial
 
@@ -439,6 +575,28 @@ class TestCompare:
         query = prepare_profile(m1, batch, min_logerr=1.0)
         with pytest.raises(ValueError):
             compare(query, m2, batch, min_logerr=2.0)
+
+    def test_prepared_normalization_mismatch_is_rejected(self, pwm_pair, batch):
+        query = prepare_profile(pwm_pair[0], batch)
+        target = prepare_profile(pwm_pair[1], batch)
+
+        with pytest.raises(ValueError, match="requested normalization"):
+            compare(query, target, normalization=EmpiricalLogTail())
+
+    def test_result_dict_includes_zero_contributing_sites(self):
+        result = ComparisonResult(
+            "query", "target", np.float32(0.0), 0, "++", "co", 0
+        )
+        assert result.to_dict()["n_sites"] == 0
+
+    @pytest.mark.parametrize("metric", ("co", "dice", "cosine"))
+    def test_zero_norm_profiles_have_no_contributing_sites(self, metric):
+        query = ScoreProfile("query", [np.ones(25, dtype=np.float32)])
+        target = ScoreProfile("target", [np.ones(25, dtype=np.float32)])
+
+        result = compare(query, target, metric=metric, window_radius=0)
+        assert result.score == 0.0
+        assert result.n_sites == 0
 
     def test_mixed_unsupported(self, pwm_pair, batch):
         m1, _ = pwm_pair

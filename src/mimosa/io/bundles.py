@@ -1,6 +1,6 @@
 """Portable bundle storage: TOML manifest + raw Float32 blobs (models) and NPY (nulls).
 
-Reproduces the Julia v2 model bundle layout and the Mimosa v8 null bundle layout
+Reproduces the Julia v2 model bundle layout and the Mimosa v9 null bundle layout
 byte-for-byte, including the `bitstring` fingerprint canonicalization.
 """
 
@@ -12,6 +12,7 @@ import os
 import struct
 import tempfile
 import tomllib
+from importlib.metadata import PackageNotFoundError, version
 
 import numpy as np
 
@@ -29,7 +30,7 @@ from ..models import (
 )
 
 MODEL_FORMAT_VERSION = 2
-NULL_FORMAT_VERSION = 8
+NULL_FORMAT_VERSION = 9
 BUNDLE_MANIFEST_NAME = "manifest.toml"
 BUNDLE_DATA_DIR = "data"
 
@@ -39,6 +40,11 @@ MAX_BUNDLE_RANK = 8
 MAX_BUNDLE_DIMENSION = 100_000_000
 # ponytail: one per-dim cap and one total-bytes cap cover all four former limits.
 MAX_BUNDLE_BYTES = 1_073_741_824
+
+try:
+    _TOOL_VERSION = version("mimosa-tool")
+except PackageNotFoundError:  # pragma: no cover - source trees without installed metadata
+    _TOOL_VERSION = "unknown"
 
 
 def _bundle_error(path, message):
@@ -181,9 +187,22 @@ def _resolve_bundle_path(root, relative, path, context, require_exists=False):
     parts = relative.split("/")
     if any(not p for p in parts) or any(p in (".", "..") for p in parts):
         raise _bundle_error(path, f"{context} path contains traversal components.")
-    candidate = os.path.join(root, relative)
-    if os.path.islink(candidate):
-        raise _bundle_error(path, f"{context} path must not be a symbolic link.")
+    real_root = os.path.realpath(root)
+    candidate = os.path.abspath(os.path.join(real_root, *parts))
+    component = real_root
+    for part in parts:
+        component = os.path.join(component, part)
+        if os.path.islink(component):
+            raise _bundle_error(
+                path, f"{context} path contains a symbolic-link component."
+            )
+    real_candidate = os.path.realpath(candidate)
+    try:
+        contained_in_root = os.path.commonpath((real_root, real_candidate)) == real_root
+    except ValueError:
+        contained_in_root = False
+    if not contained_in_root:
+        raise _bundle_error(path, f"{context} path escapes the bundle root.")
     if require_exists and not os.path.isfile(candidate):
         raise _bundle_error(path, f"{context} file does not exist: '{relative}'.")
     return candidate
@@ -214,6 +233,7 @@ def _parse_bundle_array(root, arrays, name, path):
 
 
 def _read_bundle_manifest(root, expected_version, expected_kind=None):
+    root = os.path.realpath(root)
     if not os.path.isdir(root):
         raise _bundle_error(root, "bundle root is not a directory.")
     manifest_file = os.path.join(root, BUNDLE_MANIFEST_NAME)
@@ -253,14 +273,11 @@ def _read_bundle_manifest(root, expected_version, expected_kind=None):
     return manifest
 
 
-def _validate_bundle_array_checksum(root, spec, bundle_path):
+def _resolve_bundle_array_file(root, spec, bundle_path):
     file, dtype, shape, checksum = spec
     file_path = _resolve_bundle_path(root, file, bundle_path, f"array '{file}'", require_exists=True)
     if os.path.getsize(file_path) > MAX_BUNDLE_BYTES:
         raise _bundle_error(bundle_path, f"binary blob exceeds size limit {MAX_BUNDLE_BYTES} bytes.")
-    actual = _file_sha256(file_path)
-    if actual != checksum[7:]:
-        raise _bundle_error(bundle_path, f"checksum mismatch for '{file}'.")
     return file_path
 
 
@@ -270,14 +287,14 @@ def _read_raw_f32_2d(path, expected_shape, expected_bytes, expected_checksum=Non
         raise _bundle_error(path, f"raw payload length mismatch: expected {expected_bytes} bytes, got {file_size}.")
     if _bundle_shape_payload_bytes(expected_shape, "<f4", path, "raw model array") != expected_bytes:
         raise _bundle_error(path, "raw payload length disagrees with shape.")
-    if expected_checksum is not None:
-        actual = _file_sha256(path)
-        if actual != expected_checksum[7:]:
-            raise _bundle_error(path, "checksum changed while reading the payload.")
     data = np.fromfile(path, dtype="<f4")
     if data.size != expected_shape[0] * expected_shape[1]:
         raise _bundle_error(path, "raw payload length disagrees with shape.")
     data = data.reshape(expected_shape)
+    if expected_checksum is not None:
+        actual = hashlib.sha256(memoryview(data).cast("B")).hexdigest()
+        if actual != expected_checksum[7:]:
+            raise _bundle_error(path, "checksum mismatch for raw model array.")
     if not np.all(np.isfinite(data)):
         raise _bundle_error(path, "raw model array contains non-finite values.")
     return data
@@ -387,7 +404,7 @@ def content_fingerprint_int64(arr):
 
 
 def content_fingerprint_bytes(data):
-    return hashlib.sha256(bytes(data)).hexdigest()
+    return hashlib.sha256(memoryview(data)).hexdigest()
 
 
 def content_fingerprint_string(s):
@@ -519,7 +536,7 @@ def write_model(path, model):
             "shape": shape,
             "layout": "row_major",
             "convention": "axes: (base, position) for matrix models, (context_code, position) for higher-order",
-            "provenance": {"tool": "Mimosa.jl", "version": "0.1.0"},
+            "provenance": {"tool": "mimosa-tool", "version": _TOOL_VERSION},
             "arrays": {
                 arr_name: {
                     "file": f"data/{arr_name}.bin",
@@ -552,7 +569,7 @@ def _read_model_array(path, manifest, array_name):
         raise _bundle_error(path, "manifest and array shape declarations disagree.")
     if dtype != "<f4":
         raise _bundle_error(path, "model arrays must use dtype '<f4'.")
-    file_path = _validate_bundle_array_checksum(path, (file, spec_dtype, spec_shape, checksum), path)
+    file_path = _resolve_bundle_array_file(path, (file, spec_dtype, spec_shape, checksum), path)
     byte_length = _required_manifest_int(
         arrays[array_name], "byte_length", path, f"array '{array_name}'", minimum=1, maximum=MAX_BUNDLE_BYTES
     )
@@ -760,7 +777,9 @@ def read_null_bundle(path):
         raise _bundle_error(path, "raw_null_scores must use dtype '<f8'.")
     if shape != [n_null]:
         raise _bundle_error(path, "raw_null_scores shape does not match n_null.")
-    npy_path = _validate_bundle_array_checksum(path, (file, dtype, shape, checksum), path)
+    npy_path = _resolve_bundle_array_file(path, (file, dtype, shape, checksum), path)
+    if _file_sha256(npy_path) != checksum[7:]:
+        raise _bundle_error(path, f"checksum mismatch for '{file}'.")
     raw_scores = _read_npy(npy_path, "<f8", [n_null]).astype(np.float64).ravel()
     if not np.all(np.isfinite(raw_scores)):
         raise _bundle_error(path, "raw_null_scores contains non-finite values.")
@@ -783,7 +802,9 @@ def read_null_bundle(path):
         raise _bundle_error(path, "pair_indices must use dtype '<u4'.")
     if shape != [n_null, 2]:
         raise _bundle_error(path, "pair_indices shape does not match n_null.")
-    indices_path = _validate_bundle_array_checksum(path, (file, dtype, shape, checksum), path)
+    indices_path = _resolve_bundle_array_file(path, (file, dtype, shape, checksum), path)
+    if _file_sha256(indices_path) != checksum[7:]:
+        raise _bundle_error(path, f"checksum mismatch for '{file}'.")
     indices = _read_npy(indices_path, "<u4", [n_null, 2]).astype(np.int64)
     pairs = []
     for index in range(n_null):

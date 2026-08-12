@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 
 from ..arrays import EncodedSequences, RaggedArray, _ENCODE_TABLE
@@ -11,18 +13,23 @@ from ..profiles.prepared import ScoreProfile
 MAX_FASTA_SEQUENCES = 1_000_000
 MAX_FASTA_SEQUENCE_LENGTH = 100_000_000
 MAX_FASTA_LINE_LENGTH = 1_000_000
+MAX_FASTA_TOTAL_BASES = 1_000_000_000
 
 MAX_SCORE_LINE_BYTES = 4 * 1024**2
 MAX_SCORE_ROWS = 1_000_000
 MAX_SCORE_ELEMENTS = 100_000_000
 
+_SCORE_TOKEN = re.compile(
+    r"[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?\Z"
+)
+
 
 def read_fasta(path, max_sequences=MAX_FASTA_SEQUENCES):
     if max_sequences < 1:
         raise ValueError("max_sequences must be at least 1.")
-    rows = []
     names = []
-    current_seq = bytearray()
+    data = bytearray()
+    offsets = [0]
     current_name = ""
     has_current = False
     with open(path, "r", encoding="ascii", errors="replace") as f:
@@ -36,43 +43,41 @@ def read_fasta(path, max_sequences=MAX_FASTA_SEQUENCES):
                 continue
             if stripped[0] == ">":
                 if has_current:
-                    if len(rows) >= max_sequences:
-                        raise ModelFormatError(
-                            path, f"exceeded max_sequences limit {max_sequences}."
-                        )
-                    rows.append(bytes(current_seq))
                     names.append(current_name)
-                    current_seq = bytearray()
+                    offsets.append(len(data))
+                if len(names) >= max_sequences:
+                    raise ModelFormatError(
+                        path, f"exceeded max_sequences limit {max_sequences}."
+                    )
                 header = stripped[1:].strip()
                 current_name = header.split()[0] if header else ""
                 has_current = True
             else:
                 if not has_current:
                     raise ModelFormatError(path, "sequence data before header line.")
-                current_seq.extend(stripped.encode("ascii", errors="replace"))
-                if len(current_seq) > MAX_FASTA_SEQUENCE_LENGTH:
+                sequence_bytes = stripped.encode("ascii", errors="replace")
+                if len(data) - offsets[-1] + len(sequence_bytes) > MAX_FASTA_SEQUENCE_LENGTH:
                     raise ModelFormatError(
                         path, f"sequence exceeds length limit {MAX_FASTA_SEQUENCE_LENGTH}."
                     )
+                if len(data) + len(sequence_bytes) > MAX_FASTA_TOTAL_BASES:
+                    raise ModelFormatError(
+                        path, f"total bases exceed limit {MAX_FASTA_TOTAL_BASES}."
+                    )
+                data.extend(sequence_bytes)
     if has_current:
-        if len(rows) >= max_sequences:
-            raise ModelFormatError(path, f"exceeded max_sequences limit {max_sequences}.")
-        rows.append(bytes(current_seq))
         names.append(current_name)
-    if not rows:
+        offsets.append(len(data))
+    if not names:
         raise ModelFormatError(path, "no sequences found in FASTA file.")
-    data = np.frombuffer(b"".join(rows), dtype=np.uint8)
-    encoded = _ENCODE_TABLE[data]
-    offsets = np.zeros(len(rows) + 1, dtype=np.int64)
-    for i, r in enumerate(rows):
-        offsets[i + 1] = offsets[i] + len(r)
-    return EncodedSequences(encoded, offsets), tuple(names)
+    encoded = _ENCODE_TABLE[np.frombuffer(data, dtype=np.uint8)]
+    return EncodedSequences(encoded, np.asarray(offsets, dtype=np.int64)), tuple(names)
 
 
 def read_scores(path):
     file = str(path)
     rows = []
-    current_values = []
+    current_chunks = []
     seen_header = False
     elements = 0
     with open(file, "r", encoding="ascii", errors="replace") as f:
@@ -84,31 +89,41 @@ def read_scores(path):
                 continue
             if stripped.startswith(">"):
                 if seen_header:
-                    rows.append(current_values)
+                    rows.append(_join_score_chunks(current_chunks))
                 if len(rows) >= MAX_SCORE_ROWS:
                     raise ModelFormatError(file, "score row count exceeds the limit.")
-                current_values = []
+                current_chunks = []
                 seen_header = True
                 continue
             if not seen_header:
                 raise ModelFormatError(file, "score values require a header.")
             cleaned = stripped.replace(",", " ")
-            for token in cleaned.split():
-                try:
-                    value = float(token)
-                except ValueError:
-                    raise ModelFormatError(file, f"invalid score value: '{token}'.")
-                if not np.isfinite(value):
-                    raise ModelFormatError(file, "score values must be finite.")
-                elements += 1
-                if elements > MAX_SCORE_ELEMENTS:
-                    raise ModelFormatError(file, "score element count exceeds the limit.")
-                current_values.append(value)
+            tokens = cleaned.split()
+            invalid = next((token for token in tokens if not _SCORE_TOKEN.fullmatch(token)), None)
+            if invalid is not None:
+                raise ModelFormatError(file, f"invalid score value: '{invalid}'.")
+            values = np.fromstring(cleaned, dtype=np.float32, sep=" ")
+            if values.size != len(tokens):
+                raise ModelFormatError(file, "invalid score value.")
+            if not np.all(np.isfinite(values)):
+                raise ModelFormatError(file, "score values must be finite.")
+            elements += values.size
+            if elements > MAX_SCORE_ELEMENTS:
+                raise ModelFormatError(file, "score element count exceeds the limit.")
+            current_chunks.append(values)
     if seen_header:
-        rows.append(current_values)
+        rows.append(_join_score_chunks(current_chunks))
     if len(rows) > MAX_SCORE_ROWS:
         raise ModelFormatError(file, "score row count exceeds the limit.")
     if not rows:
         raise ModelFormatError(file, "score file contains no profiles.")
     name = file.rsplit("/", 1)[-1].rsplit(".", 1)[0]
     return ScoreProfile(name, RaggedArray.from_rows(rows))
+
+
+def _join_score_chunks(chunks):
+    if not chunks:
+        return np.empty(0, dtype=np.float32)
+    if len(chunks) == 1:
+        return chunks[0]
+    return np.concatenate(chunks)

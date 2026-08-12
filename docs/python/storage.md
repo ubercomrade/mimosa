@@ -66,8 +66,13 @@ prepared = prepare_profile(
 Disk hits verify the payload checksum once per cache instance and expose the
 numeric sections through read-only memory maps. The cache does not retain
 prepared profiles in a process-local store, so each disk hit maps the prepared
-sections from the cache entry. Entries written by older versions use the legacy
-pickle fallback and should only be opened from a trusted cache directory.
+sections from the cache entry. Entries from incompatible cache formats are
+treated as misses; Mimosa never loads pickle cache payloads.
+
+Prepared-profile writes stream aligned sections directly into one staged binary
+payload while calculating SHA-256 incrementally. This avoids holding a second
+full payload in Python memory. The benchmark's `--phase-timings` mode reports
+cache encode, lock wait, write, checksum, and semantic-validation timings.
 
 Cache keys include the model or score-profile fingerprint, sequence and
 background fingerprints, the Float32 `min_logerr` bit pattern, normalization

@@ -4,22 +4,24 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from types import MappingProxyType
 
 import numpy as np
 
 from .compare import ComparisonResult, compare
 from .io.bundles import (
+    NULL_FORMAT_VERSION,
     content_fingerprint_float64,
     model_collection_fingerprint,
     sequence_fingerprint,
 )
-from .models import PWM
+from .models import PWM, strict_integer
 from .profiles.alignment import parse_profile_metric
 from .profiles.normalization import HybridEmpiricalLogTail, normalization_fingerprint
-from .profiles.prepared import prepare_profile
+from .profiles.prepared import _prepare_profile
 
 SAMPLING_VERSION = "original-shuffled-ordered-pairs-v3"
-ALIGNMENT_VERSION = "profile-alignment-v1"
+ALIGNMENT_VERSION = "profile-alignment-v2"
 
 
 @dataclass(frozen=True)
@@ -27,7 +29,7 @@ class NullDistribution:
     strategy: str
     metric: str
     raw_scores: np.ndarray
-    pairs: list
+    pairs: tuple[tuple[str, str, float], ...]
     n_null: int
     n_models: int
     model_type: str
@@ -37,9 +39,28 @@ class NullDistribution:
     model_collection_fingerprint: str | None
     sequence_fingerprint: str
     background_fingerprint: str
-    contract: dict
+    contract: MappingProxyType
 
     def __post_init__(self):
+        try:
+            raw_scores = np.array(self.raw_scores, dtype=np.float64, copy=True)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("null distribution raw_scores must be numeric.") from exc
+        if raw_scores.ndim != 1:
+            raise ValueError("null distribution raw_scores must be one-dimensional.")
+        if not np.all(np.isfinite(raw_scores)):
+            raise ValueError("null distribution raw_scores must be finite.")
+        raw_scores.setflags(write=False)
+        object.__setattr__(self, "raw_scores", raw_scores)
+        try:
+            n_null = strict_integer(self.n_null, "n_null")
+            n_models = strict_integer(self.n_models, "n_models")
+            seed = strict_integer(self.seed, "seed")
+        except TypeError as exc:
+            raise ValueError(str(exc)) from exc
+        object.__setattr__(self, "n_null", n_null)
+        object.__setattr__(self, "n_models", n_models)
+        object.__setattr__(self, "seed", seed)
         if self.n_null <= 0:
             raise ValueError("null distribution n_null must be positive.")
         if self.n_null != len(self.raw_scores):
@@ -54,6 +75,84 @@ class NullDistribution:
             raise ValueError("null distribution seed must be non-negative.")
         if not self.sampling_version:
             raise ValueError("null distribution sampling_version must not be empty.")
+        if self.strategy != "profile":
+            raise ValueError("only profile null distributions are supported.")
+        metric = parse_profile_metric(self.metric)
+        object.__setattr__(self, "metric", metric)
+        pairs = []
+        for index, pair in enumerate(self.pairs):
+            if not isinstance(pair, (tuple, list)) or len(pair) != 3:
+                raise ValueError(
+                    f"null distribution pair {index} must contain variant IDs and a score."
+                )
+            query_id, target_id, score = pair
+            if not isinstance(query_id, str) or not query_id:
+                raise ValueError(f"null distribution pair {index} query variant ID is invalid.")
+            if not isinstance(target_id, str) or not target_id:
+                raise ValueError(f"null distribution pair {index} target variant ID is invalid.")
+            if not np.isfinite(score):
+                raise ValueError(f"null distribution pair {index} score must be finite.")
+            if float(score) != float(raw_scores[index]):
+                raise ValueError(
+                    f"null distribution pair {index} score does not match raw_scores."
+                )
+            pairs.append((query_id, target_id, float(score)))
+        object.__setattr__(self, "pairs", tuple(pairs))
+        if not isinstance(self.contract, dict):
+            raise ValueError("null distribution contract must be a dictionary.")
+        contract = dict(self.contract)
+        required = (
+            "metric",
+            "search_range",
+            "window_radius",
+            "realign_window",
+            "min_logerr",
+            "normalization_version",
+            "alignment_version",
+            "sequence_fingerprint",
+            "background_fingerprint",
+            "raw_scores_fingerprint",
+        )
+        missing = [key for key in required if key not in contract]
+        if missing:
+            raise ValueError(
+                "null distribution contract is missing required fields: "
+                + ", ".join(missing)
+                + "."
+            )
+        if contract["metric"] != metric:
+            raise ValueError("null distribution contract metric does not match metric.")
+        for key in ("search_range", "window_radius", "realign_window"):
+            try:
+                value = strict_integer(contract[key], key)
+            except TypeError as exc:
+                raise ValueError(str(exc)) from exc
+            if value < 0:
+                raise ValueError(f"null distribution contract {key} must be non-negative.")
+            contract[key] = value
+        try:
+            with np.errstate(over="ignore", invalid="ignore"):
+                min_logerr = np.float32(contract["min_logerr"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("null distribution contract min_logerr must be finite.") from exc
+        if not np.isfinite(min_logerr):
+            raise ValueError("null distribution contract min_logerr must be finite.")
+        contract["min_logerr"] = min_logerr
+        for key in (
+            "normalization_version",
+            "alignment_version",
+            "sequence_fingerprint",
+            "background_fingerprint",
+        ):
+            if not isinstance(contract[key], str) or not contract[key]:
+                raise ValueError(f"null distribution contract {key} must be a non-empty string.")
+        actual_fingerprint = content_fingerprint_float64(raw_scores)
+        if contract["raw_scores_fingerprint"] != actual_fingerprint:
+            raise ValueError(
+                "null distribution raw_scores fingerprint does not match the payload."
+            )
+        contract["raw_scores_fingerprint"] = actual_fingerprint
+        object.__setattr__(self, "contract", MappingProxyType(contract))
 
 @dataclass(frozen=True)
 class AnnotatedResult:
@@ -119,6 +218,15 @@ def empirical_upper_tail_pvalue(scores, score):
     if not np.isfinite(score):
         raise ValueError("score must be finite.")
     sorted_scores = np.sort(scores)
+    return _empirical_upper_tail_pvalue_sorted(sorted_scores, score)
+
+
+def _empirical_upper_tail_pvalue_sorted(sorted_scores, score):
+    sorted_scores = np.asarray(sorted_scores, dtype=np.float64)
+    if not np.all(np.isfinite(sorted_scores)):
+        raise ValueError("null scores must be finite.")
+    if not np.isfinite(score):
+        raise ValueError("score must be finite.")
     n = sorted_scores.size
     if n <= 0:
         raise ValueError("null distribution must contain at least one score.")
@@ -130,7 +238,7 @@ def empirical_upper_tail_pvalue(scores, score):
 def _null_id(dist):
     c = dist.contract
     parts = [
-        "format_version=7",
+        f"format_version={NULL_FORMAT_VERSION}",
         f"strategy={dist.strategy}",
         f"metric={dist.metric}",
         f"n_null={dist.n_null}",
@@ -165,7 +273,7 @@ def annotate_results(results, dist, *, effective_number_of_targets=None):
             raise ValueError(
                 f"result metric '{result.metric}' does not match null metric '{dist.metric}'."
             )
-        pvalues[idx] = empirical_upper_tail_pvalue(sorted_scores, result.score)
+        pvalues[idx] = _empirical_upper_tail_pvalue_sorted(sorted_scores, result.score)
     adj = adjusted_pvalues(pvalues)
     null_id = _null_id(dist)
     annotated = []
@@ -218,6 +326,11 @@ def build_null(
     normalization=None,
     cache=None,
 ):
+    search_range = strict_integer(search_range, "search_range")
+    window_radius = strict_integer(window_radius, "window_radius")
+    realign_window = strict_integer(realign_window, "realign_window")
+    n_samples = strict_integer(n_samples, "n_samples")
+    seed = strict_integer(seed, "seed")
     if len(models) < 2:
         raise ValueError("at least two models are required for null construction.")
     if not all(isinstance(m, PWM) for m in models):
@@ -242,34 +355,56 @@ def build_null(
         _shuffle_null_model(model, int(rng.integers(0, 2**63 - 1))) for model in models
     ]
     profile_models = list(models) + shuffled_models
+    variant_ids = [
+        f"original:{index}:{model.name}" for index, model in enumerate(models)
+    ] + [
+        f"shuffled:{index}:{model.name}" for index, model in enumerate(models)
+    ]
 
     prepared = []
+    preparation_context = None
+    if cache is not None:
+        from .cache import _make_preparation_context
+
+        preparation_context = _make_preparation_context(sequences, background)
     for model in profile_models:
         prepared.append(
-            prepare_profile(
+            _prepare_profile(
                 model,
                 sequences,
                 background=background,
                 min_logerr=min_logerr,
                 normalization=normalization,
                 cache=cache,
+                _preparation_context=preparation_context,
             )
         )
 
     work_items = [_next_null_work_item(len(models), rng) for _ in range(n_samples)]
     raw_scores = np.empty(n_samples, dtype=np.float64)
     pairs = []
+    comparison_cache = {}
     for i, (query_idx, target_idx) in enumerate(work_items):
-        result = compare(
-            prepared[query_idx],
-            prepared[target_idx],
-            metric=metric_str,
-            search_range=search_range,
-            window_radius=window_radius,
-            realign_window=realign_window,
-        )
+        pair_key = (query_idx, target_idx)
+        result = comparison_cache.get(pair_key)
+        if result is None:
+            result = compare(
+                prepared[query_idx],
+                prepared[target_idx],
+                metric=metric_str,
+                search_range=search_range,
+                window_radius=window_radius,
+                realign_window=realign_window,
+            )
+            comparison_cache[pair_key] = result
         raw_scores[i] = float(result.score)
-        pairs.append((profile_models[query_idx].name, profile_models[target_idx].name, float(result.score)))
+        pairs.append(
+            (
+                variant_ids[query_idx],
+                variant_ids[target_idx],
+                float(result.score),
+            )
+        )
 
     seq_fp = sequence_fingerprint(sequences)
     bg_fp = "none" if background is None else sequence_fingerprint(background)

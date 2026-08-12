@@ -13,6 +13,7 @@ from mimosa import (
     site_start_offset,
     window_size,
 )
+from mimosa.profiles.alignment import ProfileConfig
 from mimosa.errors import ModelDimensionError, ModelFormatError
 
 
@@ -77,6 +78,10 @@ class TestPfmToPwm:
         with pytest.raises(ModelDimensionError):
             pfm_to_pwm(np.zeros((5, 2), dtype=np.float32))
 
+    def test_requires_two_dimensional_pfm(self):
+        with pytest.raises(ModelDimensionError, match="two-dimensional"):
+            pfm_to_pwm(np.zeros(4, dtype=np.float32))
+
     def test_rejects_bad_columns(self):
         pfm = np.array([[0.5, 0.5], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]], dtype=np.float32)
         with pytest.raises(ModelFormatError):
@@ -87,6 +92,10 @@ class TestPfmToPwm:
         pwm5 = extend_pwm_with_n(pwm4)
         assert pwm5.shape == (5, 2)
         assert pwm5[4].tolist() == [-1.0, -1.0]
+
+    def test_extend_requires_two_dimensional_weights(self):
+        with pytest.raises(ModelDimensionError, match="two-dimensional"):
+            extend_pwm_with_n(np.zeros(4, dtype=np.float32))
 
     def test_pwm_from_pfm(self):
         pfm = np.array([[0.7, 0.1], [0.1, 0.4], [0.1, 0.4], [0.1, 0.1]], dtype=np.float32)
@@ -106,6 +115,16 @@ class TestContextModels:
     def test_bamm_row_validation(self):
         with pytest.raises(ModelDimensionError):
             BaMM("b", np.zeros((5, 4), dtype=np.float32), 1, 4)
+
+    @pytest.mark.parametrize("order", (True, 1.9, "1"))
+    def test_context_model_rejects_non_integer_order(self, order):
+        with pytest.raises(TypeError, match="order must be an integer"):
+            BaMM("b", np.zeros((25, 4), dtype=np.float32), order, 4)
+
+    @pytest.mark.parametrize("motif_length", (True, 4.5, "4"))
+    def test_context_model_rejects_non_integer_motif_length(self, motif_length):
+        with pytest.raises(TypeError, match="motif_length must be an integer"):
+            BaMM("b", np.zeros((25, 4), dtype=np.float32), 1, motif_length)
 
     def test_context_representation_rejects_excessive_order(self):
         with pytest.raises(ModelDimensionError):
@@ -129,3 +148,10 @@ class TestContextModels:
     def test_sitega_min_length(self):
         with pytest.raises(ModelDimensionError):
             SiteGA("sg", np.zeros((25, 1), dtype=np.float32), 1)
+
+
+class TestIntegerGeometry:
+    @pytest.mark.parametrize("value", (True, 1.5, "1"))
+    def test_profile_config_rejects_non_integer_ranges(self, value):
+        with pytest.raises(TypeError, match="search_range must be an integer"):
+            ProfileConfig(search_range=value)

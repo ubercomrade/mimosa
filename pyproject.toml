@@ -3,15 +3,21 @@ name = "mimosa-tool"
 version = "1.4.5"
 description = "Model-independent motif similarity assessment tool"
 readme = "README.md"
+license = "MIT"
 authors = [
     { name = "Anton Tsukanov", email = "ubercomrade@gmail.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "joblib>=1.5.3",
     "numba>=0.66.0",
     "numpy>=2.4.6",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ubercomrade/mimosa"
+Repository = "https://github.com/ubercomrade/mimosa"
+Issues = "https://github.com/ubercomrade/mimosa/issues"
 
 [project.scripts]
 mimosa = "mimosa.cli:main"

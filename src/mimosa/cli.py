@@ -14,7 +14,7 @@ from .arrays import EncodedSequences
 from .cache import Cache, clearcache
 from .errors import MimosaError
 from .io.bundles import write_null_bundle
-from .io.fasta import read_fasta, read_scores
+from .io.fasta import MAX_FASTA_TOTAL_BASES, read_fasta, read_scores
 from .io.readers import read_model
 from .models import PWM, BaMM, Dimont, SiteGA, Slim
 from .profiles.prepared import ScoreProfile
@@ -28,6 +28,42 @@ MODEL_TYPE_MAP = {
     "slim": Slim,
 }
 PROFILE_MODEL_TYPES = ["scores", *MODEL_TYPE_MAP]
+MAX_GENERATED_SEQUENCES = 1_000_000
+MAX_GENERATED_SEQUENCE_LENGTH = 1_000_000
+
+
+def _bounded_positive_integer(name, maximum):
+    def parse(value):
+        try:
+            parsed = int(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(f"{name} must be an integer.") from exc
+        if parsed < 1 or parsed > maximum:
+            raise argparse.ArgumentTypeError(
+                f"{name} must be between 1 and {maximum}."
+            )
+        return parsed
+
+    return parse
+
+
+def _validate_generated_dimensions(num_sequences, seq_length):
+    if not isinstance(num_sequences, int) or isinstance(num_sequences, bool):
+        raise ValueError("num_sequences must be an integer.")
+    if not isinstance(seq_length, int) or isinstance(seq_length, bool):
+        raise ValueError("seq_length must be an integer.")
+    if not 1 <= num_sequences <= MAX_GENERATED_SEQUENCES:
+        raise ValueError(
+            f"num_sequences must be between 1 and {MAX_GENERATED_SEQUENCES}."
+        )
+    if not 1 <= seq_length <= MAX_GENERATED_SEQUENCE_LENGTH:
+        raise ValueError(
+            f"seq_length must be between 1 and {MAX_GENERATED_SEQUENCE_LENGTH}."
+        )
+    if num_sequences * seq_length > MAX_FASTA_TOTAL_BASES:
+        raise ValueError(
+            f"generated sequence bases must not exceed {MAX_FASTA_TOTAL_BASES}."
+        )
 
 
 def _read_typed_model(path, model_type, background=0.25):
@@ -51,9 +87,11 @@ def _resolve_sequences(fasta_path, num_sequences, seq_length, seed):
     if fasta_path is not None:
         batch, _ = read_fasta(fasta_path)
         return batch
+    _validate_generated_dimensions(num_sequences, seq_length)
     rng = np.random.default_rng(seed)
-    return EncodedSequences.from_rows(
-        [rng.integers(0, 4, size=seq_length, dtype=np.uint8) for _ in range(num_sequences)]
+    return EncodedSequences(
+        rng.integers(0, 4, size=num_sequences * seq_length, dtype=np.uint8),
+        np.arange(num_sequences + 1, dtype=np.int64) * seq_length,
     )
 
 
@@ -115,7 +153,11 @@ def _annotate_comparison_results(results, args, sequences, background, model_typ
     from .statistics import NullDistribution, annotate_results
 
     dist = NullDistribution(**read_null_bundle(args.null_distribution))
-    if dist.contract["normalization_version"] != "hybrid-log-tail-v2;bins=65536":
+    from .profiles.normalization import HybridEmpiricalLogTail, normalization_fingerprint
+
+    if dist.contract["normalization_version"] != normalization_fingerprint(
+        HybridEmpiricalLogTail()
+    ):
         raise MimosaError("null distribution normalization is incompatible with this comparison.")
     _validate_null_compatibility(
         dist,
@@ -206,9 +248,11 @@ def _run_build_null(args):
     models = [_read_typed_model(os.path.join(args.motifs, filename), "pwm") for filename in files]
     cache = Cache(args.cache_dir) if args.cache_dir else None
     sequences = _resolve_sequences(args.fasta, args.num_sequences, args.seq_length, args.seed)
+    background = read_fasta(args.background)[0] if args.background else None
     dist = build_null(
         models,
         sequences=sequences,
+        background=background,
         metric=args.metric,
         n_samples=args.num_samples,
         seed=args.seed,
@@ -276,13 +320,24 @@ def build_parser():
         p.add_argument("--min-logerr", type=float, default=0.0)
         p.add_argument("--fasta")
         p.add_argument("--background")
-        p.add_argument("--num-sequences", type=int, default=1000)
-        p.add_argument("--seq-length", type=int, default=200)
+        p.add_argument(
+            "--num-sequences",
+            type=_bounded_positive_integer("num-sequences", MAX_GENERATED_SEQUENCES),
+            default=1000,
+        )
+        p.add_argument(
+            "--seq-length",
+            type=_bounded_positive_integer("seq-length", MAX_GENERATED_SEQUENCE_LENGTH),
+            default=200,
+        )
         p.add_argument("--seed", type=int, default=127)
         p.add_argument("--background-freq", type=float, default=0.25)
         p.add_argument("--cache-dir")
         p.add_argument("--null-distribution")
-        p.add_argument("--effective-number-of-targets", type=int)
+        p.add_argument(
+            "--effective-number-of-targets",
+            type=_bounded_positive_integer("effective-number-of-targets", MAX_GENERATED_SEQUENCES),
+        )
         p.add_argument("--pvalue", action="store_true")
 
     add_compare_arguments("compare", False)
@@ -293,10 +348,23 @@ def build_parser():
     p.add_argument("--output", required=True)
     p.add_argument("--metric", default="co", choices=PROFILE_METRICS)
     p.add_argument("--fasta")
-    p.add_argument("--num-sequences", type=int, default=1000)
-    p.add_argument("--seq-length", type=int, default=200)
+    p.add_argument("--background")
+    p.add_argument(
+        "--num-sequences",
+        type=_bounded_positive_integer("num-sequences", MAX_GENERATED_SEQUENCES),
+        default=1000,
+    )
+    p.add_argument(
+        "--seq-length",
+        type=_bounded_positive_integer("seq-length", MAX_GENERATED_SEQUENCE_LENGTH),
+        default=200,
+    )
     p.add_argument("--seed", type=int, default=127)
-    p.add_argument("--num-samples", type=int, default=2000)
+    p.add_argument(
+        "--num-samples",
+        type=_bounded_positive_integer("num-samples", 1_000_000),
+        default=2000,
+    )
     p.add_argument("--search-range", type=int, default=10)
     p.add_argument("--window-radius", type=int, default=10)
     p.add_argument("--realign-window", type=int, default=3)
@@ -309,9 +377,22 @@ def build_parser():
     return parser
 
 
+def _validate_cli_arguments(args):
+    if args.command not in {"compare", "compare-many"}:
+        return
+    scores_only = args.query_type == args.target_type == "scores"
+    if scores_only and (args.fasta is not None or args.background is not None):
+        raise MimosaError("--fasta and --background are not used for scores-only comparison.")
+    if not args.pvalue and args.null_distribution is not None:
+        raise MimosaError("--null-distribution requires --pvalue.")
+    if not args.pvalue and args.effective_number_of_targets is not None:
+        raise MimosaError("--effective-number-of-targets requires --pvalue.")
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
+        _validate_cli_arguments(args)
         if args.command == "compare":
             return _run_compare(args)
         if args.command == "compare-many":
@@ -326,7 +407,7 @@ def main(argv=None):
             return _run_cache(args)
         raise MimosaError(f"unknown command: {args.command}")
     except (MimosaError, ValueError, TypeError, OSError) as e:
-        print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
+        print(f"error: {e}", file=sys.stderr)
         return 2
 
 

@@ -73,9 +73,11 @@ class EncodedSequences:
         if not np.issubdtype(raw_offsets.dtype, np.integer):
             raise TypeError("offsets must have an integer dtype.")
         _validate_raw_encoded_data(raw_data)
-        data = np.ascontiguousarray(raw_data, dtype=np.uint8)
-        offsets = np.ascontiguousarray(raw_offsets, dtype=np.int64)
+        data = np.array(raw_data, dtype=np.uint8, order="C", copy=True)
+        offsets = np.array(raw_offsets, dtype=np.int64, order="C", copy=True)
         _validate_ragged_offsets(offsets, data.size)
+        data.setflags(write=False)
+        offsets.setflags(write=False)
         self.data = data
         self.offsets = offsets
 

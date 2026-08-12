@@ -15,6 +15,7 @@ from ._kernels import (
     batch_scan_reverse_parallel,
 )
 from .arrays import EncodedSequences, RaggedArray, StrandPair
+from .errors import ModelFormatError, ModelInterfaceError
 from .models import (
     BaMM,
     Dimont,
@@ -44,10 +45,25 @@ def _scan_offsets(batch, model):
     return offsets
 
 
+def _validate_finite_builtin_scores(values, model):
+    if not np.all(np.isfinite(values)):
+        raise ModelFormatError(
+            "", f"{type(model).__name__} scan produced non-finite Float32 scores."
+        )
+
+
+def _validate_custom_scan_output(forward, reverse, model):
+    if not (np.all(np.isfinite(forward)) and np.all(np.isfinite(reverse))):
+        raise ModelInterfaceError(
+            "scan",
+            type(model).__name__,
+            "scan_into must fill both output tracks with finite Float32 scores.",
+        )
+
+
 def _scan_batch_into(model, batch, strands):
     _validate_model_contract(model)
     offsets = _scan_offsets(batch, model)
-    data = np.empty(int(offsets[-1]), dtype=np.float32)
     parallel = use_parallel(int(offsets[-1]), rows=len(batch))
     sfwd = batch_scan_forward_parallel if parallel else batch_scan_forward
     srev = batch_scan_reverse_parallel if parallel else batch_scan_reverse
@@ -64,35 +80,48 @@ def _scan_batch_into(model, batch, strands):
         forward_kernel, reverse_kernel = rfwd, rrev
         kernel_args = (2, model.motif_length - 1)
     else:
-        fwd = np.empty_like(data)
-        rev = np.empty_like(data)
+        fwd = np.full(int(offsets[-1]), np.nan, dtype=np.float32)
+        rev = np.full(int(offsets[-1]), np.nan, dtype=np.float32)
         for row in range(len(batch)):
             start, stop = offsets[row], offsets[row + 1]
             if stop > start:
                 model.scan_into(batch[row], fwd[start:stop], rev[start:stop])
+        _validate_custom_scan_output(fwd, rev, model)
         if strands == "forward":
-            data[:] = fwd
+            offsets.setflags(write=False)
+            return RaggedArray(fwd, offsets)
         elif strands == "reverse":
-            data[:] = rev
+            offsets.setflags(write=False)
+            return RaggedArray(rev, offsets)
         elif strands == "best":
-            data[:] = np.where(rev > fwd, rev, fwd)
+            np.maximum(fwd, rev, out=fwd)
         else:
-            return StrandPair(RaggedArray(fwd, offsets), RaggedArray(rev, offsets.copy()))
-        return RaggedArray(data, offsets)
+            offsets.setflags(write=False)
+            return StrandPair(RaggedArray(fwd, offsets), RaggedArray(rev, offsets))
+        offsets.setflags(write=False)
+        return RaggedArray(fwd, offsets)
 
     if strands == "forward":
+        data = np.empty(int(offsets[-1]), dtype=np.float32)
         forward_kernel(model.weights, batch.data, batch.offsets, data, offsets, *kernel_args)
     elif strands == "reverse":
+        data = np.empty(int(offsets[-1]), dtype=np.float32)
         reverse_kernel(model.weights, batch.data, batch.offsets, data, offsets, *kernel_args)
     else:
-        fwd = np.empty_like(data)
-        rev = np.empty_like(data)
+        fwd = np.empty(int(offsets[-1]), dtype=np.float32)
+        rev = np.empty(int(offsets[-1]), dtype=np.float32)
         forward_kernel(model.weights, batch.data, batch.offsets, fwd, offsets, *kernel_args)
         reverse_kernel(model.weights, batch.data, batch.offsets, rev, offsets, *kernel_args)
         if strands == "best":
-            data[:] = np.where(rev > fwd, rev, fwd)
+            np.maximum(fwd, rev, out=fwd)
         else:
-            return StrandPair(RaggedArray(fwd, offsets), RaggedArray(rev, offsets.copy()))
+            _validate_finite_builtin_scores(fwd, model)
+            _validate_finite_builtin_scores(rev, model)
+            offsets.setflags(write=False)
+            return StrandPair(RaggedArray(fwd, offsets), RaggedArray(rev, offsets))
+        data = fwd
+    _validate_finite_builtin_scores(data, model)
+    offsets.setflags(write=False)
     return RaggedArray(data, offsets)
 
 

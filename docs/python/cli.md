@@ -30,6 +30,10 @@ Important options:
 - `--pvalue --null-distribution PATH` adds empirical significance annotations.
 - `--effective-number-of-targets N` changes E-values without changing BH adjustment.
 
+For a scores-only comparison, `--fasta` and `--background` are rejected because
+the profiles already contain the comparison data. `--null-distribution` and
+`--effective-number-of-targets` require `--pvalue`.
+
 Example:
 
 ```bash
@@ -63,10 +67,12 @@ Build a PWM-only profile null distribution from a motif directory:
 ```bash
 uv run mimosa build-null MOTIFS \
   --output OUTPUT \
-  [--fasta FASTA] [options]
+  [--fasta FASTA] [--background FASTA] [options]
 ```
 
-`MOTIFS` must be a directory containing at least two readable PWM files.
+`MOTIFS` must be a directory containing at least two readable PWM files. Mimosa
+uses the first motif in each MEME file. `--background` supplies an optional
+separate normalization batch.
 `--num-samples`, `--seed`, `--metric`, the alignment options, and `--cache-dir`
 control construction. The summary is JSON on `stdout`.
 
@@ -83,6 +89,6 @@ uv run mimosa cache clear --cache-dir .mimosa-cache
 - `--version` prints the package version.
 - `--help` prints command and option help.
 - `compare` returns one JSON object; `compare-many` returns an ordered JSON array.
-- `CLIError` failures return exit code `1`.
-- Runtime, input, and model failures return exit code `2`.
+- Runtime, input, and model failures return exit code `2` and are emitted as
+  `error: <message>` on stderr.
 - Standard argparse usage errors also use argparse's exit code `2`.

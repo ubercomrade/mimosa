@@ -20,7 +20,14 @@ class BestPerSequence:
 
 class ThresholdHits:
     def __init__(self, threshold):
-        self.threshold = np.float32(threshold)
+        try:
+            with np.errstate(over="ignore", invalid="ignore"):
+                converted = np.float32(threshold)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("threshold must be a finite Float32 value.") from exc
+        if not np.isfinite(converted):
+            raise ValueError("threshold must be a finite Float32 value.")
+        self.threshold = converted
 
 
 class TopFractionHits:
@@ -40,20 +47,63 @@ class SiteCollection:
     scores: np.ndarray
 
     def __post_init__(self):
-        n = self.seq_indices.size
-        if self.starts.size != n or self.strands.size != n or self.scores.size != n:
+        seq_indices = _site_indices(self.seq_indices, "sequence indices")
+        starts = _site_indices(self.starts, "site starts")
+        strands = _site_indices(self.strands, "strands")
+        try:
+            scores = np.array(self.scores, dtype=np.float32, copy=True)
+        except (TypeError, ValueError) as exc:
+            raise TypeError("site scores must be numeric.") from exc
+        if scores.ndim != 1:
+            raise ValueError("site scores must be one-dimensional.")
+        n = seq_indices.size
+        if starts.size != n or strands.size != n or scores.size != n:
             raise ValueError("site collection arrays must have equal lengths.")
-        if np.any(self.seq_indices < 0):
+        if np.any(seq_indices < 0):
             raise ValueError("sequence indices must be non-negative.")
-        if np.any(self.starts < 0):
+        if np.any(starts < 0):
             raise ValueError("site starts must be non-negative.")
-        if np.any((self.strands != 0) & (self.strands != 1)):
+        if np.any((strands != 0) & (strands != 1)):
             raise ValueError("strands must be 0 (forward) or 1 (reverse).")
-        if not np.all(np.isfinite(self.scores)):
+        if not np.all(np.isfinite(scores)):
             raise ValueError("site scores must be finite.")
+        strands = strands.astype(np.int8, copy=False)
+        for values in (seq_indices, starts, strands, scores):
+            values.setflags(write=False)
+        object.__setattr__(self, "seq_indices", seq_indices)
+        object.__setattr__(self, "starts", starts)
+        object.__setattr__(self, "strands", strands)
+        object.__setattr__(self, "scores", scores)
 
     def __len__(self):
         return self.seq_indices.size
+
+    def to_dict(self):
+        return {
+            "seq_indices": self.seq_indices.tolist(),
+            "starts": self.starts.tolist(),
+            "strands": self.strands.tolist(),
+            "scores": [float(score) for score in self.scores],
+        }
+
+
+def _site_indices(values, name):
+    raw = np.asarray(values)
+    if raw.ndim != 1:
+        raise ValueError(f"{name} must be one-dimensional.")
+    if np.issubdtype(raw.dtype, np.bool_) or not np.issubdtype(
+        raw.dtype, np.number
+    ):
+        raise TypeError(f"{name} must be integer-valued.")
+    if np.issubdtype(raw.dtype, np.floating):
+        if not np.all(np.isfinite(raw)) or not np.all(raw == np.floor(raw)):
+            raise ValueError(f"{name} must not contain fractional values.")
+    elif not np.issubdtype(raw.dtype, np.integer):
+        raise TypeError(f"{name} must be integer-valued.")
+    limits = np.iinfo(np.int64)
+    if np.any(raw < limits.min) or np.any(raw > limits.max):
+        raise ValueError(f"{name} are outside the supported Int64 range.")
+    return np.array(raw, dtype=np.int64, copy=True)
 
 
 def _collect_best_hits(bundle):
@@ -228,11 +278,18 @@ def site_strings(sites):
 
 
 def build_pcm(sites, motif_width):
+    sites = np.asarray(sites)
     if motif_width <= 0:
         raise ValueError("motif_width must be positive.")
+    if sites.ndim != 2:
+        raise ModelDimensionError(
+            f"sites must be two-dimensional, got {sites.ndim} dimensions."
+        )
+    if not np.issubdtype(sites.dtype, np.integer):
+        raise TypeError("sites must use an integer DNA-code dtype.")
     if sites.shape[0] != motif_width:
         raise ValueError("sites row count must equal motif_width.")
-    if np.any(sites > N_CODE):
+    if np.any((sites < 0) | (sites > N_CODE)):
         raise ValueError("sites contain invalid DNA codes.")
     pcm = np.zeros((4, motif_width), dtype=np.float32)
     for h in range(sites.shape[1]):
@@ -245,22 +302,38 @@ def build_pcm(sites, motif_width):
 
 def pcm_to_pfm(pcm, pseudocount=0.25):
     pcm = np.asarray(pcm, dtype=np.float32)
+    if pcm.ndim != 2:
+        raise ModelDimensionError(
+            f"PCM must be two-dimensional, got {pcm.ndim} dimensions."
+        )
     if pcm.shape[0] != NUCLEOTIDE_CARDINALITY:
         raise ModelDimensionError(f"PCM must have 4 rows, got {pcm.shape[0]}.")
     if not np.all(np.isfinite(pcm)):
         raise ModelFormatError("", "PCM contains non-finite values.")
     if np.any(pcm < 0):
         raise ModelFormatError("", "PCM values must be non-negative.")
-    if not (np.isfinite(pseudocount) and pseudocount >= 0):
+    try:
+        pc = float(pseudocount)
+    except (TypeError, ValueError) as exc:
+        raise ModelFormatError("", "pseudocount must be finite and non-negative.") from exc
+    if not (np.isfinite(pc) and pc >= 0):
         raise ModelFormatError("", "pseudocount must be finite and non-negative.")
-    pc = np.float32(pseudocount)
     n_sites = pcm.sum(axis=0, dtype=np.float64)
     if pc == 0 and np.any(n_sites == 0):
         raise ModelFormatError(
             "", "PCM columns with zero observations require a positive pseudocount."
         )
     denom = n_sites + NUCLEOTIDE_CARDINALITY * pc
-    return ((pcm + pc) / denom).astype(np.float32)
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        pfm = (pcm.astype(np.float64) + pc) / denom
+    if not np.all(np.isfinite(pfm)):
+        raise ModelFormatError("", "pseudocount produces non-finite PFM values.")
+    result = pfm.astype(np.float32)
+    if not np.all(np.isfinite(result)) or not np.allclose(
+        result.sum(axis=0, dtype=np.float64), 1.0, rtol=1e-6, atol=1e-6
+    ):
+        raise ModelFormatError("", "PCM-to-PFM conversion produced invalid columns.")
+    return result
 
 
 def reconstruct_pfm(model, sequences, selector, *, pseudocount=0.25, strands="best"):

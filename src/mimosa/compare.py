@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import numpy as np
@@ -34,9 +35,8 @@ class ComparisonResult:
             "offset": self.offset,
             "orientation": self.orientation,
             "metric": self.metric,
+            "n_sites": int(self.n_sites),
         }
-        if self.n_sites > 0:
-            d["n_sites"] = int(self.n_sites)
         return d
 
 
@@ -45,9 +45,22 @@ def _check_threshold(threshold, prepared):
         raise ValueError("min_logerr differs from the prepared query threshold.")
 
 
+def _check_prepared_compatibility(query, target):
+    if query.min_logerr != target.min_logerr:
+        raise ValueError("prepared profiles use different min_logerr thresholds.")
+    if query.normalization != target.normalization:
+        raise ValueError("prepared profiles use different normalization strategies.")
+
+
 def _compare_prepared(query, target, config):
     score, shift, orientation, n_sites, metric_str = profile_compare(
-        query.bundle, query.anchors, target.bundle, target.anchors, config
+        query.bundle,
+        query.anchors,
+        target.bundle,
+        target.anchors,
+        config,
+        query_site_start_offset=query.site_start_offset,
+        target_site_start_offset=target.site_start_offset,
     )
     return ComparisonResult(
         query.name, target.name, score, shift, orientation, metric_str, n_sites
@@ -57,6 +70,18 @@ def _compare_prepared(query, target, config):
 _BUILTIN_MODELS = (PWM, BaMM, Dimont, SiteGA, Slim)
 _worker_cache_path: str | None = None
 _worker_cache_obj = None
+
+
+@contextmanager
+def _numba_thread_budget(threads):
+    from numba import get_num_threads, set_num_threads
+
+    previous = get_num_threads()
+    set_num_threads(threads)
+    try:
+        yield
+    finally:
+        set_num_threads(previous)
 
 
 def _worker_cache(directory):
@@ -84,25 +109,20 @@ def _prepare_and_compare_with_threads(
     preparation_context,
     threads,
 ):
-    from numba import set_num_threads
-
-    set_num_threads(threads)
-    target = _prepare_side(
-        target_source,
-        sequences,
-        background=background,
-        threshold=threshold,
-        normalization=normalization,
-        cache=_worker_cache(cache_directory),
-        preparation_context=preparation_context,
-    )
-    if target is None:
-        raise TypeError(f"unsupported comparison target: {type(target_source).__name__}")
-    if target.min_logerr != threshold:
-        raise ValueError("prepared profiles use different min_logerr thresholds.")
-    if target.normalization != normalization:
-        raise ValueError("prepared profiles use different normalization strategies.")
-    return _compare_prepared(query, target, config)
+    with _numba_thread_budget(threads):
+        target = _prepare_side(
+            target_source,
+            sequences,
+            background=background,
+            threshold=threshold,
+            normalization=normalization,
+            cache=_worker_cache(cache_directory),
+            preparation_context=preparation_context,
+        )
+        if target is None:
+            raise TypeError(f"unsupported comparison target: {type(target_source).__name__}")
+        _check_prepared_compatibility(query, target)
+        return _compare_prepared(query, target, config)
 
 
 def _prepare_side(
@@ -157,16 +177,19 @@ def compare(query, target, sequences=None, *, background=None, metric="co", sear
         raise ValueError("mixed ScoreProfile/motif comparison is unsupported; prepare both inputs as profiles first.")
 
     if q_prepared and t_prepared:
-        if query.min_logerr != target.min_logerr:
-            raise ValueError("prepared profiles use different min_logerr thresholds.")
-        if query.normalization != target.normalization:
-            raise ValueError("prepared profiles use different normalization strategies.")
+        _check_prepared_compatibility(query, target)
+        if min_logerr is not None:
+            _check_threshold(np.float32(min_logerr), query)
+        if normalization is not None and normalization != query.normalization:
+            raise ValueError("prepared query and requested normalization differ.")
         threshold = query.min_logerr
         norm = query.normalization
     elif q_prepared or t_prepared:
         existing = query if q_prepared else target
         threshold = existing.min_logerr if min_logerr is None else np.float32(min_logerr)
         _check_threshold(threshold, existing)
+        if normalization is not None and normalization != existing.normalization:
+            raise ValueError("prepared query and requested normalization differ.")
         norm = existing.normalization
     else:
         threshold = np.float32(0.0 if min_logerr is None else min_logerr)
@@ -174,10 +197,32 @@ def compare(query, target, sequences=None, *, background=None, metric="co", sear
         if isinstance(query, ScoreProfile) and isinstance(target, ScoreProfile) and sequences is not None:
             raise ValueError("ScoreProfile comparison does not consume sequences.")
 
-    pq = _prepare_side(query, sequences, background, threshold, norm, cache)
-    pt = _prepare_side(target, sequences, background, threshold, norm, cache)
+    preparation_context = None
+    if cache is not None and sequences is not None:
+        from .cache import _make_preparation_context
+
+        preparation_context = _make_preparation_context(sequences, background)
+    pq = _prepare_side(
+        query,
+        sequences,
+        background,
+        threshold,
+        norm,
+        cache,
+        preparation_context,
+    )
+    pt = _prepare_side(
+        target,
+        sequences,
+        background,
+        threshold,
+        norm,
+        cache,
+        preparation_context,
+    )
     if pq is None or pt is None:
         raise TypeError(f"unsupported comparison inputs: {type(query).__name__} vs {type(target).__name__}")
+    _check_prepared_compatibility(pq, pt)
 
     config = ProfileConfig(metric=m, search_range=search_range, window_radius=window_radius, realign_window=realign_window, min_logerr=threshold)
     return _compare_prepared(pq, pt, config)
@@ -216,8 +261,8 @@ def compare_many(
     inner_threads = int(inner_threads)
     if total_threads % inner_threads:
         raise ValueError("total_threads must be divisible by inner_threads.")
-    joblib_workers = total_threads // inner_threads
     target_sources = list(targets)
+    joblib_workers = min(total_threads // inner_threads, len(target_sources)) if target_sources else 1
     if joblib_workers > 1:
         if isinstance(query, MotifModel) and not isinstance(query, _BUILTIN_MODELS):
             raise TypeError(
@@ -237,15 +282,16 @@ def compare_many(
         preparation_context = _make_preparation_context(sequences, background)
     if not isinstance(query, PreparedProfile):
         query_source = query
-        query = _prepare_side(
-            query,
-            sequences,
-            background,
-            0.0 if min_logerr is None else min_logerr,
-            normalization,
-            cache,
-            preparation_context,
-        )
+        with _numba_thread_budget(inner_threads):
+            query = _prepare_side(
+                query,
+                sequences,
+                background,
+                0.0 if min_logerr is None else min_logerr,
+                normalization,
+                cache,
+                preparation_context,
+            )
         if query is None:
             raise TypeError(f"unsupported comparison query: {type(query_source).__name__}")
 
@@ -276,23 +322,21 @@ def compare_many(
 
     # Serial mode keeps preparation and comparison in one target-at-a-time pipeline.
     results = []
-    for target_source in target_sources:
-        target = _prepare_side(
-            target_source,
-            sequences,
-            background=background,
-            threshold=threshold,
-            normalization=norm,
-            cache=cache,
-            preparation_context=preparation_context,
-        )
-        if target is None:
-            raise TypeError(
-                f"unsupported comparison target: {type(target_source).__name__}"
+    with _numba_thread_budget(inner_threads):
+        for target_source in target_sources:
+            target = _prepare_side(
+                target_source,
+                sequences,
+                background=background,
+                threshold=threshold,
+                normalization=norm,
+                cache=cache,
+                preparation_context=preparation_context,
             )
-        if target.min_logerr != threshold:
-            raise ValueError("prepared profiles use different min_logerr thresholds.")
-        if target.normalization != norm:
-            raise ValueError("prepared profiles use different normalization strategies.")
-        results.append(_compare_prepared(query, target, config))
+            if target is None:
+                raise TypeError(
+                    f"unsupported comparison target: {type(target_source).__name__}"
+                )
+            _check_prepared_compatibility(query, target)
+            results.append(_compare_prepared(query, target, config))
     return results
