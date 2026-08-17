@@ -60,9 +60,12 @@ def test_resource_killed_worker_is_recorded_not_promoted_to_benchmark_failure(
         phase_timings = False
 
     monkeypatch.setattr(
-        module.subprocess,
-        "run",
-        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], returncode, "", ""),
+        module,
+        "_run_sample_subprocess",
+        lambda command: (
+            subprocess.CompletedProcess(command, returncode, "", ""),
+            123,
+        ),
     )
 
     sample = module._sample_in_subprocess(
@@ -92,6 +95,41 @@ def test_cache_storage_preflight_scales_from_a_one_target_measurement():
         required_bytes=6_500,
         available_bytes=1_000,
     )[0]["status"] == "resource_limited"
+
+
+def test_sample_records_aggregate_process_tree_rss(monkeypatch):
+    spec = importlib.util.spec_from_file_location(
+        "benchmark_performance", "benchmarks/benchmark_performance.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+
+    class Arguments:
+        sequence_count = 100
+        coverage = False
+        skewed_rows = False
+        phase_timings = False
+
+    monkeypatch.setattr(
+        module,
+        "_run_sample_subprocess",
+        lambda command: (
+            subprocess.CompletedProcess(
+                command,
+                0,
+                '{"mode":"prepared","wall_s":1.0}',
+                "",
+            ),
+            456,
+        ),
+    )
+
+    sample = module._sample_in_subprocess(
+        Arguments(), 1, 1, 1, 2.0, "prepared"
+    )
+
+    assert sample["aggregate_peak_rss_bytes"] == 456
 
 
 def test_benchmark_progress_output_is_always_parseable_json(tmp_path):

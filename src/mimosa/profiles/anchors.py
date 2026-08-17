@@ -7,6 +7,7 @@ import numpy as np
 from .._kernels import (
     collect_best_anchors_csr,
     collect_threshold_anchors_csr,
+    count_threshold_anchors_csr,
 )
 
 
@@ -14,7 +15,9 @@ class AnchorCSR:
     __slots__ = ("positions", "offsets")
 
     def __init__(self, positions, offsets):
-        positions = np.ascontiguousarray(positions, dtype=np.int64)
+        positions = np.ascontiguousarray(positions)
+        if positions.dtype not in (np.dtype(np.int32), np.dtype(np.int64)):
+            positions = np.ascontiguousarray(positions, dtype=np.int64)
         offsets = np.ascontiguousarray(offsets, dtype=np.int64)
         if offsets.size == 0:
             raise ValueError("anchor offsets must not be empty.")
@@ -40,13 +43,27 @@ class AnchorCSR:
 
 def collect_anchor_csr(scores, threshold, *, position_offset=0):
     n = len(scores)
-    positions = np.empty(
-        scores.data.size if threshold > 0.0 else n,
-        dtype=np.int64,
+    max_row_length = max(
+        (
+            int(scores.offsets[row + 1] - scores.offsets[row])
+            for row in range(n)
+        ),
+        default=0,
+    )
+    max_position = position_offset + max_row_length - 1
+    position_dtype = (
+        np.int32 if max_position <= np.iinfo(np.int32).max else np.int64
     )
     offsets = np.empty(n + 1, dtype=np.int64)
     if threshold > 0.0:
-        count = collect_threshold_anchors_csr(
+        count = count_threshold_anchors_csr(
+            scores.data,
+            scores.offsets,
+            np.float32(threshold),
+            offsets,
+        )
+        positions = np.empty(count, dtype=position_dtype)
+        collect_threshold_anchors_csr(
             scores.data,
             scores.offsets,
             np.float32(threshold),
@@ -54,10 +71,9 @@ def collect_anchor_csr(scores, threshold, *, position_offset=0):
             offsets,
         )
     else:
+        positions = np.empty(n, dtype=position_dtype)
         count = collect_best_anchors_csr(scores.data, scores.offsets, positions, offsets)
-    positions = positions[:count]
-    if positions.size * 2 < scores.data.size:
-        positions = positions.copy()
+        positions = positions[:count].copy()
     if position_offset:
         positions += position_offset
     return AnchorCSR(positions, offsets)

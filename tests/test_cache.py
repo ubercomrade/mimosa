@@ -151,10 +151,26 @@ class TestPreparedProfileCache:
         k2 = prepared_profile_cache_key(m2, batch)
         assert k1 != k2
 
-    def test_key_changes_with_min_logerr(self, pwm, batch):
+    def test_key_is_shared_across_min_logerr(self, pwm, batch):
         k1 = prepared_profile_cache_key(pwm, batch, min_logerr=0.0)
         k2 = prepared_profile_cache_key(pwm, batch, min_logerr=2.0)
-        assert k1 != k2
+        assert k1 == k2
+
+    def test_prepare_reuses_exact_scores_across_min_logerr(
+        self, pwm, batch, tmp_path
+    ):
+        cache = Cache(str(tmp_path))
+        lower = prepare_profile(pwm, batch, min_logerr=1.0, cache=cache)
+        higher = prepare_profile(pwm, batch, min_logerr=2.0, cache=cache)
+
+        np.testing.assert_array_equal(
+            lower.bundle.forward.data, higher.bundle.forward.data
+        )
+        np.testing.assert_array_equal(
+            lower.bundle.reverse.data, higher.bundle.reverse.data
+        )
+        assert lower.anchors[0].positions.size > higher.anchors[0].positions.size
+        assert len([path for path in tmp_path.iterdir() if path.is_dir()]) == 1
 
     def test_prepare_hit(self, pwm, batch, tmp_path):
         cache = Cache(str(tmp_path))
@@ -228,6 +244,8 @@ class TestPreparedProfileCache:
             metadata = tomllib.load(f)
         assert metadata["format"] == "prepared_profile_mmap"
         assert metadata["n_rows"] == len(prepared.bundle.forward)
+        assert "min_logerr" not in metadata
+        assert not any("anchor" in name for name in metadata)
 
     def test_prepared_cache_exposes_write_and_hit_phase_timings(
         self, pwm, batch, tmp_path

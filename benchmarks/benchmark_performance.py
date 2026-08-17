@@ -189,8 +189,8 @@ def _resource_limited_samples(modes, *, reason, required_bytes, available_bytes)
 
 def _benchmark_payload(results):
     return {
-        "benchmark": "mimosa-performance-v4",
-        "rss_scope": "parent-process-lifetime-max; excludes joblib workers",
+        "benchmark": "mimosa-performance-v5",
+        "rss_scope": "aggregate process-tree peak on Linux; parent fallback elsewhere",
         "results": results,
     }
 
@@ -364,10 +364,10 @@ def _measure_prepared(models, targets, sequences, background, total_threads, inn
 def _phase_timings(models, targets, sequences, background, total_threads, inner_threads, threshold, cache_path):
     """Time isolated production primitives without changing the normal pipeline."""
     from mimosa import compare_many, prepare_profile, scan
-    from mimosa.cache import Cache, _cached_mmap_prepared_profile, _store_prepared_profile, prepared_profile_cache_key
+    from mimosa.cache import Cache, _cached_mmap_prepared_profile, _store_normalized_profile, prepared_profile_cache_key
     from mimosa.io.bundles import model_fingerprint, sequence_fingerprint
     from mimosa.profiles.anchors import collect_both_anchors
-    from mimosa.profiles.normalization import HybridEmpiricalLogTail, _fit_normalize
+    from mimosa.profiles.normalization import HybridEmpiricalLogTail, _fit_exact, normalize_bundle
     from mimosa.parallel import alignment_scratch_bytes
 
     timings = {}
@@ -385,7 +385,8 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
     timings["scan"] = time.perf_counter() - started
 
     started = time.perf_counter()
-    _, normalized = _fit_normalize(HybridEmpiricalLogTail(), raw, tail_logerr=threshold)
+    table = _fit_exact(HybridEmpiricalLogTail(), raw)
+    normalized = normalize_bundle(table, raw)
     timings["normalize"] = time.perf_counter() - started
 
     started = time.perf_counter()
@@ -406,7 +407,14 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
         models[0], sequences, background=background, min_logerr=threshold
     )
     cache = Cache(cache_path, timings=timings)
-    _store_prepared_profile(cache, key, prepared_query)
+    _store_normalized_profile(
+        cache,
+        key,
+        prepared_query.name,
+        prepared_query.bundle,
+        prepared_query.normalization,
+        prepared_query.site_start_offset,
+    )
 
     hit_timings = {}
     if _cached_mmap_prepared_profile(Cache(cache_path, timings=hit_timings), key) is None:
@@ -576,6 +584,44 @@ def _worker_sample(args):
     print(json.dumps(sample, sort_keys=True))
 
 
+def _process_tree_rss_bytes(root_pid):
+    pending = [root_pid]
+    seen = set()
+    total = 0
+    while pending:
+        pid = pending.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        try:
+            children = Path(f"/proc/{pid}/task/{pid}/children").read_text()
+            pending.extend(map(int, children.split()))
+            for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+                if line.startswith("VmRSS:"):
+                    total += int(line.split()[1]) * 1024
+                    break
+        except (FileNotFoundError, ProcessLookupError):
+            pass
+    return total
+
+
+def _run_sample_subprocess(command):
+    if not sys.platform.startswith("linux") or not Path("/proc").is_dir():
+        return subprocess.run(command, capture_output=True, text=True), None
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    peak = 0
+    while process.poll() is None:
+        peak = max(peak, _process_tree_rss_bytes(process.pid))
+        time.sleep(0.02)
+    stdout, stderr = process.communicate()
+    return (
+        subprocess.CompletedProcess(command, process.returncode, stdout, stderr),
+        peak,
+    )
+
+
 def _sample_in_subprocess(args, total, inner, target_count, threshold, mode):
     command = [
         sys.executable,
@@ -601,7 +647,7 @@ def _sample_in_subprocess(args, total, inner, target_count, threshold, mode):
         command.append("--skewed-rows")
     if args.phase_timings:
         command.append("--phase-timings")
-    completed = subprocess.run(command, capture_output=True, text=True)
+    completed, aggregate_peak_rss = _run_sample_subprocess(command)
     if completed.returncode:
         # A high-cardinality worker can be killed by the OS before Python can
         # report MemoryError. Preserve the rest of the benchmark rather than
@@ -617,7 +663,10 @@ def _sample_in_subprocess(args, total, inner, target_count, threshold, mode):
             f"{completed.stderr.strip()}"
         )
     try:
-        return json.loads(completed.stdout)
+        sample = json.loads(completed.stdout)
+        if aggregate_peak_rss is not None:
+            sample["aggregate_peak_rss_bytes"] = aggregate_peak_rss
+        return sample
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"benchmark worker {mode} emitted invalid JSON.") from exc
 
@@ -718,7 +767,11 @@ def main():
                     values = [sample["wall_s"] for sample in mode_samples]
                     summary[f"{mode}_wall_s_median"] = statistics.median(values)
                     summary[f"{mode}_targets_per_s"] = target_count / summary[f"{mode}_wall_s_median"]
-                    for field in ("cache_bytes", "parent_lifetime_max_rss_bytes"):
+                    for field in (
+                        "cache_bytes",
+                        "parent_lifetime_max_rss_bytes",
+                        "aggregate_peak_rss_bytes",
+                    ):
                         field_values = [sample[field] for sample in mode_samples if field in sample]
                         if field_values:
                             summary[f"{mode}_{field}_median"] = statistics.median(field_values)

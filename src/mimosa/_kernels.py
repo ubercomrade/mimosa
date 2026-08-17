@@ -264,6 +264,33 @@ def transform_hybrid_scores_parallel(
 # ── Anchor collection ────────────────────────────────────────────────────────
 
 @njit(cache=True)
+def count_unique_sorted(values):
+    if values.shape[0] == 0:
+        return 0
+    count = 1
+    for i in range(1, values.shape[0]):
+        if values[i] != values[i - 1]:
+            count += 1
+    return count
+
+
+@njit(cache=True)
+def fill_empirical_table_sorted(values, total_n, scores_out, log_tail_out):
+    out = 0
+    cumulative = 0
+    i = values.shape[0] - 1
+    while i >= 0:
+        score = values[i]
+        stop = i
+        while i >= 0 and values[i] == score:
+            i -= 1
+        cumulative += stop - i
+        scores_out[out] = score
+        log_tail_out[out] = np.float32(-np.log10(cumulative / total_n))
+        out += 1
+
+
+@njit(cache=True)
 def collect_best_anchors_csr(scores_data, scores_offsets, positions_out, anchor_offsets_out):
     n_rows = scores_offsets.shape[0] - 1
     count = 0
@@ -297,6 +324,23 @@ def collect_threshold_anchors_csr(
         for j in range(start, stop):
             if scores_data[j] >= threshold:
                 positions_out[count] = j - start
+                count += 1
+        anchor_offsets_out[row + 1] = count
+    return count
+
+
+@njit(cache=True)
+def count_threshold_anchors_csr(
+    scores_data, scores_offsets, threshold, anchor_offsets_out
+):
+    n_rows = scores_offsets.shape[0] - 1
+    count = 0
+    anchor_offsets_out[0] = 0
+    for row in range(n_rows):
+        start = scores_offsets[row]
+        stop = scores_offsets[row + 1]
+        for j in range(start, stop):
+            if scores_data[j] >= threshold:
                 count += 1
         anchor_offsets_out[row + 1] = count
     return count

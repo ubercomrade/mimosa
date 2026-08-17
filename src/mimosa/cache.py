@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
-import struct
 import tempfile
 import time
 import tomllib
@@ -25,7 +24,7 @@ from .io.bundles import (
     sequence_fingerprint,
     toml_value,
 )
-from .profiles.anchors import AnchorCSR
+from .profiles.anchors import collect_both_anchors
 from .profiles.normalization import (
     EmpiricalLogTail,
     HybridEmpiricalLogTail,
@@ -39,18 +38,14 @@ _CACHE_DATA_NAME = "data.bin"
 _CACHE_META_NAME = "meta.toml"
 _CACHE_LOCK_NAME = ".mimosa-cache.lock"
 
-PREPARED_PROFILE_CACHE_FORMAT_VERSION = 5
-PREPARED_PROFILE_ALGORITHM_VERSION = 5
+PREPARED_PROFILE_CACHE_FORMAT_VERSION = 6
+PREPARED_PROFILE_ALGORITHM_VERSION = 6
 _PREPARED_PROFILE_BINARY_MAGIC = b"MIMOSA-PREP-MMAP-1\0"
 _PREPARED_PROFILE_SECTION_NAMES = (
     "forward_scores",
     "reverse_scores",
     "forward_score_offsets",
     "reverse_score_offsets",
-    "forward_anchor_positions",
-    "reverse_anchor_positions",
-    "forward_anchor_offsets",
-    "reverse_anchor_offsets",
 )
 class Cache:
     def __init__(self, directory, *, timings=None):
@@ -174,12 +169,10 @@ def _prepared_profile_cache_key(
         raise ValueError("min_logerr must be finite.")
     if normalization is None:
         normalization = HybridEmpiricalLogTail()
-    bits = struct.unpack("<I", struct.pack("<f", threshold))[0]
     parts = (
         f"source={source_fingerprint}",
         sequence_part,
         background_part,
-        f"min_logerr=0x{bits:08X}",
         f"normalization={normalization_fingerprint(normalization)}",
         f"site_start_offset={source_site_start_offset}",
     )
@@ -193,15 +186,12 @@ def _prepared_profile_cache_key(
     return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()[:16]
 
 
-def _prepared_profile_sections(profile):
-    forward = profile.bundle.forward
-    reverse = profile.bundle.reverse
-    forward_anchors, reverse_anchors = profile.anchors
+def _prepared_profile_sections(bundle):
+    forward = bundle.forward
+    reverse = bundle.reverse
     sections = {
         "forward_scores": (forward.data, "<f4"),
         "forward_score_offsets": (forward.offsets, "<i8"),
-        "forward_anchor_positions": (forward_anchors.positions, "<i8"),
-        "forward_anchor_offsets": (forward_anchors.offsets, "<i8"),
     }
     if reverse is forward:
         sections["reverse_scores"] = sections["forward_scores"]
@@ -209,26 +199,22 @@ def _prepared_profile_sections(profile):
     else:
         sections["reverse_scores"] = (reverse.data, "<f4")
         sections["reverse_score_offsets"] = (reverse.offsets, "<i8")
-    if reverse_anchors is forward_anchors:
-        sections["reverse_anchor_positions"] = sections["forward_anchor_positions"]
-        sections["reverse_anchor_offsets"] = sections["forward_anchor_offsets"]
-    else:
-        sections["reverse_anchor_positions"] = (reverse_anchors.positions, "<i8")
-        sections["reverse_anchor_offsets"] = (reverse_anchors.offsets, "<i8")
     return sections
 
 
-def _prepared_profile_serialization_plan(profile):
+def _prepared_profile_serialization_plan(
+    profile_name, bundle, normalization, site_start_offset
+):
     payload_size = len(_PREPARED_PROFILE_BINARY_MAGIC)
     specs = {}
     written = {}
-    sections = _prepared_profile_sections(profile)
+    sections = _prepared_profile_sections(bundle)
     writes = []
-    for name in _PREPARED_PROFILE_SECTION_NAMES:
-        array, dtype = sections[name]
+    for section_name in _PREPARED_PROFILE_SECTION_NAMES:
+        array, dtype = sections[section_name]
         identity = (id(array), dtype)
         if identity in written:
-            specs[name] = written[identity]
+            specs[section_name] = written[identity]
             continue
         values = np.ascontiguousarray(array, dtype=np.dtype(dtype))
         itemsize = values.dtype.itemsize
@@ -239,20 +225,18 @@ def _prepared_profile_serialization_plan(profile):
             "count": int(values.size),
             "dtype": dtype,
         }
-        specs[name] = spec
+        specs[section_name] = spec
         written[identity] = spec
         writes.append((offset, values))
     metadata = {
         "format": "prepared_profile_mmap",
         "algorithm": "prepared_profile",
         "prepared_profile_format_version": PREPARED_PROFILE_CACHE_FORMAT_VERSION,
-        "name": profile.name,
-        "min_logerr": float(profile.min_logerr),
-        "normalization": normalization_fingerprint(profile.normalization),
-        "site_start_offset": profile.site_start_offset,
-        "n_rows": len(profile.bundle.forward),
-        "shared_reverse_scores": profile.bundle.forward is profile.bundle.reverse,
-        "shared_reverse_anchors": profile.anchors[0] is profile.anchors[1],
+        "name": profile_name,
+        "normalization": normalization_fingerprint(normalization),
+        "site_start_offset": site_start_offset,
+        "n_rows": len(bundle.forward),
+        "shared_reverse_scores": bundle.forward is bundle.reverse,
     }
     for name, spec in specs.items():
         metadata[f"{name}_offset"] = spec["offset"]
@@ -323,7 +307,7 @@ def _verify_cache_data(cache, key, path, meta):
 def _normalization_from_fingerprint(value):
     if value == "empirical-log-tail-v1":
         return EmpiricalLogTail()
-    if not value.startswith("hybrid-log-tail-v2;"):
+    if not value.startswith("hybrid-log-tail-v3;"):
         return None
     fields = {}
     for part in value.split(";")[1:]:
@@ -380,7 +364,6 @@ def _decode_mmap_prepared_profile(path, meta):
             return None
         name = meta.get("name")
         n_rows = meta.get("n_rows")
-        threshold = meta.get("min_logerr")
         normalization_tag = meta.get("normalization")
         site_start_offset = meta.get("site_start_offset")
         if (
@@ -388,9 +371,6 @@ def _decode_mmap_prepared_profile(path, meta):
             or isinstance(n_rows, bool)
             or not isinstance(n_rows, int)
             or n_rows < 0
-            or isinstance(threshold, bool)
-            or not isinstance(threshold, (int, float))
-            or not np.isfinite(threshold)
             or not isinstance(normalization_tag, str)
             or isinstance(site_start_offset, bool)
             or not isinstance(site_start_offset, int)
@@ -423,31 +403,9 @@ def _decode_mmap_prepared_profile(path, meta):
                 path, meta, "reverse_score_offsets", "<i8", file_size
             )
         )
-        forward_anchor_positions = _mapped_profile_section(
-            path, meta, "forward_anchor_positions", "<i8", file_size
-        )
-        reverse_anchor_positions = (
-            forward_anchor_positions
-            if meta.get("shared_reverse_anchors")
-            else _mapped_profile_section(
-                path, meta, "reverse_anchor_positions", "<i8", file_size
-            )
-        )
-        forward_anchor_offsets = _mapped_profile_section(
-            path, meta, "forward_anchor_offsets", "<i8", file_size
-        )
-        reverse_anchor_offsets = (
-            forward_anchor_offsets
-            if meta.get("shared_reverse_anchors")
-            else _mapped_profile_section(
-                path, meta, "reverse_anchor_offsets", "<i8", file_size
-            )
-        )
         if (
             forward_offsets.size != n_rows + 1
             or reverse_offsets.size != n_rows + 1
-            or forward_anchor_offsets.size != n_rows + 1
-            or reverse_anchor_offsets.size != n_rows + 1
         ):
             return None
         forward = RaggedArray(forward_data, forward_offsets)
@@ -456,23 +414,7 @@ def _decode_mmap_prepared_profile(path, meta):
             if meta.get("shared_reverse_scores")
             else RaggedArray(reverse_data, reverse_offsets)
         )
-        if not np.all(np.isfinite(forward.data)) or not np.all(np.isfinite(reverse.data)):
-            return None
-        forward_anchor = AnchorCSR(forward_anchor_positions, forward_anchor_offsets)
-        reverse_anchor = (
-            forward_anchor
-            if meta.get("shared_reverse_anchors")
-            else AnchorCSR(reverse_anchor_positions, reverse_anchor_offsets)
-        )
-        anchors = (forward_anchor, reverse_anchor)
-        return PreparedProfile(
-            name,
-            StrandPair(forward, reverse),
-            anchors,
-            np.float32(threshold),
-            normalization,
-            site_start_offset,
-        )
+        return name, StrandPair(forward, reverse), normalization, site_start_offset
     except (OSError, TypeError, ValueError):
         return None
 
@@ -493,14 +435,18 @@ def _cached_mmap_prepared_profile(cache, key):
         return None
 
 
-def _cache_set_prepared_profile(cache, key, profile):
-    """Atomically stream a prepared profile into one cache payload.
+def _cache_set_prepared_profile(
+    cache, key, name, bundle, normalization, site_start_offset
+):
+    """Atomically stream normalized scores into one cache payload.
 
     The data sections are written directly to the staging file while the SHA-256
     is updated incrementally, avoiding an additional full-size Python payload.
     """
     encode_started = time.perf_counter()
-    metadata, writes, payload_size = _prepared_profile_serialization_plan(profile)
+    metadata, writes, payload_size = _prepared_profile_serialization_plan(
+        name, bundle, normalization, site_start_offset
+    )
     _record_timing(cache, "cache_encode", time.perf_counter() - encode_started)
     with cache._lock:
         root = _cache_root(cache)
@@ -629,11 +575,28 @@ def _cached_prepared_profile(
         background_fp=None if context is None else context[1],
     )
     with cache._lock:
-        profile = _cached_mmap_prepared_profile(cache, key)
-        if profile is not None and profile.min_logerr == np.float32(threshold) and profile.normalization == normalization:
-            return key, profile
+        cached = _cached_mmap_prepared_profile(cache, key)
+    if cached is None:
         return key, None
+    name, bundle, cached_normalization, site_start_offset = cached
+    if cached_normalization != normalization:
+        return key, None
+    anchors = collect_both_anchors(
+        bundle, threshold, position_offset=site_start_offset
+    )
+    return key, PreparedProfile(
+        name,
+        bundle,
+        anchors,
+        threshold,
+        cached_normalization,
+        site_start_offset,
+    )
 
 
-def _store_prepared_profile(cache, key, profile):
-    _cache_set_prepared_profile(cache, key, profile)
+def _store_normalized_profile(
+    cache, key, name, bundle, normalization, site_start_offset
+):
+    _cache_set_prepared_profile(
+        cache, key, name, bundle, normalization, site_start_offset
+    )

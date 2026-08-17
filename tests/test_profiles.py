@@ -158,23 +158,83 @@ class TestNormalization:
         serial = transform_scores(table, scores)
         np.testing.assert_array_equal(serial.data, expected)
 
-    def test_sparse_anchor_positions_do_not_retain_full_candidate_buffer(self):
+    def test_sparse_anchor_positions_do_not_allocate_full_candidate_buffer(
+        self, monkeypatch
+    ):
         from mimosa import RaggedArray
-        from mimosa.profiles.anchors import collect_anchor_csr
+        from mimosa.profiles import anchors as anchor_module
+
+        allocations = []
+        original_empty = np.empty
+
+        def tracked_empty(shape, *args, **kwargs):
+            allocations.append(int(np.prod(shape)))
+            return original_empty(shape, *args, **kwargs)
 
         scores = RaggedArray.from_rows(
             [np.concatenate(([1.0], np.zeros(9_999, dtype=np.float32)))]
         )
-        anchors = collect_anchor_csr(scores, threshold=0.5)
+        monkeypatch.setattr(anchor_module.np, "empty", tracked_empty)
+        anchors = anchor_module.collect_anchor_csr(scores, threshold=0.5)
 
-        assert anchors.positions.nbytes == np.dtype(np.int64).itemsize
+        assert anchors.positions.nbytes == np.dtype(np.int32).itemsize
         assert anchors.positions.base is None
+        assert 10_000 not in allocations
+
+    def test_anchor_positions_fall_back_to_int64_for_large_coordinates(self):
+        from mimosa import RaggedArray
+        from mimosa.profiles.anchors import collect_anchor_csr
+
+        scores = RaggedArray.from_rows([[1.0]])
+        offset = int(np.iinfo(np.int32).max) + 1
+        anchors = collect_anchor_csr(
+            scores, threshold=0.5, position_offset=offset
+        )
+
+        assert anchors.positions.dtype == np.int64
+        assert anchors.positions.tolist() == [offset]
 
     def test_fingerprint(self):
         assert normalization_fingerprint(EmpiricalLogTail()) == "empirical-log-tail-v1"
         assert (
             normalization_fingerprint(HybridEmpiricalLogTail(1024))
-            == "hybrid-log-tail-v2;bins=1024"
+            == "hybrid-log-tail-v3;bins=1024"
+        )
+
+    def test_prepared_normalized_scores_are_threshold_independent(
+        self, pwm_pair, batch
+    ):
+        lower = prepare_profile(pwm_pair[0], batch, min_logerr=1.0)
+        higher = prepare_profile(pwm_pair[0], batch, min_logerr=2.0)
+
+        np.testing.assert_array_equal(
+            lower.bundle.forward.data, higher.bundle.forward.data
+        )
+        np.testing.assert_array_equal(
+            lower.bundle.reverse.data, higher.bundle.reverse.data
+        )
+        assert lower.anchors[0].positions.size > higher.anchors[0].positions.size
+
+    def test_prepared_exact_scores_use_separate_background(self, pwm_pair, batch):
+        from mimosa import scan
+        from mimosa.profiles.normalization import _fit_normalize
+
+        background = read_fasta("examples/background.fa")[0]
+        raw = scan(pwm_pair[0], batch, strands="both")
+        calibration = scan(pwm_pair[0], background, strands="both")
+        _, expected = _fit_normalize(
+            EmpiricalLogTail(), raw, calibration=calibration
+        )
+
+        actual = prepare_profile(
+            pwm_pair[0], batch, background=background, min_logerr=2.0
+        )
+
+        np.testing.assert_allclose(
+            actual.bundle.forward.data, expected.forward.data, rtol=1e-6
+        )
+        np.testing.assert_allclose(
+            actual.bundle.reverse.data, expected.reverse.data, rtol=1e-6
         )
 
 

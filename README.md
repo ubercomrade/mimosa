@@ -31,9 +31,9 @@ the scores models assign to DNA sequences rather than their internal parameters.
 Mimosa uses the following profile comparison pipeline:
 
 1. Scan sequences by motifs to obtain score profiles.
-2. Convert raw scores to empirical `-log10(ERR)` values, where ERR is the
+2. Convert raw scores to exact empirical `-log10(ERR)` values, where ERR is the
    expectation recognition rate, optionally using a separate background sequence
-   set for calibration.
+   set for calibration. These values do not depend on `min_logerr`.
 3. Select one strict best anchor per non-empty sequence when `min_logerr <= 0`,
    or all anchors with `-log10(ERR) >= min_logerr` for a positive threshold.
 4. Compare site-centered windows over shifts and the four strand orientations.
@@ -179,8 +179,9 @@ The report measures full-pipeline `cache_miss_hot_jit` and
 `--numba-threads` values; only divisible pairs are run. Each result reports the
 total budget, Numba budget, and derived joblib workers. Use `--phase-timings`
 to add isolated scan, normalization, anchor, fingerprint, cache, alignment,
-and JSON serialization timings. RSS is reported only as a per-sample parent
-process lifetime maximum; it deliberately excludes joblib workers.
+and JSON serialization timings. On Linux the report includes aggregate peak RSS
+for the complete joblib process tree; other platforms retain the parent-process
+lifetime maximum as a fallback.
 `--cold-jit-cli` adds a separately labelled clean-process command-line startup
 sample; it is emitted only for one-target workloads and is not used for speedup
 comparisons.

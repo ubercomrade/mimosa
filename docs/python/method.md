@@ -19,17 +19,18 @@ shifts are visited from most negative to most positive.
 
 ## Normalization
 
-`HybridEmpiricalLogTail` is the public default normalizer. It combines an
-equal-width histogram for the bulk of the calibration scores with an exact
-empirical high-score tail. Exact tail values use:
+Prepared profiles use one threshold-independent exact empirical table. Every
+stored value therefore uses:
 
 ```text
 -log10(count(calibration_score >= score) / n_calibration)
 ```
 
-The denominator is the full calibration count. Normalized profile values are
-Float32; histogram bin arithmetic and tail accumulation use Float64 where
-required by the contract.
+The denominator is the full calibration count and normalized profile values are
+Float32. `HybridEmpiricalLogTail` remains the default strategy identifier and
+the low-level `fit(..., tail_logerr=...)` helper still supports hybrid tables,
+but `prepare_profile` canonicalizes the complete exact table so `min_logerr`
+only selects anchors.
 
 ## Similarity metrics
 

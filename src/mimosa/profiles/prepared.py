@@ -10,7 +10,8 @@ from ..models import MotifModel, site_start_offset
 from .anchors import AnchorCSR, collect_both_anchors
 from .normalization import (
     HybridEmpiricalLogTail,
-    _fit_normalize,
+    _fit_exact,
+    normalize_bundle,
     normalization_fingerprint,
 )
 
@@ -36,6 +37,13 @@ def _freeze_prepared_arrays(bundle, anchors):
         anchor_set.offsets.setflags(write=False)
 
 
+def _all_finite(values, chunk_size=1 << 20):
+    return all(
+        np.all(np.isfinite(values[start : start + chunk_size]))
+        for start in range(0, values.size, chunk_size)
+    )
+
+
 class ScoreProfile:
     """Precomputed per-position score profiles; both strands share the scores."""
 
@@ -55,7 +63,7 @@ class ScoreProfile:
                 raise TypeError(
                     "scores must be a RaggedArray or a sequence of score rows."
                 ) from exc
-        if not np.all(np.isfinite(scores.data)):
+        if not _all_finite(scores.data):
             raise ModelFormatError("", "score profile contains non-finite values.")
         self.name = str(name)
         self.scores = scores
@@ -118,7 +126,7 @@ class PreparedProfile:
         for strand in (bundle.forward, bundle.reverse):
             if strand.data.dtype != np.dtype(np.float32):
                 raise TypeError("prepared scores must use Float32 storage.")
-            if not np.all(np.isfinite(strand.data)):
+            if not _all_finite(strand.data):
                 raise ValueError("prepared scores must be finite.")
         if anchors[0].offsets.size != n_rows + 1:
             raise ValueError("forward anchor rows do not match the profile bundle.")
@@ -188,7 +196,7 @@ def _prepare_profile(
         normalization = HybridEmpiricalLogTail()
 
     if cache is not None:
-        from ..cache import _cached_prepared_profile, _store_prepared_profile
+        from ..cache import _cached_prepared_profile
 
         key, cached = _cached_prepared_profile(
             cache,
@@ -229,10 +237,25 @@ def _prepare_profile(
             "model_or_scores must be a ScoreProfile or a MotifModel."
         )
 
-    _, norm_bundle = _fit_normalize(
-        normalization, raw, calibration=calibration, tail_logerr=threshold
+    table = _fit_exact(normalization, raw if calibration is None else calibration)
+    del calibration
+    norm_bundle = normalize_bundle(
+        table,
+        raw,
+        in_place=isinstance(model_or_scores, MotifModel),
     )
-    del raw, calibration
+    del raw, table
+    if cache is not None:
+        from ..cache import _store_normalized_profile
+
+        _store_normalized_profile(
+            cache,
+            key,
+            name,
+            norm_bundle,
+            normalization,
+            profile_site_start_offset,
+        )
     anchors = collect_both_anchors(
         norm_bundle, threshold, position_offset=profile_site_start_offset
     )
@@ -244,6 +267,4 @@ def _prepare_profile(
         normalization,
         profile_site_start_offset,
     )
-    if cache is not None:
-        _store_prepared_profile(cache, key, prepared)
     return prepared
