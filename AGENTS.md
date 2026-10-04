@@ -5,6 +5,7 @@
 - This is one Python package/CLI, not a monorepo: source is `src/mimosa`, tests are `tests`, and runnable fixtures are `examples`.
 - Entrypoints are `mimosa.cli:main` and `python -m mimosa.cli`.
 - `compare_many(query, targets, ...)` is one-query, one-metric-per-call, and preserves target order.
+- Check hypotheses, build mini-prototypes, and run other exploratory experiments in `experiments/`; it is ignored by Git.
 
 ## Environment
 

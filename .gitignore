@@ -18,3 +18,5 @@ coverage.xml
 .mimosa-cache/
 .env
 AGENTS.md
+PLAN.md
+experiments/
