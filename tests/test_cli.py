@@ -5,10 +5,11 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from mimosa import prepare_profile, read_fasta, read_model
-from mimosa.cli import _validate_null_compatibility
+from mimosa.statistics import check_null_compatibility
 from mimosa.errors import MimosaError
 from mimosa.io.bundles import model_collection_fingerprint, read_null_bundle
 
@@ -343,16 +344,14 @@ class TestCacheCommand:
             },
             sequence_fingerprint="none",
             background_fingerprint="none",
-            model_type="pwm",
         )
         with pytest.raises(MimosaError, match="alignment version"):
-            _validate_null_compatibility(
+            check_null_compatibility(
                 dist,
                 sequences=None,
                 background=None,
                 search_range=5,
                 min_logerr=4.0,
-                model_types=("pwm", "pwm"),
             )
 
 
@@ -379,3 +378,15 @@ class TestVersion:
     def test_no_command(self):
         r = run_cli()
         assert r.returncode != 0
+
+
+def test_typed_read_autodetects_saved_context_bundle(tmp_path):
+    from mimosa import BaMM
+    from mimosa.cli import _read_typed_model
+    from mimosa.io.bundles import write_model
+
+    model = BaMM("b", np.zeros((25, 4), dtype=np.float32), 1, 4)
+    write_model(tmp_path / "bundle", model)
+    assert isinstance(_read_typed_model(tmp_path / "bundle", "bamm"), BaMM)
+    with pytest.raises(MimosaError):
+        _read_typed_model(tmp_path / "bundle", "pwm")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import warnings
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from joblib import Parallel, delayed
@@ -28,6 +28,10 @@ class ComparisonResult:
     orientation: str
     metric: str = METRIC_NAME
     n_sites: int = 0
+    # Comparison parameters that bound the validity of null-based p-values;
+    # they are not part of the serialized result or of equality.
+    search_range: int | None = field(default=None, compare=False, repr=False)
+    min_logerr: np.float32 | None = field(default=None, compare=False, repr=False)
 
     def to_dict(self):
         d = {
@@ -45,6 +49,26 @@ class ComparisonResult:
 def _check_threshold(threshold, prepared):
     if threshold != prepared.min_logerr:
         raise ValueError("min_logerr differs from the prepared query threshold.")
+
+
+def _check_input_kinds(query, target):
+    if (isinstance(query, ScoreProfile) and isinstance(target, MotifModel)) or (
+        isinstance(query, MotifModel) and isinstance(target, ScoreProfile)
+    ):
+        raise ValueError("mixed ScoreProfile/motif comparison is unsupported; prepare both inputs as profiles first.")
+
+
+def _resolve_threshold_and_normalization(prepared, min_logerr, normalization):
+    """Take threshold and normalization from prepared inputs, else defaults."""
+    if not prepared:
+        threshold = parse_min_logerr(DEFAULT_MIN_LOGERR if min_logerr is None else min_logerr)
+        return threshold, normalization
+    existing = prepared[0]
+    threshold = existing.min_logerr if min_logerr is None else parse_min_logerr(min_logerr)
+    _check_threshold(threshold, existing)
+    if normalization is not None and normalization != existing.normalization:
+        raise ValueError("prepared query and requested normalization differ.")
+    return threshold, existing.normalization
 
 
 def _check_prepared_compatibility(query, target):
@@ -91,7 +115,15 @@ def _compare_prepared(query, target, config):
         config,
     )
     return ComparisonResult(
-        query.name, target.name, score, shift, orientation, METRIC_NAME, n_sites
+        query.name,
+        target.name,
+        score,
+        shift,
+        orientation,
+        METRIC_NAME,
+        n_sites,
+        search_range=config.search_range,
+        min_logerr=config.min_logerr,
     )
 
 
@@ -204,29 +236,16 @@ def compare(query, target, sequences=None, *, background=None, search_range=5, m
     _check_circular(query)
     _check_circular(target)
 
-    if (isinstance(query, ScoreProfile) and isinstance(target, MotifModel)) or (
-        isinstance(query, MotifModel) and isinstance(target, ScoreProfile)
-    ):
-        raise ValueError("mixed ScoreProfile/motif comparison is unsupported; prepare both inputs as profiles first.")
+    _check_input_kinds(query, target)
 
     if q_prepared and t_prepared:
         _check_prepared_compatibility(query, target)
-        if min_logerr is not None:
-            _check_threshold(parse_min_logerr(min_logerr), query)
-        if normalization is not None and normalization != query.normalization:
-            raise ValueError("prepared query and requested normalization differ.")
-        threshold = query.min_logerr
-        norm = query.normalization
-    elif q_prepared or t_prepared:
-        existing = query if q_prepared else target
-        threshold = existing.min_logerr if min_logerr is None else parse_min_logerr(min_logerr)
-        _check_threshold(threshold, existing)
-        if normalization is not None and normalization != existing.normalization:
-            raise ValueError("prepared query and requested normalization differ.")
-        norm = existing.normalization
-    else:
-        threshold = parse_min_logerr(DEFAULT_MIN_LOGERR if min_logerr is None else min_logerr)
-        norm = normalization
+    threshold, norm = _resolve_threshold_and_normalization(
+        [x for x in (query, target) if isinstance(x, PreparedProfile)],
+        min_logerr,
+        normalization,
+    )
+    if not (q_prepared or t_prepared):
         if isinstance(query, ScoreProfile) and isinstance(target, ScoreProfile) and sequences is not None:
             raise ValueError("ScoreProfile comparison does not consume sequences.")
 
@@ -313,14 +332,14 @@ def compare_many(
         from .cache import _make_preparation_context
 
         preparation_context = _make_preparation_context(sequences, background)
-    if isinstance(query, PreparedProfile):
-        threshold = query.min_logerr
-        if min_logerr is not None:
-            _check_threshold(parse_min_logerr(min_logerr), query)
-    else:
-        threshold = parse_min_logerr(
-            DEFAULT_MIN_LOGERR if min_logerr is None else min_logerr
-        )
+    for target in target_sources:
+        _check_input_kinds(query, target)
+    prepared_inputs = [
+        x for x in (query, *target_sources) if isinstance(x, PreparedProfile)
+    ]
+    threshold, normalization = _resolve_threshold_and_normalization(
+        prepared_inputs, min_logerr, normalization
+    )
     config = ProfileConfig(search_range=search_range, min_logerr=threshold)
     if not isinstance(query, PreparedProfile):
         query_source = query

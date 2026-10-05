@@ -144,3 +144,44 @@ def test_benchmark_progress_output_is_always_parseable_json(tmp_path):
     module._write_benchmark_output(output, [{"target_count": 1}])
 
     assert json.loads(output.read_text())["results"] == [{"target_count": 1}]
+
+
+def test_benchmark_phase_timings_smoke(tmp_path):
+    output = tmp_path / "benchmark.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "benchmarks/benchmark_performance.py",
+            "--sequence-count",
+            "100",
+            "--target-counts",
+            "1",
+            "--total-threads",
+            "1",
+            "--numba-threads",
+            "1",
+            "--repeats",
+            "1",
+            "--phase-timings",
+            "--output",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    json.loads(result.stdout)
+    assert "phase_wall_s" in result.stdout
+
+
+def test_sample_subprocess_survives_large_output():
+    spec = importlib.util.spec_from_file_location(
+        "benchmark_performance", "benchmarks/benchmark_performance.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    completed, _ = module._run_sample_subprocess(
+        [sys.executable, "-c", "import sys; sys.stdout.write('x' * (1 << 20))"]
+    )
+    assert completed.returncode == 0
+    assert len(completed.stdout) == 1 << 20

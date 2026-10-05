@@ -87,7 +87,18 @@ class PreparedProfile:
         "normalization",
         "site_start_offset",
         "circular",
+        "_frozen",
     )
+
+    def __setattr__(self, name, value):
+        if getattr(self, "_frozen", False):
+            raise AttributeError(
+                "PreparedProfile is immutable; prepare a new profile instead."
+            )
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name):
+        raise AttributeError("PreparedProfile is immutable.")
 
     def __init__(
         self,
@@ -153,6 +164,7 @@ class PreparedProfile:
         self.site_start_offset = int(site_start_offset)
         self.circular = bool(circular)
         _freeze_prepared_arrays(bundle, anchors)
+        self._frozen = True
 
     def __eq__(self, other):
         return (
@@ -169,6 +181,14 @@ class PreparedProfile:
 
 
 def prepare_profile(model_or_scores, sequences=None, *, background=None, min_logerr=DEFAULT_MIN_LOGERR, normalization=None, cache=None, circular=False):
+    """Prepare a profile for repeated comparison.
+
+    Accepts a ScoreProfile (no sequences) or a MotifModel plus EncodedSequences.
+    ``circular=True`` scans every sequence as a ring, which ``compare`` and
+    ``compare_many`` require; the default linear layout serves other tools.
+    The returned ``PreparedProfile`` is immutable: to change ``min_logerr``,
+    prepare the profile again.
+    """
     return _prepare_profile(
         model_or_scores,
         sequences,

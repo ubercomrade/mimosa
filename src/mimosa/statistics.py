@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
 import numpy as np
 
 from .compare import ComparisonResult, compare
+from .errors import MimosaError
 from .io.bundles import (
     NULL_FORMAT_VERSION,
     content_fingerprint_float64,
@@ -33,14 +35,13 @@ class NullDistribution:
     pairs: tuple[tuple[str, str, float], ...]
     n_null: int
     n_models: int
-    model_type: str
     shuffle: bool
     seed: int
     sampling_version: str
     model_collection_fingerprint: str | None
     sequence_fingerprint: str
     background_fingerprint: str
-    contract: MappingProxyType
+    contract: Mapping
 
     def __post_init__(self):
         try:
@@ -70,8 +71,6 @@ class NullDistribution:
             raise ValueError("null distribution requires at least two source models.")
         if len(self.pairs) != self.n_null:
             raise ValueError("null distribution pairs do not match n_null.")
-        if not self.model_type:
-            raise ValueError("null distribution model_type must not be empty.")
         if self.seed < 0:
             raise ValueError("null distribution seed must be non-negative.")
         if not self.sampling_version:
@@ -102,8 +101,8 @@ class NullDistribution:
                 )
             pairs.append((query_id, target_id, float(score)))
         object.__setattr__(self, "pairs", tuple(pairs))
-        if not isinstance(self.contract, dict):
-            raise ValueError("null distribution contract must be a dictionary.")
+        if not isinstance(self.contract, Mapping):
+            raise ValueError("null distribution contract must be a mapping.")
         contract = dict(self.contract)
         required = (
             "metric",
@@ -165,6 +164,10 @@ class AnnotatedResult:
     null_estimator: str | None = None
 
     def __getattr__(self, name):
+        # Only reached for names missing on the dataclass itself; guard
+        # "result" so copy/pickle on a half-built instance cannot recurse.
+        if name == "result" or (name.startswith("__") and name.endswith("__")):
+            raise AttributeError(name)
         return getattr(self.result, name)
 
     def to_dict(self):
@@ -206,8 +209,10 @@ def evalue(pvalue, effective_n):
     p = float(pvalue)
     if not (np.isfinite(p) and 0.0 <= p <= 1.0):
         raise ValueError("p-value must be finite and lie in [0, 1].")
-    if effective_n < 0:
-        raise ValueError("effective_n must be non-negative.")
+    if isinstance(effective_n, bool) or not isinstance(effective_n, (int, float, np.integer, np.floating)):
+        raise TypeError("effective_n must be a real number.")
+    if not (np.isfinite(effective_n) and effective_n >= 0):
+        raise ValueError("effective_n must be finite and non-negative.")
     return p * effective_n
 
 
@@ -221,9 +226,9 @@ def empirical_upper_tail_pvalue(scores, score):
     return _empirical_upper_tail_pvalue_sorted(sorted_scores, score)
 
 
-def _empirical_upper_tail_pvalue_sorted(sorted_scores, score):
+def _empirical_upper_tail_pvalue_sorted(sorted_scores, score, *, validated=False):
     sorted_scores = np.asarray(sorted_scores, dtype=np.float64)
-    if not np.all(np.isfinite(sorted_scores)):
+    if not validated and not np.all(np.isfinite(sorted_scores)):
         raise ValueError("null scores must be finite.")
     if not np.isfinite(score):
         raise ValueError("score must be finite.")
@@ -243,7 +248,6 @@ def _null_id(dist):
         f"metric={dist.metric}",
         f"n_null={dist.n_null}",
         f"n_models={dist.n_models}",
-        f"model_type={dist.model_type}",
         f"shuffle={'true' if dist.shuffle else 'false'}",
         f"seed={dist.seed}",
         f"sampling={dist.sampling_version}",
@@ -261,19 +265,62 @@ def _null_id(dist):
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
 
+def check_null_compatibility(
+    dist, *, sequences, background, search_range, min_logerr
+):
+    """Raise MimosaError unless ``dist`` applies to the described comparison.
+
+    ``sequences`` and ``background`` are the comparison inputs (None if
+    absent). The null is not tied to a model type: profiles are compared on
+    the same normalized logERR scale whatever model produced them.
+    """
+    expected_sequences = "none" if sequences is None else sequence_fingerprint(sequences)
+    expected_background = "none" if background is None else sequence_fingerprint(background)
+    checks = [
+        (dist.strategy, "profile", "null distribution strategy is incompatible with profile comparison."),
+        (dist.contract["search_range"], search_range, "null distribution search range is incompatible with this comparison."),
+        (dist.contract["min_logerr"], np.float32(min_logerr), "null distribution minimum log-ERR is incompatible with this comparison."),
+        (dist.sequence_fingerprint, expected_sequences, "null distribution sequence fingerprint is incompatible with this comparison."),
+        (dist.background_fingerprint, expected_background, "null distribution background fingerprint is incompatible with this comparison."),
+    ]
+    for actual, expected, msg in checks:
+        if actual != expected:
+            raise MimosaError(msg)
+    if dist.contract["alignment_version"] != ALIGNMENT_VERSION:
+        raise MimosaError("null distribution alignment version is incompatible with this comparison.")
+
+
+def _check_result_parameters(result, dist):
+    """Reject results computed with parameters the null was not built for."""
+    contract = dist.contract
+    if result.search_range is not None and result.search_range != contract["search_range"]:
+        raise ValueError(
+            "result search_range does not match the null distribution contract."
+        )
+    if result.min_logerr is not None and np.float32(result.min_logerr) != contract["min_logerr"]:
+        raise ValueError(
+            "result min_logerr does not match the null distribution contract."
+        )
+
+
 def annotate_results(results, dist, *, effective_number_of_targets=None):
     n_null = dist.n_null
     effective = len(results) if effective_number_of_targets is None else effective_number_of_targets
     if effective < 0:
         raise ValueError("effective_number_of_targets must be non-negative.")
     sorted_scores = np.sort(np.asarray(dist.raw_scores, dtype=np.float64))
+    if not np.all(np.isfinite(sorted_scores)):
+        raise ValueError("null scores must be finite.")
     pvalues = np.empty(len(results), dtype=np.float64)
     for idx, result in enumerate(results):
         if result.metric != dist.metric:
             raise ValueError(
                 f"result metric '{result.metric}' does not match null metric '{dist.metric}'."
             )
-        pvalues[idx] = _empirical_upper_tail_pvalue_sorted(sorted_scores, result.score)
+        _check_result_parameters(result, dist)
+        pvalues[idx] = _empirical_upper_tail_pvalue_sorted(
+            sorted_scores, result.score, validated=True
+        )
     adj = adjusted_pvalues(pvalues)
     null_id = _null_id(dist)
     annotated = []
@@ -414,7 +461,6 @@ def build_null(
         pairs=pairs,
         n_null=n_samples,
         n_models=len(models),
-        model_type="pwm",
         shuffle=True,
         seed=seed,
         sampling_version=SAMPLING_VERSION,

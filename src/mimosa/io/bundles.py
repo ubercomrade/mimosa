@@ -7,7 +7,6 @@ byte-for-byte, including the `bitstring` fingerprint canonicalization.
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import struct
 import tempfile
@@ -32,7 +31,7 @@ from ..profiles.alignment import METRIC_NAME
 from ..profiles.anchors import parse_min_logerr
 
 MODEL_FORMAT_VERSION = 2
-NULL_FORMAT_VERSION = 10
+NULL_FORMAT_VERSION = 11
 BUNDLE_MANIFEST_NAME = "manifest.toml"
 BUNDLE_DATA_DIR = "data"
 
@@ -317,6 +316,28 @@ def _read_npy(path, expected_dtype, expected_shape):
     return arr
 
 
+_TOML_ESCAPES = {'"': '\\"', "\\": "\\\\", "\b": "\\b", "\t": "\\t", "\n": "\\n", "\f": "\\f", "\r": "\\r"}
+
+
+def _toml_string(value):
+    """Basic TOML string; non-ASCII becomes \\uXXXX or \\UXXXXXXXX scalar escapes."""
+    out = ['"']
+    for ch in value:
+        code = ord(ch)
+        if ch in _TOML_ESCAPES:
+            out.append(_TOML_ESCAPES[ch])
+        elif 0x20 <= code < 0x7F:
+            out.append(ch)
+        elif 0xD800 <= code <= 0xDFFF:
+            raise InvariantError("TOML strings cannot contain surrogate code points.")
+        elif code <= 0xFFFF:
+            out.append(f"\\u{code:04X}")
+        else:
+            out.append(f"\\U{code:08X}")
+    out.append('"')
+    return "".join(out)
+
+
 def toml_value(v):
     if isinstance(v, bool):
         return "true" if v else "false"
@@ -325,7 +346,7 @@ def toml_value(v):
     if isinstance(v, float):
         return repr(v)
     if isinstance(v, str):
-        return json.dumps(v, ensure_ascii=True)
+        return _toml_string(v)
     if isinstance(v, list):
         return "[" + ", ".join(toml_value(x) for x in v) + "]"
     raise InvariantError(f"unsupported TOML value type {type(v).__name__}")
@@ -666,8 +687,6 @@ def write_null_bundle(path, dist):
         raise InvariantError("null distribution pairs do not match n_null.")
     if dist.n_models < 2:
         raise InvariantError("null distribution requires at least two source models.")
-    if not dist.model_type:
-        raise InvariantError("null distribution model_type must not be empty.")
     if dist.seed < 0:
         raise InvariantError("null distribution seed must be non-negative.")
     if not dist.sampling_version:
@@ -712,7 +731,6 @@ def write_null_bundle(path, dist):
             "estimator": "empirical_upper_tail",
             "n_null": dist.n_null,
             "n_models": dist.n_models,
-            "model_type": dist.model_type,
             "shuffle": dist.shuffle,
             "seed": dist.seed,
             "sampling_version": dist.sampling_version,
@@ -724,8 +742,7 @@ def write_null_bundle(path, dist):
                 "sequence_fingerprint": dist.sequence_fingerprint,
                 "background_fingerprint": dist.background_fingerprint,
                 "model_collection_fingerprint": dist.model_collection_fingerprint or "none",
-                "model_type": dist.model_type,
-                "shuffle": dist.shuffle,
+                    "shuffle": dist.shuffle,
                 "sampling_version": dist.sampling_version,
                 "search_range": dist.contract["search_range"],
                 "min_logerr": float(dist.contract["min_logerr"]),
@@ -763,7 +780,6 @@ def read_null_bundle(path):
         raise _bundle_error(path, f"unsupported profile metric '{metric}'.")
     n_null = _required_manifest_int(manifest, "n_null", path, "null manifest", minimum=1, maximum=MAX_BUNDLE_DIMENSION)
     n_models = _required_manifest_int(manifest, "n_models", path, "null manifest", minimum=2, maximum=MAX_BUNDLE_DIMENSION)
-    model_type = _required_manifest_string(manifest, "model_type", path, "null manifest")
     shuffle = _required_manifest_bool(manifest, "shuffle", path, "null manifest")
     seed = _required_manifest_int(manifest, "seed", path, "null manifest", minimum=0)
     sampling_version = _required_manifest_string(manifest, "sampling_version", path, "null manifest")
@@ -825,9 +841,6 @@ def read_null_bundle(path):
     seq_fp = _required_manifest_string(compat, "sequence_fingerprint", path, "compatibility metadata")
     bg_fp = _required_manifest_string(compat, "background_fingerprint", path, "compatibility metadata")
     mcf = _required_manifest_string(compat, "model_collection_fingerprint", path, "compatibility metadata")
-    compat_model_type = _required_manifest_string(compat, "model_type", path, "compatibility metadata")
-    if compat_model_type != model_type:
-        raise _bundle_error(path, "compatibility model type disagrees with null manifest.")
     compat_shuffle = _required_manifest_bool(compat, "shuffle", path, "compatibility metadata")
     if compat_shuffle != shuffle:
         raise _bundle_error(path, "compatibility shuffle flag disagrees with null manifest.")
@@ -866,7 +879,6 @@ def read_null_bundle(path):
         "pairs": pairs,
         "n_null": n_null,
         "n_models": n_models,
-        "model_type": model_type,
         "shuffle": shuffle,
         "seed": seed,
         "sampling_version": sampling_version,

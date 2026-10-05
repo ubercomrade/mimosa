@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import operator
+
 import numpy as np
 from dataclasses import dataclass
 
@@ -97,6 +99,7 @@ class EncodedSequences:
         return self.offsets.size - 1
 
     def __getitem__(self, i):
+        i = _row_index(i, len(self))
         return self.data[self.offsets[i] : self.offsets[i + 1]]
 
     def __eq__(self, other):
@@ -108,6 +111,18 @@ class EncodedSequences:
 
     def __repr__(self):
         return f"EncodedSequences({len(self)} sequences, {self.data.size} bytes)"
+
+
+def _row_index(i, n):
+    try:
+        index = operator.index(i)
+    except TypeError:
+        raise TypeError("row index must be an integer.") from None
+    if index < 0:
+        index += n
+    if not 0 <= index < n:
+        raise IndexError("row index out of range.")
+    return index
 
 
 def encode_sequence(s):
@@ -150,6 +165,7 @@ class RaggedArray:
         return self.offsets.size - 1
 
     def __getitem__(self, i):
+        i = _row_index(i, len(self))
         return self.data[self.offsets[i] : self.offsets[i + 1]]
 
     def __eq__(self, other):

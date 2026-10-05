@@ -89,7 +89,8 @@ per base indexed by site start, and `site_start_offset` is `0`. `compare`,
 `compare_many`, and `build_null` prepare motif models and score profiles
 circularly and reject prepared profiles with `circular=False`. Score-profile
 rows are used as given and are only marked circular. `PreparedProfile.circular`
-reports the mode.
+reports the mode. `PreparedProfile` is immutable: to change `min_logerr`,
+prepare the profile again.
 
 `compare_many(query, targets, sequences=None, total_threads=1,
 inner_threads=1, **options)` keeps target order stable and reuses a prepared
@@ -100,7 +101,8 @@ and `total_threads` must be divisible by it. Raw custom models require serial
 comparison or preparation before calling the parallel path.
 
 `ComparisonResult` is immutable and exposes `query`, `target`, `score`,
-`offset`, `orientation`, `metric`, and `n_sites`. `metric` is always
+`offset`, `orientation`, `metric`, and `n_sites`, plus the `search_range` and
+`min_logerr` it was computed with (not part of `to_dict()`). `metric` is always
 `"jaccard"`. `to_dict()` always includes `n_sites`, including when no position
 contributes. `offset` is the circular target-site displacement relative to the
 query; model context is excluded.
@@ -131,7 +133,9 @@ Available selectors are `BestPerSequence`, `ThresholdHits`, and
 `TopFractionHits`. `SiteCollection.to_dict()` returns JSON-compatible lists.
 
 `NullDistribution` uses empirical upper-tail p-values. It does not contain a
-parametric fit object.
+parametric fit object and is not tied to a model type. `annotate_results`
+rejects results whose `search_range` or `min_logerr` (recorded on
+`ComparisonResult`) differ from the null contract.
 
 ## Errors
 

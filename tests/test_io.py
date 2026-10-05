@@ -520,7 +520,7 @@ class TestNullBundle:
         path = str(tmp_path / "null")
         write_null_bundle(path, dist)
         manifest = tmp_path / "null" / "manifest.toml"
-        manifest.write_text(manifest.read_text().replace("format_version = 10", "format_version = 9"))
+        manifest.write_text(manifest.read_text().replace("format_version = 11", "format_version = 10"))
         with pytest.raises(ModelFormatError):
             read_null_bundle(path)
 
@@ -562,7 +562,6 @@ class TestNullBundle:
                 pairs=dist.pairs[:2],
                 n_null=2,
                 n_models=dist.n_models,
-                model_type=dist.model_type,
                 shuffle=dist.shuffle,
                 seed=dist.seed,
                 sampling_version=dist.sampling_version,
@@ -575,3 +574,17 @@ class TestNullBundle:
     def test_rejects_stale_raw_fingerprint(self, tmp_path, dist):
         with pytest.raises(ValueError, match="fingerprint"):
             replace(dist, contract={**dist.contract, "raw_scores_fingerprint": "0" * 64})
+
+
+def test_model_bundle_roundtrips_non_bmp_name(tmp_path):
+    pfm = np.tile([[0.7], [0.1], [0.1], [0.1]], (1, 4))
+    model = pwm_from_pfm(pfm, name="motif\U0001f9ecé\t\"q\"")
+    write_model(tmp_path / "bundle", model)
+    assert read_model(tmp_path / "bundle").name == model.name
+
+
+def test_toml_string_escapes_control_and_non_ascii():
+    from mimosa.io.bundles import toml_value
+
+    assert toml_value("a\U0001f9ec\n") == '"a\\U0001F9EC\\n"'
+    assert toml_value("é\x01") == '"\\u00E9\\u0001"'

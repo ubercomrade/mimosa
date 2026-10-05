@@ -101,3 +101,18 @@ class TestStrandPair:
         ra = RaggedArray.from_rows([[1.0]])
         pair = StrandPair(ra, ra)
         assert pair.forward is pair.reverse
+
+
+@pytest.mark.parametrize("cls", [EncodedSequences, RaggedArray])
+def test_row_indexing_negative_and_bounds(cls):
+    rows = [np.array([0, 1, 2]), np.array([3, 1])]
+    obj = cls.from_rows(rows)
+    assert np.array_equal(obj[-1], obj[1])
+    assert np.array_equal(obj[-2], obj[0])
+    with pytest.raises(IndexError):
+        obj[-3]
+    with pytest.raises(IndexError):
+        obj[2]
+    with pytest.raises(TypeError):
+        obj[0:1]
+    assert [len(row) for row in obj] == [3, 2]

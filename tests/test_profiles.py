@@ -958,3 +958,40 @@ class TestScoreProfile:
     def test_flat_scores_are_not_rows(self):
         with pytest.raises(TypeError):
             ScoreProfile("flat", np.array([1.0, 2.0], dtype=np.float32))
+
+
+class TestPreparedImmutabilityAndConsistency:
+    ROW = [np.linspace(0, 6, 60, dtype=np.float32)]
+
+    def test_prepared_profile_is_immutable(self):
+        prepared = ready_profile("q", self.ROW)
+        for attr, value in (("min_logerr", np.float32(4.0)), ("circular", False), ("anchors", None)):
+            with pytest.raises(AttributeError):
+                setattr(prepared, attr, value)
+        with pytest.raises(AttributeError):
+            del prepared.name
+
+    def test_compare_records_parameters(self):
+        q, t = ready_profile("q", self.ROW), ready_profile("t", self.ROW)
+        result = compare(q, t, search_range=2)
+        assert result.search_range == 2
+        assert result.min_logerr == q.min_logerr
+        assert "search_range" not in result.to_dict()
+
+    def test_compare_many_rejects_mixed_kinds_like_compare(self):
+        scores = ScoreProfile("s", RaggedArray.from_rows(self.ROW))
+        model = pwm_from_pfm(np.tile([[0.7], [0.1], [0.1], [0.1]], (1, 4)), name="m")
+        seqs = EncodedSequences.from_strings(["ACGT" * 30])
+        with pytest.raises(ValueError, match="mixed"):
+            compare(scores, model, seqs)
+        with pytest.raises(ValueError, match="mixed"):
+            compare_many(scores, [model], seqs)
+
+    def test_compare_many_inherits_prepared_target_threshold(self):
+        tau = np.float32(2.5)
+        target = ready_profile("t", self.ROW, tau0=tau)
+        query = ScoreProfile("q", RaggedArray.from_rows(self.ROW))
+        single = compare(query, target)
+        (many,) = compare_many(query, [target])
+        assert many.score == single.score
+        assert many.min_logerr == tau

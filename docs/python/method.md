@@ -78,7 +78,8 @@ model, prepares original and shuffled profiles once, and samples eligible
 ordered pairs. A fresh NumPy `default_rng` stream controls model shuffling and
 pair sampling. Null profiles are circular and scored with the same weighted
 Jaccard measure, so a null distribution only annotates comparisons that use the
-same sequences, background, `search_range`, and `min_logerr`. The sampling
+same sequences, background, `search_range`, and `min_logerr`; it is not tied
+to the type of the compared models. The sampling
 contract is identified in the stored bundle.
 
 The empirical upper-tail p-value is:

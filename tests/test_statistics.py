@@ -44,7 +44,6 @@ def make_dist(scores):
         pairs=[("a", "b", float(s)) for s in scores],
         n_null=len(scores),
         n_models=2,
-        model_type="pwm",
         shuffle=True,
         seed=127,
         sampling_version="original-shuffled-ordered-pairs-v3",
@@ -103,11 +102,11 @@ class TestNullDistribution:
     def test_validation(self):
         with pytest.raises(ValueError):
             NullDistribution(
-                "profile", "jaccard", np.array([1.0]), [], 1, 2, "pwm", True, 0, "v", None, "s", "n", {}
+                "profile", "jaccard", np.array([1.0]), [], 1, 2, True, 0, "v", None, "s", "n", {}
             )
         with pytest.raises(ValueError, match="must be positive"):
             NullDistribution(
-                "profile", "jaccard", np.array([]), [], 0, 2, "pwm", True, 0, "v", None, "s", "n", {}
+                "profile", "jaccard", np.array([]), [], 0, 2, True, 0, "v", None, "s", "n", {}
             )
 
     def test_owns_and_freezes_raw_scores_contract_and_pairs(self):
@@ -158,7 +157,6 @@ class TestNullDistribution:
             "background_fingerprint",
             "raw_scores_fingerprint",
         }
-        assert d.model_type == "pwm"
         assert d.sampling_version == "original-shuffled-ordered-pairs-v3"
         assert np.all(np.isfinite(d.raw_scores))
         assert all(
@@ -299,3 +297,38 @@ class TestAnnotation:
         assert "adj.p-value" in d
         assert "E-value" in d
         assert "null_id" in d
+
+
+class TestAnnotationSafety:
+    def test_rejects_result_with_different_parameters(self):
+        dist = make_dist([0.5, 0.6])
+        ok = ComparisonResult(
+            "a", "b", np.float32(0.9), 0, "++", "jaccard", 5,
+            search_range=5, min_logerr=np.float32(4.0),
+        )
+        assert annotate_results([ok], dist)[0].p_value is not None
+        for kwargs in ({"search_range": 3, "min_logerr": 4.0}, {"search_range": 5, "min_logerr": 1.0}):
+            bad = ComparisonResult("a", "b", np.float32(0.9), 0, "++", "jaccard", 5, **kwargs)
+            with pytest.raises(ValueError, match="does not match"):
+                annotate_results([bad], dist)
+
+    def test_annotated_result_copy(self):
+        import copy
+
+        result = ComparisonResult("a", "b", np.float32(0.9), 0, "++", "jaccard", 5)
+        annotated = annotate_results([result], make_dist([0.5]))[0]
+        assert copy.copy(annotated).p_value == annotated.p_value
+        assert copy.deepcopy(annotated).target == "b"
+
+    def test_null_distribution_replace(self):
+        import dataclasses
+
+        dist = make_dist([0.5, 0.6])
+        assert dataclasses.replace(dist, seed=43).seed == 43
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1.0])
+    def test_evalue_rejects_non_finite_or_negative(self, bad):
+        from mimosa.statistics import evalue
+
+        with pytest.raises(ValueError):
+            evalue(0.5, bad)

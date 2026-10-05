@@ -410,7 +410,7 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
         models[0], sequences, background=background, min_logerr=threshold, circular=True
     )
     key = prepared_profile_cache_key(
-        models[0], sequences, background=background, min_logerr=threshold, circular=True
+        models[0], sequences, background=background, circular=True
     )
     cache = Cache(cache_path, timings=timings)
     _store_normalized_profile(
@@ -617,14 +617,17 @@ def _process_tree_rss_bytes(root_pid):
 def _run_sample_subprocess(command):
     if not sys.platform.startswith("linux") or not Path("/proc").is_dir():
         return subprocess.run(command, capture_output=True, text=True), None
-    process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-    )
-    peak = 0
-    while process.poll() is None:
-        peak = max(peak, _process_tree_rss_bytes(process.pid))
-        time.sleep(0.02)
-    stdout, stderr = process.communicate()
+    # Temporary files instead of pipes: a full pipe would block the child
+    # while this loop only polls for its exit.
+    with tempfile.TemporaryFile("w+") as out, tempfile.TemporaryFile("w+") as err:
+        process = subprocess.Popen(command, stdout=out, stderr=err, text=True)
+        peak = 0
+        while process.poll() is None:
+            peak = max(peak, _process_tree_rss_bytes(process.pid))
+            time.sleep(0.02)
+        out.seek(0)
+        err.seek(0)
+        stdout, stderr = out.read(), err.read()
     return (
         subprocess.CompletedProcess(command, process.returncode, stdout, stderr),
         peak,

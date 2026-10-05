@@ -5,7 +5,7 @@
 - This is one Python package/CLI, not a monorepo: source is `src/mimosa`, tests are `tests`, and runnable fixtures are `examples`.
 - Entrypoints are `mimosa.cli:main` and `python -m mimosa.cli`.
 - `compare_many(query, targets, ...)` is one-query and preserves target order.
-- The only similarity measure is the weighted Jaccard index (`metric == "jaccard"`) over circular logERR profiles; `compare`, `compare_many`, and `build_null` prepare profiles with `circular=True` and reject linear `PreparedProfile` inputs. `prepare_profile` defaults to the linear layout because other tools use it.
+- The only similarity measure is the weighted Jaccard index (`metric == "jaccard"`) over circular logERR profiles; `compare`, `compare_many`, and `build_null` prepare profiles with `circular=True` and reject linear `PreparedProfile` inputs. `prepare_profile` defaults to the linear layout because other tools use it. `PreparedProfile` is immutable; change `min_logerr` by preparing again.
 - Check hypotheses, build mini-prototypes, and run other exploratory experiments in `experiments/`; it is ignored by Git.
 
 ## Environment
@@ -35,7 +35,7 @@
 ## Cache
 
 - Prepared-profile cache format v7 stores normalized score and offset sections plus the `circular` flag in read-only mmap-backed arrays; anchors are rebuilt per `min_logerr`, and entries from other formats are misses.
-- Never load an untrusted cache directory: the legacy fallback executes pickle, and checksums detect corruption but do not make pickle safe.
+- Cache and bundle readers use `allow_pickle=False`; there is no pickle fallback. Checksums detect corruption, not tampering, so still avoid loading untrusted cache directories.
 - The disk cache does not retain prepared profiles in a process-local store; verified-entry state is per cache instance and prepared arrays are read-only mmap-backed sections.
 - Cache keys include model, sequences, background, normalization, the `circular` layout, and algorithm versions; `min_logerr` is not part of the key. Clear stale entries with `uv run mimosa cache clear --cache-dir .mimosa-cache`.
 

@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 
@@ -71,7 +72,7 @@ def _read_typed_model(path, model_type, background=0.25):
     if model_type not in MODEL_TYPE_MAP:
         raise MimosaError(f"unknown model type: {model_type}")
     kwargs = {"background": background}
-    if model_type != "pwm":
+    if model_type != "pwm" and not Path(path).is_dir():
         kwargs["format"] = model_type
     model = read_model(path, **kwargs)
     expected = MODEL_TYPE_MAP[model_type]
@@ -92,30 +93,6 @@ def _resolve_sequences(fasta_path, num_sequences, seq_length, seed):
         rng.integers(0, 4, size=num_sequences * seq_length, dtype=np.uint8),
         np.arange(num_sequences + 1, dtype=np.int64) * seq_length,
     )
-
-
-def _validate_null_compatibility(dist, *, sequences, background, search_range, min_logerr, model_types):
-    from .io.bundles import sequence_fingerprint
-    from .statistics import ALIGNMENT_VERSION
-
-    expected_sequences = "none" if sequences is None else sequence_fingerprint(sequences)
-    expected_background = "none" if background is None else sequence_fingerprint(background)
-    checks = [
-        (dist.strategy, "profile", "null distribution strategy is incompatible with profile comparison."),
-        (dist.contract["search_range"], search_range, "null distribution search range is incompatible with this comparison."),
-        (dist.contract["min_logerr"], np.float32(min_logerr), "null distribution minimum log-ERR is incompatible with this comparison."),
-        (dist.sequence_fingerprint, expected_sequences, "null distribution sequence fingerprint is incompatible with this comparison."),
-        (dist.background_fingerprint, expected_background, "null distribution background fingerprint is incompatible with this comparison."),
-    ]
-    for actual, expected, msg in checks:
-        if actual != expected:
-            raise MimosaError(msg)
-    if not all(t == dist.model_type for t in model_types):
-        raise MimosaError(
-            f"null distribution model type '{dist.model_type}' is incompatible with compared model types '{', '.join(model_types)}'."
-        )
-    if dist.contract["alignment_version"] != ALIGNMENT_VERSION:
-        raise MimosaError("null distribution alignment version is incompatible with this comparison.")
 
 
 def _comparison_inputs(args):
@@ -140,13 +117,13 @@ def _comparison_inputs(args):
     return query, targets, sequences, bg_sequences, cache
 
 
-def _annotate_comparison_results(results, args, sequences, background, model_types):
+def _annotate_comparison_results(results, args, sequences, background):
     if not args.pvalue:
         return results
     if not args.null_distribution:
         raise MimosaError("--pvalue requires an explicit --null-distribution bundle.")
     from .io.bundles import read_null_bundle
-    from .statistics import NullDistribution, annotate_results
+    from .statistics import NullDistribution, annotate_results, check_null_compatibility
 
     dist = NullDistribution(**read_null_bundle(args.null_distribution))
     from .profiles.normalization import HybridEmpiricalLogTail, normalization_fingerprint
@@ -155,13 +132,12 @@ def _annotate_comparison_results(results, args, sequences, background, model_typ
         HybridEmpiricalLogTail()
     ):
         raise MimosaError("null distribution normalization is incompatible with this comparison.")
-    _validate_null_compatibility(
+    check_null_compatibility(
         dist,
         sequences=sequences,
         background=background,
         search_range=args.search_range,
         min_logerr=args.min_logerr,
-        model_types=model_types,
     )
     return annotate_results(
         results, dist, effective_number_of_targets=args.effective_number_of_targets
@@ -188,7 +164,6 @@ def _run_compare(args):
         args,
         sequences,
         background,
-        (args.query_type, args.target_type),
     )[0]
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     return 0
@@ -216,7 +191,6 @@ def _run_compare_many(args):
         args,
         sequences,
         background,
-        (args.query_type, args.target_type),
     )
     print(json.dumps([result.to_dict() for result in results], indent=2, sort_keys=True))
     return 0
@@ -251,7 +225,6 @@ def _run_build_null(args):
         "output": args.output,
         "n_models": len(models),
         "n_null": dist.n_null,
-        "model_type": dist.model_type,
         "shuffle": True,
         "seed": dist.seed,
         "metric": dist.metric,

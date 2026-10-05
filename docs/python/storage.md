@@ -35,10 +35,9 @@ null_bundle/
 
 Raw scores are Float64 NPY data. Pair indices are stored in manifest-label
 index order and validated against the label table on read. The manifest stores
-the metric (`jaccard`), model family, seed, sampling version, comparison
+the metric (`jaccard`), seed, sampling version, comparison
 contract (`search_range`, `min_logerr`, normalization and alignment versions),
-and payload checksums. Bundles written before format version 10 used other
-metrics and are rejected.
+and payload checksums. Bundles written before format version 11 are rejected.
 
 Use the I/O utilities from `mimosa.io`:
 

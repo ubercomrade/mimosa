@@ -61,7 +61,7 @@ uv run mimosa compare-many QUERY TARGET [TARGET ...] \
 `--numba-threads` is limited to 1 through 4. `TOTAL` must be positive and
 divisible by `NUMBA`; the derived joblib worker count is `TOTAL / NUMBA`.
 Results are emitted as an ordered JSON array. `--pvalue` annotates every result
-after validating the query and shared target types against the null bundle.
+after validating the comparison parameters against the null bundle.
 `--cache-dir` is optional; without it no cache directory or mmap reuse is
 created.
 
@@ -80,7 +80,8 @@ uses the first motif in each MEME file. `--background` supplies an optional
 separate normalization batch.
 `--num-samples`, `--seed`, `--search-range`, `--min-logerr`, and `--cache-dir`
 control construction. A null bundle only annotates comparisons that use the
-same sequences, background, `--search-range`, and `--min-logerr`. The summary is JSON on `stdout`.
+same sequences, background, `--search-range`, and `--min-logerr`; it is not
+tied to a model type. The summary is JSON on `stdout`.
 
 ## `cache clear`
 
