@@ -1,4 +1,4 @@
-"""Numba kernels: scanning, normalization, anchors, and alignment.
+"""Numba kernels: scanning, normalization, anchors, and weighted Jaccard.
 
 Primitive arguments only; never imports public API.
 """
@@ -6,7 +6,7 @@ Primitive arguments only; never imports public API.
 from __future__ import annotations
 
 import numpy as np
-from numba import get_thread_id, njit, prange
+from numba import njit, prange
 
 N_CODE = 4
 
@@ -185,6 +185,29 @@ def batch_rolling_reverse_parallel(weights, seq_data, seq_offsets, out_data, out
         rolling_scan_reverse(weights, seq_data[start:stop], kmer_size, n_terms, n_pos, out_data[out_offsets[row] : out_offsets[row + 1]])
 
 
+
+# ── Circular padding ─────────────────────────────────────────────────────────
+
+@njit(cache=True)
+def circular_pad_rows(seq_data, seq_offsets, left, right, out_data, out_offsets):
+    """Wrap every non-empty row so a linear scan yields one score per base."""
+    n_rows = seq_offsets.shape[0] - 1
+    cursor = 0
+    out_offsets[0] = 0
+    for row in range(n_rows):
+        start = seq_offsets[row]
+        length = seq_offsets[row + 1] - start
+        if length > 0:
+            source = (-left) % length
+            for _ in range(length + left + right):
+                out_data[cursor] = seq_data[start + source]
+                cursor += 1
+                source += 1
+                if source == length:
+                    source = 0
+        out_offsets[row + 1] = cursor
+
+
 # ── Profile normalization ────────────────────────────────────────────────────
 
 @njit(cache=True)
@@ -291,27 +314,6 @@ def fill_empirical_table_sorted(values, total_n, scores_out, log_tail_out):
 
 
 @njit(cache=True)
-def collect_best_anchors_csr(scores_data, scores_offsets, positions_out, anchor_offsets_out):
-    n_rows = scores_offsets.shape[0] - 1
-    count = 0
-    anchor_offsets_out[0] = 0
-    for row in range(n_rows):
-        start = scores_offsets[row]
-        stop = scores_offsets[row + 1]
-        if start != stop:
-            best_pos = start
-            best_score = scores_data[start]
-            for j in range(start + 1, stop):
-                if scores_data[j] > best_score:
-                    best_score = scores_data[j]
-                    best_pos = j
-            positions_out[count] = best_pos - start
-            count += 1
-        anchor_offsets_out[row + 1] = count
-    return count
-
-
-@njit(cache=True)
 def collect_threshold_anchors_csr(
     scores_data, scores_offsets, threshold, positions_out, anchor_offsets_out
 ):
@@ -346,356 +348,129 @@ def count_threshold_anchors_csr(
     return count
 
 
-# ── Alignment kernels ─────────────────────────────────────────────────────────
+# ── Weighted Jaccard kernels ─────────────────────────────────────────────────
 
 @njit(cache=True)
-def _window_fits(pos, length, radius):
-    return pos - radius >= 0 and pos + radius < length
-
-
-@njit(cache=True)
-def _realign_query_position(r, expected, radius):
-    length = r.shape[0]
-    left = expected - radius
-    if left < 0:
-        left = 0
-    right = expected + radius
-    if right >= length:
-        right = length - 1
-    if left > right:
-        return -1
-    best_pos = left
-    best_score = r[left]
-    for pos in range(left + 1, right + 1):
-        if r[pos] > best_score:
-            best_score = r[pos]
-            best_pos = pos
-    return best_pos
-
-
-@njit(cache=True)
-def _accumulate_overlap(r1, r2, pos1, shift, window_radius, use_dice):
-    pos2 = pos1 + shift
-    sum1 = 0.0
-    sum2 = 0.0
-    intersection = 0.0
-    for offset in range(-window_radius, window_radius + 1):
-        v1 = r1[pos1 + offset]
-        v2 = r2[pos2 + offset]
-        sum1 += v1
-        sum2 += v2
-        if v1 < v2:
-            intersection += v1
-        else:
-            intersection += v2
-    denom = sum1 + sum2 if use_dice else (sum1 if sum1 < sum2 else sum2)
-    if denom > 1e-6:
-        return (2.0 * intersection / denom if use_dice else intersection / denom), 1
-    return 0.0, 0
-
-
-@njit(cache=True)
-def _accumulate_cosine(r1, r2, pos1, shift, window_radius):
-    pos2 = pos1 + shift
-    dot = 0.0
-    norm1 = 0.0
-    norm2 = 0.0
-    for offset in range(-window_radius, window_radius + 1):
-        v1 = r1[pos1 + offset]
-        v2 = r2[pos2 + offset]
-        dot += v1 * v2
-        norm1 += v1 * v1
-        norm2 += v2 * v2
-    denom = np.sqrt(norm1) * np.sqrt(norm2)
-    if denom > 1e-6:
-        return dot / denom, 1
-    return 0.0, 0
-
-
-@njit(cache=True)
-def _score_row_csr(
-    scores1_data, scores1_offsets,
-    scores2_data, scores2_offsets,
-    query_positions, query_offsets,
-    target_positions, target_offsets,
-    query_site_start_offset, target_site_start_offset,
-    row, shift, window_radius, realign_window,
-    metric_kind, use_dice, seen, epoch,
+def _jaccard_row(
+    q_data, t_data, row_start, length,
+    q_pos, q_lo, q_hi,
+    t_pos, t_lo, t_hi,
+    shift, tau0,
 ):
-    len1 = scores1_offsets[row + 1] - scores1_offsets[row]
-    len2 = scores2_offsets[row + 1] - scores2_offsets[row]
-    r1_start = scores1_offsets[row]
-    r2_start = scores2_offsets[row]
-    r1 = scores1_data[r1_start : r1_start + len1]
-    r2 = scores2_data[r2_start : r2_start + len2]
-    scan_shift = shift + query_site_start_offset - target_site_start_offset
-    total_row_score = 0.0
-    total_finite = 0
-    total_sites = 0
+    """Sum min/max over one circular row where either profile reaches ``tau0``.
 
-    for idx in range(query_offsets[row], query_offsets[row + 1]):
-        pos1 = query_positions[idx] - query_site_start_offset
-        pos2 = pos1 + scan_shift
-        if _window_fits(pos1, len1, window_radius) and _window_fits(
-            pos2, len2, window_radius
-        ):
-            if seen[pos1] != epoch:
-                seen[pos1] = epoch
-                if metric_kind == 1:
-                    score, finite = _accumulate_cosine(
-                        r1, r2, pos1, scan_shift, window_radius
-                    )
-                else:
-                    score, finite = _accumulate_overlap(
-                        r1, r2, pos1, scan_shift, window_radius, use_dice
-                    )
-                total_row_score += score
-                total_finite += finite
-                total_sites += finite
-
-    for idx in range(target_offsets[row], target_offsets[row + 1]):
-        expected_pos1 = target_positions[idx] - shift - query_site_start_offset
-        pos1 = _realign_query_position(r1, expected_pos1, realign_window)
-        if pos1 < 0:
+    Query position ``i`` is paired with target position ``(i + shift) mod length``.
+    """
+    min_sum = 0.0
+    max_sum = 0.0
+    n = 0
+    if length <= 0:
+        return min_sum, max_sum, n
+    step = shift % length
+    for idx in range(q_lo, q_hi):
+        pos = q_pos[idx]
+        partner = pos + step
+        if partner >= length:
+            partner -= length
+        u = q_data[row_start + pos]
+        v = t_data[row_start + partner]
+        if u < v:
+            min_sum += u
+            max_sum += v
+        else:
+            min_sum += v
+            max_sum += u
+        n += 1
+    for idx in range(t_lo, t_hi):
+        pos = t_pos[idx]
+        partner = pos - step
+        if partner < 0:
+            partner += length
+        u = q_data[row_start + partner]
+        # Query anchors were already paired in the first pass.
+        if u >= tau0:
             continue
-        pos2 = pos1 + scan_shift
-        if _window_fits(pos1, len1, window_radius) and _window_fits(
-            pos2, len2, window_radius
-        ):
-            if seen[pos1] != epoch:
-                seen[pos1] = epoch
-                if metric_kind == 1:
-                    score, finite = _accumulate_cosine(
-                        r1, r2, pos1, scan_shift, window_radius
-                    )
-                else:
-                    score, finite = _accumulate_overlap(
-                        r1, r2, pos1, scan_shift, window_radius, use_dice
-                    )
-                total_row_score += score
-                total_finite += finite
-                total_sites += finite
-    return total_row_score, total_finite, total_sites
-
-
-@njit(cache=True)
-def _score_row_best(
-    scores1_data, scores1_offsets,
-    scores2_data, scores2_offsets,
-    query_positions, query_offsets,
-    target_positions, target_offsets,
-    query_site_start_offset, target_site_start_offset,
-    row, shift, window_radius, realign_window,
-    metric_kind, use_dice,
-):
-    len1 = scores1_offsets[row + 1] - scores1_offsets[row]
-    len2 = scores2_offsets[row + 1] - scores2_offsets[row]
-    r1_start = scores1_offsets[row]
-    r2_start = scores2_offsets[row]
-    r1 = scores1_data[r1_start : r1_start + len1]
-    r2 = scores2_data[r2_start : r2_start + len2]
-    scan_shift = shift + query_site_start_offset - target_site_start_offset
-    query_pos = -1
-    target_pos = -1
-
-    if query_offsets[row] < query_offsets[row + 1]:
-        candidate = query_positions[query_offsets[row]] - query_site_start_offset
-        if _window_fits(candidate, len1, window_radius) and _window_fits(
-            candidate + scan_shift, len2, window_radius
-        ):
-            query_pos = candidate
-
-    if target_offsets[row] < target_offsets[row + 1]:
-        expected = target_positions[target_offsets[row]] - shift - query_site_start_offset
-        candidate = _realign_query_position(r1, expected, realign_window)
-        if candidate >= 0 and _window_fits(
-            candidate, len1, window_radius
-        ) and _window_fits(candidate + scan_shift, len2, window_radius):
-            target_pos = candidate
-
-    total_row_score = 0.0
-    total_finite = 0
-    total_sites = 0
-    if query_pos >= 0:
-        if metric_kind == 1:
-            score, finite = _accumulate_cosine(
-                r1, r2, query_pos, scan_shift, window_radius
-            )
+        v = t_data[row_start + pos]
+        if u < v:
+            min_sum += u
+            max_sum += v
         else:
-            score, finite = _accumulate_overlap(
-                r1, r2, query_pos, scan_shift, window_radius, use_dice
-            )
-        total_row_score += score
-        total_finite += finite
-        total_sites += finite
-
-    if target_pos >= 0 and target_pos != query_pos:
-        if metric_kind == 1:
-            score, finite = _accumulate_cosine(
-                r1, r2, target_pos, scan_shift, window_radius
-            )
-        else:
-            score, finite = _accumulate_overlap(
-                r1, r2, target_pos, scan_shift, window_radius, use_dice
-            )
-        total_row_score += score
-        total_finite += finite
-        total_sites += finite
-    return total_row_score, total_finite, total_sites
+            min_sum += v
+            max_sum += u
+        n += 1
+    return min_sum, max_sum, n
 
 
 @njit(cache=True)
-def _score_shift_csr(
-    scores1_data, scores1_offsets,
-    scores2_data, scores2_offsets,
-    query_positions, query_offsets,
-    target_positions, target_offsets,
-    query_site_start_offset, target_site_start_offset,
-    shift, window_radius, realign_window,
-    metric_kind,  # 0=rowwise, 1=cosine
-    use_dice, seen,
-    epoch_base,
-    out_score, out_sites,
+def _jaccard_orientation(
+    q_data, t_data, offsets,
+    q_pos, q_offsets,
+    t_pos, t_offsets,
+    search_range, tau0,
+    out_scores, out_sites,
 ):
-    total_row_score = 0.0
-    total_finite = 0
-    total_sites = 0
-    for row in range(scores1_offsets.shape[0] - 1):
-        row_score, row_finite, row_sites = _score_row_csr(
-            scores1_data, scores1_offsets,
-            scores2_data, scores2_offsets,
-            query_positions, query_offsets,
-            target_positions, target_offsets,
-            query_site_start_offset, target_site_start_offset,
-            row, shift, window_radius, realign_window,
-            metric_kind, use_dice, seen, epoch_base + row + 1,
-        )
-        total_row_score += row_score
-        total_finite += row_finite
-        total_sites += row_sites
-    out_score[0] = 0.0 if total_sites == 0 or total_finite == 0 else total_row_score / total_finite
-    out_sites[0] = total_sites
-
-
-@njit(parallel=True, cache=True)
-def _score_orientation_csr_parallel(
-    scores1_data, scores1_offsets,
-    scores2_data, scores2_offsets,
-    query_positions, query_offsets,
-    target_positions, target_offsets,
-    query_site_start_offset, target_site_start_offset,
-    search_range, window_radius, realign_window,
-    metric_kind, use_dice, seen,
-    row_scores, row_finite, row_sites, out_scores, out_sites,
-):
-    n_rows = scores1_offsets.shape[0] - 1
-    n_shifts = 2 * search_range + 1
-    for row in prange(n_rows):
-        thread = get_thread_id()
-        for shift_index in range(n_shifts):
-            shift = shift_index - search_range
-            score, finite, sites = _score_row_csr(
-                scores1_data, scores1_offsets,
-                scores2_data, scores2_offsets,
-                query_positions, query_offsets,
-                target_positions, target_offsets,
-                query_site_start_offset, target_site_start_offset,
-                row, shift, window_radius, realign_window,
-                metric_kind, use_dice, seen[thread], shift_index * n_rows + row + 1,
-            )
-            row_scores[row, shift_index] = score
-            row_finite[row, shift_index] = finite
-            row_sites[row, shift_index] = sites
-
-    for shift_index in range(n_shifts):
-        total_row_score = 0.0
-        total_finite = 0
-        total_sites = 0
-        for row in range(n_rows):
-            total_row_score += row_scores[row, shift_index]
-            total_finite += row_finite[row, shift_index]
-            total_sites += row_sites[row, shift_index]
-        out_scores[shift_index] = (
-            0.0
-            if total_sites == 0 or total_finite == 0
-            else total_row_score / total_finite
-        )
-        out_sites[shift_index] = total_sites
-
-
-@njit(cache=True)
-def _score_shift_best(
-    scores1_data, scores1_offsets,
-    scores2_data, scores2_offsets,
-    query_positions, query_offsets,
-    target_positions, target_offsets,
-    query_site_start_offset, target_site_start_offset,
-    shift, window_radius, realign_window,
-    metric_kind, use_dice,
-    out_score, out_sites,
-):
-    n_rows = scores1_offsets.shape[0] - 1
-    total_row_score = 0.0
-    total_finite = 0
-    total_sites = 0
-
+    n_rows = offsets.shape[0] - 1
+    n_shifts = out_scores.shape[0]
+    min_sums = np.zeros(n_shifts, dtype=np.float64)
+    max_sums = np.zeros(n_shifts, dtype=np.float64)
+    out_sites[:] = 0
     for row in range(n_rows):
-        row_score, row_finite, row_sites = _score_row_best(
-            scores1_data, scores1_offsets,
-            scores2_data, scores2_offsets,
-            query_positions, query_offsets,
-            target_positions, target_offsets,
-            query_site_start_offset, target_site_start_offset,
-            row, shift, window_radius, realign_window,
-            metric_kind, use_dice,
-        )
-        total_row_score += row_score
-        total_finite += row_finite
-        total_sites += row_sites
-    out_score[0] = 0.0 if total_sites == 0 or total_finite == 0 else total_row_score / total_finite
-    out_sites[0] = total_sites
+        # Most rows hold no anchor of either profile at the usual thresholds.
+        if q_offsets[row] == q_offsets[row + 1] and t_offsets[row] == t_offsets[row + 1]:
+            continue
+        for shift_index in range(n_shifts):
+            min_sum, max_sum, sites = _jaccard_row(
+                q_data, t_data, offsets[row], offsets[row + 1] - offsets[row],
+                q_pos, q_offsets[row], q_offsets[row + 1],
+                t_pos, t_offsets[row], t_offsets[row + 1],
+                shift_index - search_range, tau0,
+            )
+            min_sums[shift_index] += min_sum
+            max_sums[shift_index] += max_sum
+            out_sites[shift_index] += sites
+    for shift_index in range(n_shifts):
+        max_sum = max_sums[shift_index]
+        out_scores[shift_index] = min_sums[shift_index] / max_sum if max_sum > 0.0 else 0.0
 
 
 @njit(parallel=True, cache=True)
-def _score_orientation_best_parallel(
-    scores1_data, scores1_offsets,
-    scores2_data, scores2_offsets,
-    query_positions, query_offsets,
-    target_positions, target_offsets,
-    query_site_start_offset, target_site_start_offset,
-    search_range, window_radius, realign_window,
-    metric_kind, use_dice,
-    row_scores, row_finite, row_sites, out_scores, out_sites,
+def _jaccard_orientation_parallel(
+    q_data, t_data, offsets,
+    q_pos, q_offsets,
+    t_pos, t_offsets,
+    search_range, tau0,
+    row_min, row_max, row_sites,
+    out_scores, out_sites,
 ):
-    n_rows = scores1_offsets.shape[0] - 1
-    n_shifts = 2 * search_range + 1
+    n_rows = offsets.shape[0] - 1
+    n_shifts = out_scores.shape[0]
     for row in prange(n_rows):
+        if q_offsets[row] == q_offsets[row + 1] and t_offsets[row] == t_offsets[row + 1]:
+            for shift_index in range(n_shifts):
+                row_min[row, shift_index] = 0.0
+                row_max[row, shift_index] = 0.0
+                row_sites[row, shift_index] = 0
+            continue
         for shift_index in range(n_shifts):
-            shift = shift_index - search_range
-            score, finite, sites = _score_row_best(
-                scores1_data, scores1_offsets,
-                scores2_data, scores2_offsets,
-                query_positions, query_offsets,
-                target_positions, target_offsets,
-                query_site_start_offset, target_site_start_offset,
-                row, shift, window_radius, realign_window,
-                metric_kind, use_dice,
+            min_sum, max_sum, sites = _jaccard_row(
+                q_data, t_data, offsets[row], offsets[row + 1] - offsets[row],
+                q_pos, q_offsets[row], q_offsets[row + 1],
+                t_pos, t_offsets[row], t_offsets[row + 1],
+                shift_index - search_range, tau0,
             )
-            row_scores[row, shift_index] = score
-            row_finite[row, shift_index] = finite
+            row_min[row, shift_index] = min_sum
+            row_max[row, shift_index] = max_sum
             row_sites[row, shift_index] = sites
 
+    # Rows are reduced in order, exactly as the serial kernel accumulates them,
+    # so both kernels agree bit for bit regardless of the thread count.
     for shift_index in range(n_shifts):
-        total_row_score = 0.0
-        total_finite = 0
-        total_sites = 0
+        min_sum = 0.0
+        max_sum = 0.0
+        sites = 0
         for row in range(n_rows):
-            total_row_score += row_scores[row, shift_index]
-            total_finite += row_finite[row, shift_index]
-            total_sites += row_sites[row, shift_index]
-        out_scores[shift_index] = (
-            0.0
-            if total_sites == 0 or total_finite == 0
-            else total_row_score / total_finite
-        )
-        out_sites[shift_index] = total_sites
+            min_sum += row_min[row, shift_index]
+            max_sum += row_max[row, shift_index]
+            sites += row_sites[row, shift_index]
+        out_scores[shift_index] = min_sum / max_sum if max_sum > 0.0 else 0.0
+        out_sites[shift_index] = sites

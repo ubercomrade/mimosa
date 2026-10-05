@@ -57,7 +57,7 @@ def _arguments():
     )
     parser.add_argument(
         "--thresholds",
-        help="comma-separated min-logerr values; for example 0,1e-6,1,2,4",
+        help="comma-separated positive min-logerr values; for example 1,2,4",
     )
     parser.add_argument(
         "--phase-timings",
@@ -74,7 +74,7 @@ def _arguments():
         ),
         help=argparse.SUPPRESS,
     )
-    parser.add_argument("--min-logerr", type=float, default=2.0)
+    parser.add_argument("--min-logerr", type=float, default=4.0)
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
 
@@ -95,9 +95,9 @@ def _threshold_values(value, default):
     try:
         values = [float(item) for item in value.split(",") if item]
     except ValueError as exc:
-        raise SystemExit("thresholds must be comma-separated finite numbers") from exc
-    if not values or any(not math.isfinite(item) for item in values):
-        raise SystemExit("thresholds must be comma-separated finite numbers")
+        raise SystemExit("thresholds must be comma-separated positive numbers") from exc
+    if not values or any(not math.isfinite(item) or item <= 0 for item in values):
+        raise SystemExit("thresholds must be comma-separated positive numbers")
     return values
 
 
@@ -332,9 +332,13 @@ def _measure_prepared(models, targets, sequences, background, total_threads, inn
     from mimosa import compare_many, prepare_profile
 
     set_num_threads(inner_threads)
-    query = prepare_profile(models[0], sequences, background=background, min_logerr=threshold)
+    query = prepare_profile(
+        models[0], sequences, background=background, min_logerr=threshold, circular=True
+    )
     prepared_targets = [
-        prepare_profile(target, sequences, background=background, min_logerr=threshold)
+        prepare_profile(
+            target, sequences, background=background, min_logerr=threshold, circular=True
+        )
         for target in targets
     ]
     compare_many(
@@ -363,12 +367,14 @@ def _measure_prepared(models, targets, sequences, background, total_threads, inn
 
 def _phase_timings(models, targets, sequences, background, total_threads, inner_threads, threshold, cache_path):
     """Time isolated production primitives without changing the normal pipeline."""
-    from mimosa import compare_many, prepare_profile, scan
+    from mimosa import compare_many, prepare_profile
     from mimosa.cache import Cache, _cached_mmap_prepared_profile, _store_normalized_profile, prepared_profile_cache_key
     from mimosa.io.bundles import model_fingerprint, sequence_fingerprint
     from mimosa.profiles.anchors import collect_both_anchors
     from mimosa.profiles.normalization import HybridEmpiricalLogTail, _fit_exact, normalize_bundle
     from mimosa.parallel import alignment_scratch_bytes
+    from mimosa.profiles.alignment import ProfileConfig
+    from mimosa.scan import _scan_batch_into
 
     timings = {}
 
@@ -381,7 +387,7 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
     )
 
     started = time.perf_counter()
-    raw = scan(models[0], sequences, strands="both")
+    raw = _scan_batch_into(models[0], sequences, "both", circular=True)
     timings["scan"] = time.perf_counter() - started
 
     started = time.perf_counter()
@@ -390,7 +396,7 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
     timings["normalize"] = time.perf_counter() - started
 
     started = time.perf_counter()
-    collect_both_anchors(normalized, threshold, position_offset=models[0].left_context)
+    collect_both_anchors(normalized, threshold)
     timings["anchors"] = time.perf_counter() - started
 
     started = time.perf_counter()
@@ -401,10 +407,10 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
     timings["fingerprint"] = time.perf_counter() - started
 
     prepared_query = prepare_profile(
-        models[0], sequences, background=background, min_logerr=threshold
+        models[0], sequences, background=background, min_logerr=threshold, circular=True
     )
     key = prepared_profile_cache_key(
-        models[0], sequences, background=background, min_logerr=threshold
+        models[0], sequences, background=background, min_logerr=threshold, circular=True
     )
     cache = Cache(cache_path, timings=timings)
     _store_normalized_profile(
@@ -414,6 +420,7 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
         prepared_query.bundle,
         prepared_query.normalization,
         prepared_query.site_start_offset,
+        prepared_query.circular,
     )
 
     hit_timings = {}
@@ -422,11 +429,13 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
     timings.update(hit_timings)
 
     prepared_targets = [
-        prepare_profile(target, sequences, background=background, min_logerr=threshold)
+        prepare_profile(
+            target, sequences, background=background, min_logerr=threshold, circular=True
+        )
         for target in targets
     ]
     timings["alignment_parallel_scratch_bytes"] = alignment_scratch_bytes(
-        len(prepared_query.bundle.forward), 2 * 10 + 1
+        len(prepared_query.bundle.forward), 2 * ProfileConfig().search_range + 1
     )
     started = time.perf_counter()
     results = compare_many(

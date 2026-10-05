@@ -34,13 +34,21 @@ Mimosa uses the following profile comparison pipeline:
 2. Convert raw scores to exact empirical `-log10(ERR)` values, where ERR is the
    expectation recognition rate, optionally using a separate background sequence
    set for calibration. These values do not depend on `min_logerr`.
-3. Select one strict best anchor per non-empty sequence when `min_logerr <= 0`,
-   or all anchors with `-log10(ERR) >= min_logerr` for a positive threshold.
-4. Compare site-centered windows over shifts and the four strand orientations.
+3. Keep the positions where either model reaches `-log10(ERR) >= min_logerr`
+   (default `4.0`).
+4. Score the weighted Jaccard similarity, `sum(min) / sum(max)` over those
+   positions, for circular shifts and the four strand orientations.
 5. Return the highest-scoring alignment, its offset, orientation, and number of
    contributing sites.
 
-See [Method and Statistics](docs/python/method.md) for metric definitions,
+Sequences are treated as circular, so every model yields one value per base
+and strand in a shared coordinate system. The default threshold is tuned for
+about `10^6` positions per strand, which is what the CLI generates when no
+FASTA is given (10 000 uniform random sequences of 100 bp). Mimosa warns when
+a batch is too small for the threshold; lower `min_logerr` in that case, as the
+examples below do for the small bundled FASTA.
+
+See [Method and Statistics](docs/python/method.md) for the metric definition,
 statistical significance, and references.
 
 ## Supported Models
@@ -71,23 +79,30 @@ uv sync --locked --group dev
 
 ## CLI
 
-Compare two PWM models on a FASTA batch:
+Compare two PWM models on generated sequences with the default settings:
+
+```bash
+mimosa compare examples/foxa2.meme examples/gata2.meme \
+  --query-type pwm --target-type pwm
+```
+
+Compare them on a FASTA batch:
 
 ```bash
 mimosa compare examples/foxa2.meme examples/gata2.meme \
   --query-type pwm --target-type pwm \
-  --fasta examples/foreground.fa --metric co
+  --fasta examples/foreground.fa --min-logerr 2
 ```
 
 Compare precomputed score profiles:
 
 ```bash
 mimosa compare examples/scores_1.fasta examples/scores_2.fasta \
-  --query-type scores --target-type scores --metric cosine
+  --query-type scores --target-type scores --min-logerr 2
 
 mimosa compare-many examples/foxa2.meme examples/gata2.meme examples/gata4.meme \
   --query-type pwm --target-type pwm --fasta examples/foreground.fa \
-  --total-threads 4 --numba-threads 1
+  --min-logerr 2 --total-threads 4 --numba-threads 1
 ```
 
 Build and use an empirical null distribution:
@@ -96,11 +111,12 @@ Build and use an empirical null distribution:
 mimosa build-null examples/ \
   --output output/null_bundle \
   --fasta examples/foreground.fa --background examples/background.fa \
-  --num-samples 2000 --seed 127
+  --min-logerr 2 --num-samples 2000 --seed 127
 
 mimosa compare examples/foxa2.meme examples/gata2.meme \
   --query-type pwm --target-type pwm \
-  --fasta examples/foreground.fa \
+  --fasta examples/foreground.fa --background examples/background.fa \
+  --min-logerr 2 \
   --pvalue --null-distribution output/null_bundle
 ```
 
@@ -126,7 +142,7 @@ query = read_model("examples/foxa2.meme")
 target = read_model("examples/gata2.meme")
 sequences, names = read_fasta("examples/foreground.fa")
 
-result = compare(query, target, sequences, metric="co")
+result = compare(query, target, sequences, min_logerr=2.0)
 print(result.to_dict())
 ```
 
@@ -135,9 +151,13 @@ For repeated comparisons, prepare the query once:
 ```python
 from mimosa import compare_many, prepare_profile
 
-prepared = prepare_profile(query, sequences)
-results = compare_many(prepared, [target], sequences, metric="cosine")
+prepared = prepare_profile(query, sequences, min_logerr=2.0, circular=True)
+results = compare_many(prepared, [target], sequences)
 ```
+
+Comparison only accepts profiles prepared with `circular=True`; the default
+`circular=False` keeps the linear scan layout for other uses of
+`prepare_profile`.
 
 `compare_many` derives at most `joblib_workers = total_threads / inner_threads`,
 capped by the number of targets.
@@ -188,7 +208,7 @@ comparisons.
 When projected temporary cache storage is unavailable, the report records that
 configuration as `resource_limited` and continues; pass
 `--allow-resource-overcommit` only when the host has enough reserved capacity.
-Use `--coverage --skewed-rows --thresholds 0,1e-6,1,2,4` for the optional
+Use `--coverage --skewed-rows --thresholds 1,2,4` for the optional
 heterogeneous suite (PWM, BaMM, SiteGA, a larger background, ragged rows, and
 anchor-density regimes).
 

@@ -35,8 +35,10 @@ null_bundle/
 
 Raw scores are Float64 NPY data. Pair indices are stored in manifest-label
 index order and validated against the label table on read. The manifest stores
-the metric, model family, seed, sampling version, comparison contract, and
-payload checksums.
+the metric (`jaccard`), model family, seed, sampling version, comparison
+contract (`search_range`, `min_logerr`, normalization and alignment versions),
+and payload checksums. Bundles written before format version 10 used other
+metrics and are rejected.
 
 Use the I/O utilities from `mimosa.io`:
 
@@ -76,7 +78,9 @@ full payload in Python memory. The benchmark's `--phase-timings` mode reports
 cache encode, lock wait, write, checksum, and semantic-validation timings.
 
 Cache keys include the model or score-profile fingerprint, sequence and
-background fingerprints, normalization settings, and algorithm versions.
+background fingerprints, normalization settings, the linear or circular layout,
+and algorithm versions. Linear and circular profiles of the same model are
+separate entries.
 Changing `min_logerr` reuses the same normalized scores and rebuilds only the
 anchors. A change to any score-affecting input creates a cache miss. Clear
 entries with:

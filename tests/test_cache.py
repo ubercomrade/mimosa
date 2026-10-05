@@ -151,10 +151,57 @@ class TestPreparedProfileCache:
         k2 = prepared_profile_cache_key(m2, batch)
         assert k1 != k2
 
-    def test_key_is_shared_across_min_logerr(self, pwm, batch):
-        k1 = prepared_profile_cache_key(pwm, batch, min_logerr=0.0)
-        k2 = prepared_profile_cache_key(pwm, batch, min_logerr=2.0)
-        assert k1 == k2
+    def test_key_separates_linear_and_circular_profiles(self, pwm, batch):
+        linear = prepared_profile_cache_key(pwm, batch)
+        circular = prepared_profile_cache_key(pwm, batch, circular=True)
+        assert linear == prepared_profile_cache_key(pwm, batch, circular=False)
+        assert linear != circular
+
+    def test_linear_and_circular_profiles_do_not_mix(self, pwm, batch, tmp_path):
+        cache = Cache(str(tmp_path))
+        linear = prepare_profile(pwm, batch, min_logerr=2.0, cache=cache)
+        circular = prepare_profile(
+            pwm, batch, min_logerr=2.0, cache=cache, circular=True
+        )
+        assert len([path for path in tmp_path.iterdir() if path.is_dir()]) == 2
+
+        fresh = Cache(str(tmp_path))
+        linear_hit = prepare_profile(pwm, batch, min_logerr=2.0, cache=fresh)
+        circular_hit = prepare_profile(
+            pwm, batch, min_logerr=2.0, cache=fresh, circular=True
+        )
+        assert linear_hit == linear and not linear_hit.circular
+        assert circular_hit == circular and circular_hit.circular
+        assert linear_hit.bundle.forward.data.base is not None
+        assert circular_hit.bundle.forward.data.base is not None
+        assert circular_hit.bundle.forward.data.size == batch.data.size
+        assert linear_hit.bundle.forward.data.size < batch.data.size
+
+    def test_circular_flag_is_stored_and_checked_in_metadata(
+        self, pwm, batch, tmp_path
+    ):
+        cache = Cache(str(tmp_path))
+        expected = prepare_profile(pwm, batch, cache=cache, circular=True)
+        key = prepared_profile_cache_key(pwm, batch, circular=True)
+        meta_path = tmp_path / key / "meta.toml"
+        assert tomllib.loads(meta_path.read_text())["circular"] is True
+
+        # A mislabelled entry must be recomputed, not served as circular.
+        meta = meta_path.read_text().replace("circular = true", "circular = false")
+        meta_path.write_text(meta)
+        loaded = prepare_profile(pwm, batch, cache=Cache(str(tmp_path)), circular=True)
+        assert loaded == expected
+        assert loaded.circular
+
+    def test_compare_caches_circular_profiles(self, pwm, batch, tmp_path):
+        from mimosa import compare
+
+        cache = Cache(str(tmp_path))
+        expected = compare(pwm, pwm, batch, min_logerr=2.0)
+        assert compare(pwm, pwm, batch, min_logerr=2.0, cache=cache) == expected
+        key = prepared_profile_cache_key(pwm, batch, circular=True)
+        assert [path.name for path in tmp_path.iterdir() if path.is_dir()] == [key]
+        assert compare(pwm, pwm, batch, min_logerr=2.0, cache=Cache(str(tmp_path))) == expected
 
     def test_prepare_reuses_exact_scores_across_min_logerr(
         self, pwm, batch, tmp_path

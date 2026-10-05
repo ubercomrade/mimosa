@@ -13,9 +13,10 @@ from ._kernels import (
     batch_scan_forward_parallel,
     batch_scan_reverse,
     batch_scan_reverse_parallel,
+    circular_pad_rows,
 )
 from .arrays import EncodedSequences, RaggedArray, StrandPair
-from .errors import ModelFormatError, ModelInterfaceError
+from .errors import InvariantError, ModelFormatError, ModelInterfaceError
 from .models import (
     BaMM,
     Dimont,
@@ -24,6 +25,8 @@ from .models import (
     Slim,
     _validate_model_contract,
     n_positions,
+    site_start_offset,
+    window_size,
 )
 from .parallel import use_parallel
 
@@ -61,9 +64,26 @@ def _validate_custom_scan_output(forward, reverse, model):
         )
 
 
-def _scan_batch_into(model, batch, strands):
+def _circularize(batch, model):
+    """Wrap each sequence so scan index ``i`` is the site starting at base ``i``."""
+    left = site_start_offset(model)
+    right = window_size(model) - left - 1
+    lengths = np.diff(batch.offsets)
+    total = int(lengths.sum() + np.count_nonzero(lengths) * (left + right))
+    data = np.empty(total, dtype=batch.data.dtype)
+    offsets = np.empty(len(batch) + 1, dtype=np.int64)
+    circular_pad_rows(batch.data, batch.offsets, left, right, data, offsets)
+    return EncodedSequences(data, offsets)
+
+
+def _scan_batch_into(model, batch, strands, circular=False):
     _validate_model_contract(model)
+    if circular:
+        sequence_offsets = batch.offsets
+        batch = _circularize(batch, model)
     offsets = _scan_offsets(batch, model)
+    if circular and not np.array_equal(offsets, sequence_offsets):
+        raise InvariantError("circular scan must yield one score per sequence base.")
     parallel = use_parallel(int(offsets[-1]), rows=len(batch))
     sfwd = batch_scan_forward_parallel if parallel else batch_scan_forward
     srev = batch_scan_reverse_parallel if parallel else batch_scan_reverse

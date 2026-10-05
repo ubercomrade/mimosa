@@ -9,7 +9,7 @@ score profiles they produce on the same sequences.
 - [API](api.md) - public objects, functions, and result types.
 - [CLI](cli.md) - commands, options, output, and exit behavior.
 - [Models and formats](models.md) - built-in models and readers.
-- [Method and statistics](method.md) - normalization, alignment, metrics, and nulls.
+- [Method and statistics](method.md) - normalization, circular alignment, weighted Jaccard similarity, and nulls.
 - [Custom models](extending.md) - integrate a model through `MotifModel`.
 - [Storage and cache](storage.md) - portable bundles and prepared-profile cache.
 - [Data layout](data_layout.md) - encoding, ragged arrays, geometry, and coordinates.

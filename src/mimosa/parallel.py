@@ -25,15 +25,9 @@ def alignment_scratch_bytes(rows, shifts):
     return 24 * rows * shifts
 
 
-def use_alignment_parallel(
-    items, *, rows, shifts, window_radius, anchor_count
-):
+def use_alignment_parallel(items, *, rows, shifts, anchor_count):
     """Choose row-parallel alignment from work shape, not score count alone."""
     if not use_parallel(items, rows=rows):
         return False
-    window_width = 2 * window_radius + 1
-    # Best-anchor mode has about one anchor per populated row; threshold mode
-    # can be denser. This estimates the actual window comparisons scheduled.
-    effective_anchors = max(rows, anchor_count)
-    operations = effective_anchors * shifts * window_width
-    return operations >= MIN_PARALLEL_ALIGNMENT_OPERATIONS
+    # Every shift visits each query and target anchor once.
+    return anchor_count * shifts >= MIN_PARALLEL_ALIGNMENT_OPERATIONS

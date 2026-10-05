@@ -19,7 +19,6 @@ from .io.readers import read_model
 from .models import PWM, BaMM, Dimont, SiteGA, Slim
 from .profiles.prepared import ScoreProfile
 
-PROFILE_METRICS = ["co", "dice", "cosine"]
 MODEL_TYPE_MAP = {
     "pwm": PWM,
     "bamm": BaMM,
@@ -95,7 +94,7 @@ def _resolve_sequences(fasta_path, num_sequences, seq_length, seed):
     )
 
 
-def _validate_null_compatibility(dist, *, metric, sequences, background, search_range, window_radius, realign_window, min_logerr, model_types):
+def _validate_null_compatibility(dist, *, sequences, background, search_range, min_logerr, model_types):
     from .io.bundles import sequence_fingerprint
     from .statistics import ALIGNMENT_VERSION
 
@@ -103,10 +102,7 @@ def _validate_null_compatibility(dist, *, metric, sequences, background, search_
     expected_background = "none" if background is None else sequence_fingerprint(background)
     checks = [
         (dist.strategy, "profile", "null distribution strategy is incompatible with profile comparison."),
-        (dist.metric, metric, f"null distribution metric '{dist.metric}' is incompatible with requested metric '{metric}'."),
         (dist.contract["search_range"], search_range, "null distribution search range is incompatible with this comparison."),
-        (dist.contract["window_radius"], window_radius, "null distribution window radius is incompatible with this comparison."),
-        (dist.contract["realign_window"], realign_window, "null distribution realignment window is incompatible with this comparison."),
         (dist.contract["min_logerr"], np.float32(min_logerr), "null distribution minimum log-ERR is incompatible with this comparison."),
         (dist.sequence_fingerprint, expected_sequences, "null distribution sequence fingerprint is incompatible with this comparison."),
         (dist.background_fingerprint, expected_background, "null distribution background fingerprint is incompatible with this comparison."),
@@ -161,12 +157,9 @@ def _annotate_comparison_results(results, args, sequences, background, model_typ
         raise MimosaError("null distribution normalization is incompatible with this comparison.")
     _validate_null_compatibility(
         dist,
-        metric=args.metric,
         sequences=sequences,
         background=background,
         search_range=args.search_range,
-        window_radius=args.window_radius,
-        realign_window=args.realign_window,
         min_logerr=args.min_logerr,
         model_types=model_types,
     )
@@ -185,10 +178,7 @@ def _run_compare(args):
         query,
         targets[0],
         sequences,
-        metric=args.metric,
         search_range=args.search_range,
-        window_radius=args.window_radius,
-        realign_window=args.realign_window,
         min_logerr=args.min_logerr,
         background=background,
         cache=cache,
@@ -214,10 +204,7 @@ def _run_compare_many(args):
         query,
         targets,
         sequences,
-        metric=args.metric,
         search_range=args.search_range,
-        window_radius=args.window_radius,
-        realign_window=args.realign_window,
         min_logerr=args.min_logerr,
         background=background,
         cache=cache,
@@ -253,12 +240,9 @@ def _run_build_null(args):
         models,
         sequences=sequences,
         background=background,
-        metric=args.metric,
         n_samples=args.num_samples,
         seed=args.seed,
         search_range=args.search_range,
-        window_radius=args.window_radius,
-        realign_window=args.realign_window,
         min_logerr=args.min_logerr,
         cache=cache,
     )
@@ -313,22 +297,19 @@ def build_parser():
         p.add_argument(
             "--numba-threads", type=int, choices=range(1, 5), default=1
         )
-        p.add_argument("--metric", default="co", choices=PROFILE_METRICS)
-        p.add_argument("--search-range", type=int, default=10)
-        p.add_argument("--window-radius", type=int, default=10)
-        p.add_argument("--realign-window", type=int, default=3)
-        p.add_argument("--min-logerr", type=float, default=0.0)
+        p.add_argument("--search-range", type=int, default=5)
+        p.add_argument("--min-logerr", type=float, default=4.0)
         p.add_argument("--fasta")
         p.add_argument("--background")
         p.add_argument(
             "--num-sequences",
             type=_bounded_positive_integer("num-sequences", MAX_GENERATED_SEQUENCES),
-            default=1000,
+            default=10_000,
         )
         p.add_argument(
             "--seq-length",
             type=_bounded_positive_integer("seq-length", MAX_GENERATED_SEQUENCE_LENGTH),
-            default=200,
+            default=100,
         )
         p.add_argument("--seed", type=int, default=127)
         p.add_argument("--background-freq", type=float, default=0.25)
@@ -346,18 +327,17 @@ def build_parser():
     p = sub.add_parser("build-null", help="build a null distribution from motif comparisons")
     p.add_argument("motifs", help="motif collection path")
     p.add_argument("--output", required=True)
-    p.add_argument("--metric", default="co", choices=PROFILE_METRICS)
     p.add_argument("--fasta")
     p.add_argument("--background")
     p.add_argument(
         "--num-sequences",
         type=_bounded_positive_integer("num-sequences", MAX_GENERATED_SEQUENCES),
-        default=1000,
+        default=10_000,
     )
     p.add_argument(
         "--seq-length",
         type=_bounded_positive_integer("seq-length", MAX_GENERATED_SEQUENCE_LENGTH),
-        default=200,
+        default=100,
     )
     p.add_argument("--seed", type=int, default=127)
     p.add_argument(
@@ -365,10 +345,8 @@ def build_parser():
         type=_bounded_positive_integer("num-samples", 1_000_000),
         default=2000,
     )
-    p.add_argument("--search-range", type=int, default=10)
-    p.add_argument("--window-radius", type=int, default=10)
-    p.add_argument("--realign-window", type=int, default=3)
-    p.add_argument("--min-logerr", type=float, default=0.0)
+    p.add_argument("--search-range", type=int, default=5)
+    p.add_argument("--min-logerr", type=float, default=4.0)
     p.add_argument("--cache-dir")
 
     p = sub.add_parser("cache", help="manage the disk cache")

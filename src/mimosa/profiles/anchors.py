@@ -1,14 +1,27 @@
-"""Anchor CSR collection: best-per-row or threshold-based."""
+"""Anchor CSR collection: positions with logERR at or above a threshold."""
 
 from __future__ import annotations
 
 import numpy as np
 
 from .._kernels import (
-    collect_best_anchors_csr,
     collect_threshold_anchors_csr,
     count_threshold_anchors_csr,
 )
+
+DEFAULT_MIN_LOGERR = 4.0
+
+
+def parse_min_logerr(value):
+    """Return a finite, positive Float32 logERR threshold."""
+    try:
+        with np.errstate(over="ignore", invalid="ignore"):
+            threshold = np.float32(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("min_logerr must be a finite, positive Float32 value.") from exc
+    if not np.isfinite(threshold) or threshold <= 0:
+        raise ValueError("min_logerr must be a finite, positive Float32 value.")
+    return threshold
 
 
 class AnchorCSR:
@@ -54,26 +67,15 @@ def collect_anchor_csr(scores, threshold, *, position_offset=0):
     position_dtype = (
         np.int32 if max_position <= np.iinfo(np.int32).max else np.int64
     )
+    threshold = parse_min_logerr(threshold)
     offsets = np.empty(n + 1, dtype=np.int64)
-    if threshold > 0.0:
-        count = count_threshold_anchors_csr(
-            scores.data,
-            scores.offsets,
-            np.float32(threshold),
-            offsets,
-        )
-        positions = np.empty(count, dtype=position_dtype)
-        collect_threshold_anchors_csr(
-            scores.data,
-            scores.offsets,
-            np.float32(threshold),
-            positions,
-            offsets,
-        )
-    else:
-        positions = np.empty(n, dtype=position_dtype)
-        count = collect_best_anchors_csr(scores.data, scores.offsets, positions, offsets)
-        positions = positions[:count].copy()
+    count = count_threshold_anchors_csr(
+        scores.data, scores.offsets, threshold, offsets
+    )
+    positions = np.empty(count, dtype=position_dtype)
+    collect_threshold_anchors_csr(
+        scores.data, scores.offsets, threshold, positions, offsets
+    )
     if position_offset:
         positions += position_offset
     return AnchorCSR(positions, offsets)

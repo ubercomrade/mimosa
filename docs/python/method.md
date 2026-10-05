@@ -6,13 +6,20 @@ Mimosa compares models by their behavior on a shared sequence batch.
 
 1. Scan the sequences with both models to obtain forward and reverse score tracks.
 2. Normalize scores to empirical `-log10(ERR)` values. The comparison batch is the calibration batch unless `background=` is supplied.
-3. Select one strict best anchor per non-empty row when `min_logerr <= 0`, or every score above the threshold when it is positive.
-4. Align site-centered profile windows over the configured shifts and strand orientations.
+3. Collect every position whose value reaches `min_logerr`.
+4. Score the weighted Jaccard similarity for every circular shift and strand orientation.
 5. Select the best result and report its score, offset, orientation, and contributing site count.
 
-The four orientation labels are `++`, `+-`, `-+`, and `--`. Offset is the target
-physical site displacement relative to the query; positive values move the
-target right. Model scoring context does not affect this public coordinate.
+Comparison treats every sequence as circular. Each sequence of length `L`
+yields exactly `L` values per strand, and the value at index `i` belongs to the
+site whose first motif base is base `i`; higher-order models read their context
+from the ring. All models therefore share one coordinate system and no
+positions are lost at sequence ends.
+
+The four orientation labels are `++`, `+-`, `-+`, and `--`. Offset is the
+circular shift `s` that pairs query position `i` with target position
+`(i + s) mod L`; positive values move the target right. Model scoring context
+does not affect this public coordinate.
 Final ties are resolved by larger score, larger `n_sites`, smaller absolute
 offset, and orientation rank in the order listed above. Within an orientation,
 shifts are visited from most negative to most positive.
@@ -30,24 +37,33 @@ The denominator is the full calibration count and normalized profile values are
 Float32. `HybridEmpiricalLogTail` remains the default strategy identifier and
 the low-level `fit(..., tail_logerr=...)` helper still supports hybrid tables,
 but `prepare_profile` canonicalizes the complete exact table so `min_logerr`
-only selects anchors.
+only selects the contributing positions. Because both strands share one
+calibration, a fraction `10^-t` of the positions of any model reaches a value
+`t`.
 
-## Similarity metrics
+## Weighted Jaccard similarity
 
-For each contributing aligned row, continuous overlap is:
-
-```text
-CO(x, y) = sum(min(x, y)) / min(sum(x), sum(y))
-```
-
-Dice similarity is calculated for each contributing row as:
+The only similarity measure is the weighted Jaccard index, reported as the
+metric `jaccard`. For one alignment, let `u_i` be the query value at position
+`i` and `v_i` the target value at the paired position, pooled over all rows:
 
 ```text
-Dice(x, y) = 2 * sum(min(x, y)) / (sum(x) + sum(y))
+S       = { i : max(u_i, v_i) >= min_logerr }
+score   = sum(min(u_i, v_i) for i in S) / sum(max(u_i, v_i) for i in S)
+n_sites = |S|
 ```
 
-`co` and `dice` average the finite per-row values. `cosine` calculates a
-per-row cosine similarity and averages it.
+The score is `0` when `S` is empty and lies in `[0, 1]`. A model compared with
+itself scores `1` at offset `0`, and swapping query and target mirrors the
+offset and orientation without changing the score. Both profiles must have the
+same row lengths.
+
+`min_logerr` must be positive and defaults to `4.0`; `search_range` defaults to
+`5`. About `positions * 10^-min_logerr` positions per strand pass the threshold,
+so the defaults are tuned for `10^6` positions per strand (10 000 sequences of
+100 bp). Mimosa warns when fewer than 50 are expected: use more sequence or a
+lower threshold. The measure was validated on uniform random sequences
+calibrated on themselves.
 
 ## Sites and PFMs
 
@@ -60,7 +76,10 @@ reconstruction defaults to a pseudocount of `0.25`.
 `build_null` is currently PWM-only. It creates one shuffled PWM per source
 model, prepares original and shuffled profiles once, and samples eligible
 ordered pairs. A fresh NumPy `default_rng` stream controls model shuffling and
-pair sampling. The sampling contract is identified in the stored bundle.
+pair sampling. Null profiles are circular and scored with the same weighted
+Jaccard measure, so a null distribution only annotates comparisons that use the
+same sequences, background, `search_range`, and `min_logerr`. The sampling
+contract is identified in the stored bundle.
 
 The empirical upper-tail p-value is:
 

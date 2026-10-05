@@ -37,7 +37,10 @@ Float32 arrays for every complete model window. Input sequences are validated
 `uint8` arrays with codes `0..4`.
 
 The custom model participates in `scan`, `prepare_profile`, `compare`,
-`select_sites`, and `reconstruct_pfm`. A stable SHA-256 `fingerprint()` is
+`select_sites`, and `reconstruct_pfm`. Comparison scans circular sequences by
+passing `scan_into` each sequence wrapped with `left_context` bases on the left
+and `window_size - left_context - 1` bases on the right, so no circular logic
+is needed in the model. A stable SHA-256 `fingerprint()` is
 needed only when using the prepared-profile cache. Arbitrary custom models are
 not accepted by `write_model` because `scan_into` does not define how to
 serialize model parameters.

@@ -38,8 +38,8 @@ _CACHE_DATA_NAME = "data.bin"
 _CACHE_META_NAME = "meta.toml"
 _CACHE_LOCK_NAME = ".mimosa-cache.lock"
 
-PREPARED_PROFILE_CACHE_FORMAT_VERSION = 6
-PREPARED_PROFILE_ALGORITHM_VERSION = 6
+PREPARED_PROFILE_CACHE_FORMAT_VERSION = 7
+PREPARED_PROFILE_ALGORITHM_VERSION = 7
 _PREPARED_PROFILE_BINARY_MAGIC = b"MIMOSA-PREP-MMAP-1\0"
 _PREPARED_PROFILE_SECTION_NAMES = (
     "forward_scores",
@@ -119,13 +119,13 @@ def _cache_file_path(cache, key, name):
     return path
 
 
-def prepared_profile_cache_key(source, sequences=None, *, background=None, min_logerr=0.0, normalization=None):
+def prepared_profile_cache_key(source, sequences=None, *, background=None, normalization=None, circular=False):
     return _prepared_profile_cache_key(
         source,
         sequences,
         background=background,
-        min_logerr=min_logerr,
         normalization=normalization,
+        circular=circular,
     )
 
 
@@ -134,8 +134,8 @@ def _prepared_profile_cache_key(
     sequences=None,
     *,
     background=None,
-    min_logerr=0.0,
     normalization=None,
+    circular=False,
     sequence_fp=None,
     background_fp=None,
 ):
@@ -146,7 +146,7 @@ def _prepared_profile_cache_key(
         raise ValueError("motif prepared-profile cache keys require comparison sequences.")
     if is_motif:
         source_fingerprint = model_fingerprint(source)
-        source_site_start_offset = site_start_offset(source)
+        source_site_start_offset = 0 if circular else site_start_offset(source)
     elif isinstance(source, ScoreProfile):
         source_fingerprint = score_profile_fingerprint(source)
         source_site_start_offset = 0
@@ -164,9 +164,6 @@ def _prepared_profile_cache_key(
         background_part = f"background={background_fp}"
     else:
         background_part = f"background={sequence_fingerprint(effective_background)}"
-    threshold = np.float32(min_logerr)
-    if not np.isfinite(threshold):
-        raise ValueError("min_logerr must be finite.")
     if normalization is None:
         normalization = HybridEmpiricalLogTail()
     parts = (
@@ -175,6 +172,7 @@ def _prepared_profile_cache_key(
         background_part,
         f"normalization={normalization_fingerprint(normalization)}",
         f"site_start_offset={source_site_start_offset}",
+        f"circular={'true' if circular else 'false'}",
     )
     lines = [
         f"v={CACHE_FORMAT_VERSION}\n",
@@ -203,7 +201,7 @@ def _prepared_profile_sections(bundle):
 
 
 def _prepared_profile_serialization_plan(
-    profile_name, bundle, normalization, site_start_offset
+    profile_name, bundle, normalization, site_start_offset, circular
 ):
     payload_size = len(_PREPARED_PROFILE_BINARY_MAGIC)
     specs = {}
@@ -235,6 +233,7 @@ def _prepared_profile_serialization_plan(
         "name": profile_name,
         "normalization": normalization_fingerprint(normalization),
         "site_start_offset": site_start_offset,
+        "circular": bool(circular),
         "n_rows": len(bundle.forward),
         "shared_reverse_scores": bundle.forward is bundle.reverse,
     }
@@ -366,6 +365,7 @@ def _decode_mmap_prepared_profile(path, meta):
         n_rows = meta.get("n_rows")
         normalization_tag = meta.get("normalization")
         site_start_offset = meta.get("site_start_offset")
+        circular = meta.get("circular")
         if (
             not isinstance(name, str)
             or isinstance(n_rows, bool)
@@ -375,6 +375,7 @@ def _decode_mmap_prepared_profile(path, meta):
             or isinstance(site_start_offset, bool)
             or not isinstance(site_start_offset, int)
             or site_start_offset < 0
+            or not isinstance(circular, bool)
         ):
             return None
         normalization = _normalization_from_fingerprint(normalization_tag)
@@ -414,7 +415,7 @@ def _decode_mmap_prepared_profile(path, meta):
             if meta.get("shared_reverse_scores")
             else RaggedArray(reverse_data, reverse_offsets)
         )
-        return name, StrandPair(forward, reverse), normalization, site_start_offset
+        return name, StrandPair(forward, reverse), normalization, site_start_offset, circular
     except (OSError, TypeError, ValueError):
         return None
 
@@ -436,7 +437,7 @@ def _cached_mmap_prepared_profile(cache, key):
 
 
 def _cache_set_prepared_profile(
-    cache, key, name, bundle, normalization, site_start_offset
+    cache, key, name, bundle, normalization, site_start_offset, circular
 ):
     """Atomically stream normalized scores into one cache payload.
 
@@ -445,7 +446,7 @@ def _cache_set_prepared_profile(
     """
     encode_started = time.perf_counter()
     metadata, writes, payload_size = _prepared_profile_serialization_plan(
-        name, bundle, normalization, site_start_offset
+        name, bundle, normalization, site_start_offset, circular
     )
     _record_timing(cache, "cache_encode", time.perf_counter() - encode_started)
     with cache._lock:
@@ -563,14 +564,15 @@ def _cached_prepared_profile(
     background,
     threshold,
     normalization,
+    circular=False,
     context=None,
 ):
     key = _prepared_profile_cache_key(
         source,
         sequences,
         background=background,
-        min_logerr=threshold,
         normalization=normalization,
+        circular=circular,
         sequence_fp=None if context is None else context[0],
         background_fp=None if context is None else context[1],
     )
@@ -578,8 +580,8 @@ def _cached_prepared_profile(
         cached = _cached_mmap_prepared_profile(cache, key)
     if cached is None:
         return key, None
-    name, bundle, cached_normalization, site_start_offset = cached
-    if cached_normalization != normalization:
+    name, bundle, cached_normalization, site_start_offset, cached_circular = cached
+    if cached_normalization != normalization or cached_circular != circular:
         return key, None
     anchors = collect_both_anchors(
         bundle, threshold, position_offset=site_start_offset
@@ -591,12 +593,13 @@ def _cached_prepared_profile(
         threshold,
         cached_normalization,
         site_start_offset,
+        cached_circular,
     )
 
 
 def _store_normalized_profile(
-    cache, key, name, bundle, normalization, site_start_offset
+    cache, key, name, bundle, normalization, site_start_offset, circular
 ):
     _cache_set_prepared_profile(
-        cache, key, name, bundle, normalization, site_start_offset
+        cache, key, name, bundle, normalization, site_start_offset, circular
     )

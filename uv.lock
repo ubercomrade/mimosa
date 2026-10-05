@@ -47,7 +47,7 @@ wheels = [
 
 [[package]]
 name = "mimosa-tool"
-version = "1.4.6"
+version = "2.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "joblib" },

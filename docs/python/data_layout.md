@@ -44,6 +44,16 @@ The scan index is the start of the complete scoring window. Forward and reverse
 scores at one scan index refer to the same physical interval. Only score
 orientation and returned reverse-strand bases differ.
 
+Comparison uses a circular layout instead. Each non-empty sequence is wrapped
+with `left_context` bases on the left and `window_size - left_context - 1`
+bases on the right before scanning, so a sequence of length `L` yields exactly
+`L` values per strand and the profile index is the site start:
+
+```text
+n_positions(sequence_length) = sequence_length
+site_start = profile_index
+```
+
 For built-in models:
 
 | Model | Left context | Right context |
@@ -60,7 +70,8 @@ All public Python and CLI coordinates are zero-based. Scan indices address the
 complete model scoring window; anchor positions and comparison offsets address
 the physical motif start, excluding left context. Thus equivalent PWM and
 higher-order models align with offset `0` even when their scoring windows have
-different context. A positive comparison offset moves the target physical site
+different context. A comparison offset `s` pairs query site start `i` with
+target site start `(i + s) mod L`, so a positive offset moves the target site
 right relative to the query. Site extraction returns a zero-based, half-open
 physical motif interval.
 
@@ -72,5 +83,5 @@ sites are reverse-complemented before PFM reconstruction.
 - Encoded bases use `uint8`.
 - Offsets and indices use `int64` in memory.
 - Scan and normalized profile values use `float32`.
-- Alignment metrics accumulate in `float64` before the result score is stored.
+- Weighted Jaccard sums accumulate in `float64` before the result score is stored as `float32`.
 - Model bundles store raw little-endian Float32 arrays.

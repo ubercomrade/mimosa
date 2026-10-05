@@ -16,12 +16,13 @@ from .io.bundles import (
     sequence_fingerprint,
 )
 from .models import PWM, strict_integer
-from .profiles.alignment import parse_profile_metric
+from .profiles.alignment import METRIC_NAME, ProfileConfig
+from .profiles.anchors import DEFAULT_MIN_LOGERR, parse_min_logerr
 from .profiles.normalization import HybridEmpiricalLogTail, normalization_fingerprint
 from .profiles.prepared import _prepare_profile
 
 SAMPLING_VERSION = "original-shuffled-ordered-pairs-v3"
-ALIGNMENT_VERSION = "profile-alignment-v2"
+ALIGNMENT_VERSION = "circular-jaccard-v1"
 
 
 @dataclass(frozen=True)
@@ -77,8 +78,11 @@ class NullDistribution:
             raise ValueError("null distribution sampling_version must not be empty.")
         if self.strategy != "profile":
             raise ValueError("only profile null distributions are supported.")
-        metric = parse_profile_metric(self.metric)
-        object.__setattr__(self, "metric", metric)
+        metric = self.metric
+        if metric != METRIC_NAME:
+            raise ValueError(
+                f"null distribution metric must be '{METRIC_NAME}', got '{metric}'."
+            )
         pairs = []
         for index, pair in enumerate(self.pairs):
             if not isinstance(pair, (tuple, list)) or len(pair) != 3:
@@ -104,8 +108,6 @@ class NullDistribution:
         required = (
             "metric",
             "search_range",
-            "window_radius",
-            "realign_window",
             "min_logerr",
             "normalization_version",
             "alignment_version",
@@ -122,21 +124,19 @@ class NullDistribution:
             )
         if contract["metric"] != metric:
             raise ValueError("null distribution contract metric does not match metric.")
-        for key in ("search_range", "window_radius", "realign_window"):
-            try:
-                value = strict_integer(contract[key], key)
-            except TypeError as exc:
-                raise ValueError(str(exc)) from exc
-            if value < 0:
-                raise ValueError(f"null distribution contract {key} must be non-negative.")
-            contract[key] = value
         try:
-            with np.errstate(over="ignore", invalid="ignore"):
-                min_logerr = np.float32(contract["min_logerr"])
-        except (TypeError, ValueError) as exc:
-            raise ValueError("null distribution contract min_logerr must be finite.") from exc
-        if not np.isfinite(min_logerr):
-            raise ValueError("null distribution contract min_logerr must be finite.")
+            search_range = strict_integer(contract["search_range"], "search_range")
+        except TypeError as exc:
+            raise ValueError(str(exc)) from exc
+        if search_range < 0:
+            raise ValueError("null distribution contract search_range must be non-negative.")
+        contract["search_range"] = search_range
+        try:
+            min_logerr = parse_min_logerr(contract["min_logerr"])
+        except ValueError as exc:
+            raise ValueError(
+                "null distribution contract min_logerr must be a finite, positive Float32 value."
+            ) from exc
         contract["min_logerr"] = min_logerr
         for key in (
             "normalization_version",
@@ -253,7 +253,7 @@ def _null_id(dist):
         "contract="
         + ":".join(
             str(c[k])
-            for k in ("search_range", "window_radius", "realign_window", "min_logerr", "normalization_version", "alignment_version")
+            for k in ("search_range", "min_logerr", "normalization_version", "alignment_version")
         ),
     ]
     if dist.model_collection_fingerprint is not None:
@@ -316,19 +316,15 @@ def build_null(
     *,
     sequences,
     background=None,
-    metric="co",
     n_samples=2000,
     seed=127,
-    search_range=10,
-    window_radius=10,
-    realign_window=3,
-    min_logerr=0.0,
+    search_range=5,
+    min_logerr=DEFAULT_MIN_LOGERR,
     normalization=None,
     cache=None,
 ):
-    search_range = strict_integer(search_range, "search_range")
-    window_radius = strict_integer(window_radius, "window_radius")
-    realign_window = strict_integer(realign_window, "realign_window")
+    config = ProfileConfig(search_range=search_range, min_logerr=min_logerr)
+    search_range = config.search_range
     n_samples = strict_integer(n_samples, "n_samples")
     seed = strict_integer(seed, "seed")
     if len(models) < 2:
@@ -338,17 +334,12 @@ def build_null(
     names = [m.name for m in models]
     if len(set(names)) != len(names):
         raise ValueError("model names must be unique for null construction.")
-    if search_range < 0 or window_radius < 0 or realign_window < 0:
-        raise ValueError("search/window/realign ranges must be non-negative.")
-    if not np.isfinite(min_logerr):
-        raise ValueError("min_logerr must be finite.")
     if n_samples <= 0:
         raise ValueError("n_samples must be positive.")
     if seed < 0:
         raise ValueError("seed must be non-negative.")
     if normalization is None:
         normalization = HybridEmpiricalLogTail()
-    metric_str = parse_profile_metric(metric)
 
     rng = np.random.default_rng(seed)
     shuffled_models = [
@@ -376,6 +367,7 @@ def build_null(
                 min_logerr=min_logerr,
                 normalization=normalization,
                 cache=cache,
+                circular=True,
                 _preparation_context=preparation_context,
             )
         )
@@ -391,10 +383,7 @@ def build_null(
             result = compare(
                 prepared[query_idx],
                 prepared[target_idx],
-                metric=metric_str,
                 search_range=search_range,
-                window_radius=window_radius,
-                realign_window=realign_window,
             )
             comparison_cache[pair_key] = result
         raw_scores[i] = float(result.score)
@@ -409,11 +398,9 @@ def build_null(
     seq_fp = sequence_fingerprint(sequences)
     bg_fp = "none" if background is None else sequence_fingerprint(background)
     contract = {
-        "metric": metric_str,
+        "metric": METRIC_NAME,
         "search_range": search_range,
-        "window_radius": window_radius,
-        "realign_window": realign_window,
-        "min_logerr": np.float32(min_logerr),
+        "min_logerr": config.min_logerr,
         "normalization_version": normalization_fingerprint(normalization),
         "alignment_version": ALIGNMENT_VERSION,
         "sequence_fingerprint": seq_fp,
@@ -422,7 +409,7 @@ def build_null(
     }
     dist = NullDistribution(
         strategy="profile",
-        metric=metric_str,
+        metric=METRIC_NAME,
         raw_scores=raw_scores,
         pairs=pairs,
         n_null=n_samples,

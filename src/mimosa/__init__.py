@@ -31,10 +31,7 @@ from .models import (
     site_start_offset,
     window_size,
 )
-from .profiles.alignment import (
-    ProfileConfig,
-    parse_profile_metric,
-)
+from .profiles.alignment import ProfileConfig
 from .profiles.normalization import (
     EmpiricalLogTail,
     HybridEmpiricalLogTail,
@@ -94,7 +91,6 @@ __all__ = [
     "site_start_offset",
     "window_size",
     "ProfileConfig",
-    "parse_profile_metric",
     "EmpiricalLogTail",
     "HybridEmpiricalLogTail",
     "normalization_fingerprint",

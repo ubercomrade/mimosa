@@ -28,9 +28,11 @@ from ..models import (
     SiteGA,
     Slim,
 )
+from ..profiles.alignment import METRIC_NAME
+from ..profiles.anchors import parse_min_logerr
 
 MODEL_FORMAT_VERSION = 2
-NULL_FORMAT_VERSION = 9
+NULL_FORMAT_VERSION = 10
 BUNDLE_MANIFEST_NAME = "manifest.toml"
 BUNDLE_DATA_DIR = "data"
 
@@ -674,7 +676,7 @@ def write_null_bundle(path, dist):
         raise InvariantError("null distribution strategy/metric must not be empty.")
     if dist.strategy != "profile":
         raise InvariantError("only profile null distributions are supported.")
-    if dist.metric not in ("co", "dice", "cosine"):
+    if dist.metric != METRIC_NAME:
         raise InvariantError(f"unsupported profile metric '{dist.metric}'.")
     if not np.all(np.isfinite(dist.raw_scores)):
         raise InvariantError("null distribution raw_scores contain non-finite values.")
@@ -726,8 +728,6 @@ def write_null_bundle(path, dist):
                 "shuffle": dist.shuffle,
                 "sampling_version": dist.sampling_version,
                 "search_range": dist.contract["search_range"],
-                "window_radius": dist.contract["window_radius"],
-                "realign_window": dist.contract["realign_window"],
                 "min_logerr": float(dist.contract["min_logerr"]),
                 "normalization_version": dist.contract["normalization_version"],
                 "alignment_version": dist.contract["alignment_version"],
@@ -759,7 +759,7 @@ def read_null_bundle(path):
     if strategy != "profile":
         raise _bundle_error(path, f"unsupported null strategy '{strategy}'.")
     metric = _required_manifest_string(manifest, "metric", path, "null manifest")
-    if metric not in ("co", "dice", "cosine"):
+    if metric != METRIC_NAME:
         raise _bundle_error(path, f"unsupported profile metric '{metric}'.")
     n_null = _required_manifest_int(manifest, "n_null", path, "null manifest", minimum=1, maximum=MAX_BUNDLE_DIMENSION)
     n_models = _required_manifest_int(manifest, "n_models", path, "null manifest", minimum=2, maximum=MAX_BUNDLE_DIMENSION)
@@ -835,12 +835,13 @@ def read_null_bundle(path):
     if compat_sampling != sampling_version:
         raise _bundle_error(path, "compatibility sampling version disagrees with null manifest.")
     search_range = _required_manifest_int(compat, "search_range", path, "compatibility metadata", minimum=0)
-    window_radius = _required_manifest_int(compat, "window_radius", path, "compatibility metadata", minimum=0)
-    realign_window = _required_manifest_int(compat, "realign_window", path, "compatibility metadata", minimum=0)
     min_logerr = _required_manifest_float(compat, "min_logerr", path, "compatibility metadata")
-    min_logerr32 = np.float32(min_logerr)
-    if not np.isfinite(min_logerr32):
-        raise _bundle_error(path, "compatibility min_logerr is not representable as Float32.")
+    try:
+        min_logerr32 = parse_min_logerr(min_logerr)
+    except ValueError:
+        raise _bundle_error(
+            path, "compatibility min_logerr must be a finite, positive Float32 value."
+        ) from None
     normalization_version = _required_manifest_string(compat, "normalization_version", path, "compatibility metadata")
     alignment_version = _required_manifest_string(compat, "alignment_version", path, "compatibility metadata")
     raw_scores_fingerprint = _required_manifest_string(compat, "raw_scores_fingerprint", path, "compatibility metadata")
@@ -851,8 +852,6 @@ def read_null_bundle(path):
     contract = {
         "metric": metric,
         "search_range": search_range,
-        "window_radius": window_radius,
-        "realign_window": realign_window,
         "min_logerr": min_logerr32,
         "normalization_version": normalization_version,
         "alignment_version": alignment_version,

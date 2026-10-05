@@ -1,10 +1,22 @@
 import numpy as np
 import pytest
 
-from mimosa import MotifModel, PWM, EncodedSequences, pwm_from_pfm, reverse_complement, scan
+from mimosa import (
+    BaMM,
+    MotifModel,
+    PWM,
+    EncodedSequences,
+    SiteGA,
+    pwm_from_pfm,
+    reverse_complement,
+    scan,
+    site_start_offset,
+    window_size,
+)
 from mimosa._kernels import ho_kmer_codes
 from mimosa.errors import ModelFormatError, ModelInterfaceError
 from mimosa.io.models import read_meme
+from mimosa.scan import _scan_batch_into
 
 
 def _seq(*bases):
@@ -132,3 +144,99 @@ class TestScan:
     def test_invalid_strand_policy(self, pwm, batch):
         with pytest.raises(ValueError):
             scan(pwm, batch, strands="diagonal")
+
+
+class TestCircularScan:
+    @staticmethod
+    def _models():
+        rng = np.random.default_rng(21)
+        return [
+            PWM("pwm", rng.normal(size=(5, 7)).astype(np.float32), (0.25,) * 4),
+            BaMM("bamm", rng.normal(size=(125, 6)).astype(np.float32), 2, 6),
+            SiteGA("sitega", rng.normal(size=(25, 6)).astype(np.float32), 6),
+        ]
+
+    @staticmethod
+    def _sequences():
+        rng = np.random.default_rng(22)
+        # Includes N bases, an empty row, and rows shorter than every window.
+        rows = [rng.integers(0, 5, size=n, dtype=np.uint8) for n in (40, 3, 0, 1, 17)]
+        return EncodedSequences.from_rows(rows)
+
+    @pytest.mark.parametrize("index", range(3))
+    def test_matches_linear_scan_of_manually_wrapped_rows(self, index):
+        model = self._models()[index]
+        sequences = self._sequences()
+        left = site_start_offset(model)
+        right = window_size(model) - left - 1
+        wrapped = EncodedSequences.from_rows(
+            [
+                row[np.arange(-left, len(row) + right) % len(row)] if len(row) else row
+                for row in (sequences[i] for i in range(len(sequences)))
+            ]
+        )
+
+        circular = _scan_batch_into(model, sequences, "both", circular=True)
+        linear = scan(model, wrapped, strands="both")
+
+        for strand, reference in (
+            (circular.forward, linear.forward),
+            (circular.reverse, linear.reverse),
+        ):
+            # Exactly one score per base, indexed by the site start.
+            np.testing.assert_array_equal(strand.offsets, sequences.offsets)
+            np.testing.assert_array_equal(strand.data, reference.data)
+
+    def test_pwm_index_is_the_site_start_on_both_strands(self):
+        model = self._models()[0]
+        sequences = self._sequences()
+        circular = _scan_batch_into(model, sequences, "both", circular=True)
+        width = model.motif_length
+        for row in range(len(sequences)):
+            sequence = sequences[row]
+            length = len(sequence)
+            for start in range(length):
+                site = sequence[(start + np.arange(width)) % length]
+                forward = sum(model.weights[site[k], k] for k in range(width))
+                reverse = sum(
+                    model.weights[base if base == 4 else 3 - base, k]
+                    for k, base in enumerate(site[::-1])
+                )
+                assert circular.forward[row][start] == pytest.approx(forward, abs=1e-4)
+                assert circular.reverse[row][start] == pytest.approx(reverse, abs=1e-4)
+
+    def test_context_model_reads_left_context_from_the_ring(self):
+        rng = np.random.default_rng(23)
+        pwm_weights = rng.normal(size=(5, 4)).astype(np.float32)
+        bamm_weights = np.empty((25, 4), dtype=np.float32)
+        for code in range(25):
+            bamm_weights[code] = pwm_weights[code % 5]
+        pwm = PWM("pwm", pwm_weights, (0.25,) * 4)
+        bamm = BaMM("bamm", bamm_weights, 1, 4)
+        sequences = self._sequences()
+
+        from_pwm = _scan_batch_into(pwm, sequences, "both", circular=True)
+        from_bamm = _scan_batch_into(bamm, sequences, "both", circular=True)
+        np.testing.assert_allclose(from_bamm.forward.data, from_pwm.forward.data, atol=1e-5)
+        np.testing.assert_allclose(from_bamm.reverse.data, from_pwm.reverse.data, atol=1e-5)
+
+    def test_custom_model_uses_the_same_wrapping(self):
+        class FirstBase(MotifModel):
+            name = "first-base"
+            motif_length = 2
+            left_context = 1
+
+            def scan_into(self, sequence, forward, reverse, /):
+                for pos in range(forward.shape[0]):
+                    forward[pos] = sequence[pos + 1]
+                    reverse[pos] = sequence[pos]
+
+        sequences = EncodedSequences.from_rows([_seq(0, 1, 2, 3), _seq(2)])
+        circular = _scan_batch_into(FirstBase(), sequences, "both", circular=True)
+        np.testing.assert_array_equal(circular.forward.data, [0, 1, 2, 3, 2])
+        np.testing.assert_array_equal(circular.reverse.data, [3, 0, 1, 2, 2])
+
+    def test_public_scan_stays_linear(self, pwm, batch):
+        linear = scan(pwm, batch, strands="both")
+        assert len(linear.forward[0]) == len(batch[0]) - pwm.motif_length + 1
+        assert len(linear.forward[2]) == 0

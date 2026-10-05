@@ -32,11 +32,14 @@ def batch():
     return read_fasta("examples/foreground.fa")[0]
 
 
+TAU0 = 2.0
+
+
 def make_dist(scores):
     raw_scores = np.array(scores, dtype=np.float64)
     return NullDistribution(
         strategy="profile",
-        metric="co",
+        metric="jaccard",
         raw_scores=raw_scores,
         pairs=[("a", "b", float(s)) for s in scores],
         n_null=len(scores),
@@ -49,13 +52,11 @@ def make_dist(scores):
         sequence_fingerprint="s" * 64,
         background_fingerprint="none",
         contract={
-            "metric": "co",
-            "search_range": 10,
-            "window_radius": 10,
-            "realign_window": 3,
-            "min_logerr": np.float32(0.0),
+            "metric": "jaccard",
+            "search_range": 5,
+            "min_logerr": np.float32(4.0),
             "normalization_version": normalization_fingerprint(HybridEmpiricalLogTail()),
-            "alignment_version": "profile-alignment-v2",
+            "alignment_version": "circular-jaccard-v1",
             "sequence_fingerprint": "s" * 64,
             "background_fingerprint": "none",
             "raw_scores_fingerprint": content_fingerprint_float64(raw_scores),
@@ -102,11 +103,11 @@ class TestNullDistribution:
     def test_validation(self):
         with pytest.raises(ValueError):
             NullDistribution(
-                "profile", "co", np.array([1.0]), [], 1, 2, "pwm", True, 0, "v", None, "s", "n", {}
+                "profile", "jaccard", np.array([1.0]), [], 1, 2, "pwm", True, 0, "v", None, "s", "n", {}
             )
         with pytest.raises(ValueError, match="must be positive"):
             NullDistribution(
-                "profile", "co", np.array([]), [], 0, 2, "pwm", True, 0, "v", None, "s", "n", {}
+                "profile", "jaccard", np.array([]), [], 0, 2, "pwm", True, 0, "v", None, "s", "n", {}
             )
 
     def test_owns_and_freezes_raw_scores_contract_and_pairs(self):
@@ -120,7 +121,7 @@ class TestNullDistribution:
         with pytest.raises(ValueError):
             dist.raw_scores[0] = 0.9
         with pytest.raises(TypeError):
-            dist.contract["metric"] = "dice"
+            dist.contract["metric"] = "other"
 
     def test_rejects_raw_scores_with_stale_fingerprint(self):
         dist = make_dist([0.2, 0.4])
@@ -135,15 +136,28 @@ class TestNullDistribution:
             )
 
     def test_build_null_reproducible(self, pwm_models, batch):
-        d1 = build_null(pwm_models, sequences=batch, n_samples=30, seed=42)
-        d2 = build_null(pwm_models, sequences=batch, n_samples=30, seed=42)
+        d1 = build_null(pwm_models, sequences=batch, n_samples=30, seed=42, min_logerr=TAU0)
+        d2 = build_null(pwm_models, sequences=batch, n_samples=30, seed=42, min_logerr=TAU0)
         np.testing.assert_array_equal(d1.raw_scores, d2.raw_scores)
         assert d1.pairs == d2.pairs
 
     def test_build_null_sampling_contract(self, pwm_models, batch):
-        d = build_null(pwm_models, sequences=batch, n_samples=30, seed=42)
+        d = build_null(pwm_models, sequences=batch, n_samples=30, seed=42, min_logerr=TAU0)
         assert d.n_null == 30
-        assert d.metric == "co"
+        assert d.metric == "jaccard"
+        assert d.contract["alignment_version"] == "circular-jaccard-v1"
+        assert d.contract["search_range"] == 5
+        assert d.contract["min_logerr"] == np.float32(TAU0)
+        assert set(d.contract) == {
+            "metric",
+            "search_range",
+            "min_logerr",
+            "normalization_version",
+            "alignment_version",
+            "sequence_fingerprint",
+            "background_fingerprint",
+            "raw_scores_fingerprint",
+        }
         assert d.model_type == "pwm"
         assert d.sampling_version == "original-shuffled-ordered-pairs-v3"
         assert np.all(np.isfinite(d.raw_scores))
@@ -160,6 +174,35 @@ class TestNullDistribution:
             q, t = _next_null_work_item(3, rng)
             assert not (q < 3 and t < 3)
             assert not (q >= 3 and q == t)
+
+    def test_rejects_removed_metric(self):
+        dist = make_dist([0.2, 0.4])
+        with pytest.raises(ValueError, match="jaccard"):
+            NullDistribution(
+                **{**dist.__dict__, "metric": "co", "contract": dict(dist.contract)}
+            )
+
+    def test_build_null_uses_circular_profiles(self, pwm_models, batch, monkeypatch):
+        import importlib
+
+        statistics_module = importlib.import_module("mimosa.statistics")
+        original = statistics_module._prepare_profile
+        flags = []
+
+        def observed(*args, **kwargs):
+            flags.append(kwargs["circular"])
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(statistics_module, "_prepare_profile", observed)
+        build_null(pwm_models, sequences=batch, n_samples=3, seed=1, min_logerr=TAU0)
+        assert flags == [True] * (2 * len(pwm_models))
+
+    @pytest.mark.parametrize("min_logerr", (0.0, -1.0, np.nan))
+    def test_build_null_rejects_non_positive_threshold(
+        self, pwm_models, batch, min_logerr
+    ):
+        with pytest.raises(ValueError, match="min_logerr"):
+            build_null(pwm_models, sequences=batch, min_logerr=min_logerr)
 
     def test_build_null_requires_pwm(self, batch):
         from mimosa import BaMM
@@ -210,8 +253,8 @@ class TestAnnotation:
         monkeypatch.setattr(np, "sort", counted)
         annotate_results(
             [
-                ComparisonResult("a", "b", np.float32(0.6), 0, "++", "co", 1),
-                ComparisonResult("a", "c", np.float32(0.7), 0, "++", "co", 1),
+                ComparisonResult("a", "b", np.float32(0.6), 0, "++", "jaccard", 1),
+                ComparisonResult("a", "c", np.float32(0.7), 0, "++", "jaccard", 1),
             ],
             dist,
         )
@@ -220,8 +263,8 @@ class TestAnnotation:
     def test_annotate_results(self):
         dist = make_dist([0.5, 0.6, 0.7, 0.8, 0.9])
         results = [
-            ComparisonResult("a", "b", np.float32(0.85), 0, "++", "co", 5),
-            ComparisonResult("a", "c", np.float32(0.95), 1, "++", "co", 3),
+            ComparisonResult("a", "b", np.float32(0.85), 0, "++", "jaccard", 5),
+            ComparisonResult("a", "c", np.float32(0.95), 1, "++", "jaccard", 3),
         ]
         annotated = annotate_results(results, dist)
         assert len(annotated) == 2
@@ -236,19 +279,19 @@ class TestAnnotation:
 
     def test_annotate_effective_targets(self):
         dist = make_dist([0.5, 0.6, 0.7, 0.8, 0.9])
-        results = [ComparisonResult("a", "b", np.float32(0.95), 0, "++", "co", 5)]
+        results = [ComparisonResult("a", "b", np.float32(0.95), 0, "++", "jaccard", 5)]
         annotated = annotate_results(results, dist, effective_number_of_targets=10)
         assert annotated[0].e_value == pytest.approx(annotated[0].p_value * 10)
 
     def test_annotate_metric_mismatch(self):
         dist = make_dist([0.5])
-        results = [ComparisonResult("a", "b", np.float32(0.9), 0, "++", "dice", 5)]
+        results = [ComparisonResult("a", "b", np.float32(0.9), 0, "++", "other", 5)]
         with pytest.raises(ValueError):
             annotate_results(results, dist)
 
     def test_annotate_dict_serialization(self):
         dist = make_dist([0.5, 0.6])
-        results = [ComparisonResult("a", "b", np.float32(0.9), 0, "++", "co", 5)]
+        results = [ComparisonResult("a", "b", np.float32(0.9), 0, "++", "jaccard", 5)]
         annotated = annotate_results(results, dist)[0]
         d = annotated.to_dict()
         assert d["annotation_schema_version"] == 1

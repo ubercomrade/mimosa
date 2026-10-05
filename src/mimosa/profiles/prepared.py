@@ -7,24 +7,18 @@ import numpy as np
 from ..arrays import RaggedArray, StrandPair
 from ..errors import ModelFormatError
 from ..models import MotifModel, site_start_offset
-from .anchors import AnchorCSR, collect_both_anchors
+from .anchors import (
+    DEFAULT_MIN_LOGERR,
+    AnchorCSR,
+    collect_both_anchors,
+    parse_min_logerr,
+)
 from .normalization import (
     HybridEmpiricalLogTail,
     _fit_exact,
     normalize_bundle,
     normalization_fingerprint,
 )
-
-
-def _as_float32_min_logerr(value):
-    try:
-        with np.errstate(over="ignore", invalid="ignore"):
-            threshold = np.float32(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("min_logerr must be a finite Float32 value.") from exc
-    if not np.isfinite(threshold):
-        raise ValueError("min_logerr must be a finite Float32 value.")
-    return threshold
 
 
 def _freeze_prepared_arrays(bundle, anchors):
@@ -92,6 +86,7 @@ class PreparedProfile:
         "min_logerr",
         "normalization",
         "site_start_offset",
+        "circular",
     )
 
     def __init__(
@@ -99,11 +94,12 @@ class PreparedProfile:
         name,
         bundle,
         anchors,
-        min_logerr=0.0,
+        min_logerr=DEFAULT_MIN_LOGERR,
         normalization=None,
         site_start_offset=0,
+        circular=False,
     ):
-        threshold = _as_float32_min_logerr(min_logerr)
+        threshold = parse_min_logerr(min_logerr)
         if not isinstance(bundle, StrandPair):
             raise TypeError("prepared profile bundle must be a StrandPair.")
         if (
@@ -118,6 +114,10 @@ class PreparedProfile:
             or site_start_offset < 0
         ):
             raise ValueError("site_start_offset must be a non-negative integer.")
+        if not isinstance(circular, (bool, np.bool_)):
+            raise TypeError("circular must be a boolean.")
+        if circular and site_start_offset != 0:
+            raise ValueError("circular profiles must use site_start_offset 0.")
         n_rows = len(bundle.forward)
         if len(bundle.reverse) != n_rows:
             raise ValueError("prepared strand bundles must have equal row counts.")
@@ -151,6 +151,7 @@ class PreparedProfile:
         except ValueError as exc:
             raise ValueError("prepared profile normalization is unsupported.") from exc
         self.site_start_offset = int(site_start_offset)
+        self.circular = bool(circular)
         _freeze_prepared_arrays(bundle, anchors)
 
     def __eq__(self, other):
@@ -160,13 +161,14 @@ class PreparedProfile:
             and self.min_logerr == other.min_logerr
             and self.normalization == other.normalization
             and self.site_start_offset == other.site_start_offset
+            and self.circular == other.circular
             and self.bundle == other.bundle
             and self.anchors[0] == other.anchors[0]
             and self.anchors[1] == other.anchors[1]
         )
 
 
-def prepare_profile(model_or_scores, sequences=None, *, background=None, min_logerr=0.0, normalization=None, cache=None):
+def prepare_profile(model_or_scores, sequences=None, *, background=None, min_logerr=DEFAULT_MIN_LOGERR, normalization=None, cache=None, circular=False):
     return _prepare_profile(
         model_or_scores,
         sequences,
@@ -174,6 +176,7 @@ def prepare_profile(model_or_scores, sequences=None, *, background=None, min_log
         min_logerr=min_logerr,
         normalization=normalization,
         cache=cache,
+        circular=circular,
     )
 
 
@@ -182,16 +185,23 @@ def _prepare_profile(
     sequences=None,
     *,
     background=None,
-    min_logerr=0.0,
+    min_logerr=DEFAULT_MIN_LOGERR,
     normalization=None,
     cache=None,
+    circular=False,
     _preparation_context=None,
 ):
     """Prepare a profile for repeated comparison.
 
     Accepts a ScoreProfile (no sequences) or a MotifModel plus EncodedSequences.
+    ``circular=True`` scans every sequence as a ring: each row then holds one
+    score per base, indexed by site start, which is what comparison requires.
+    ScoreProfile rows are taken as they are and only marked circular.
     """
-    threshold = _as_float32_min_logerr(min_logerr)
+    if not isinstance(circular, (bool, np.bool_)):
+        raise TypeError("circular must be a boolean.")
+    circular = bool(circular)
+    threshold = parse_min_logerr(min_logerr)
     if normalization is None:
         normalization = HybridEmpiricalLogTail()
 
@@ -205,6 +215,7 @@ def _prepare_profile(
             background,
             threshold,
             normalization,
+            circular,
             _preparation_context,
         )
         if cached is not None:
@@ -224,12 +235,14 @@ def _prepare_profile(
             raise ValueError("motif prepared profiles require comparison sequences.")
         from ..scan import _scan_batch_into
 
-        raw = _scan_batch_into(model_or_scores, sequences, "both")
+        raw = _scan_batch_into(model_or_scores, sequences, "both", circular)
         name = model_or_scores.name
-        profile_site_start_offset = site_start_offset(model_or_scores)
+        profile_site_start_offset = (
+            0 if circular else site_start_offset(model_or_scores)
+        )
         bg = sequences if background is None else background
         if bg is not sequences:
-            bg_raw = _scan_batch_into(model_or_scores, bg, "both")
+            bg_raw = _scan_batch_into(model_or_scores, bg, "both", circular)
             calibration = bg_raw
             del bg_raw
     else:
@@ -255,6 +268,7 @@ def _prepare_profile(
             norm_bundle,
             normalization,
             profile_site_start_offset,
+            circular,
         )
     anchors = collect_both_anchors(
         norm_bundle, threshold, position_offset=profile_site_start_offset
@@ -266,5 +280,6 @@ def _prepare_profile(
         threshold,
         normalization,
         profile_site_start_offset,
+        circular,
     )
     return prepared

@@ -501,14 +501,17 @@ class TestNullBundle:
             name, pfm = read_meme(f"examples/{f}")
             models.append(pwm_from_pfm(pfm, name=name))
         batch, _ = read_fasta("examples/foreground.fa")
-        return build_null(models, sequences=batch, n_samples=20, seed=7)
+        return build_null(models, sequences=batch, n_samples=20, seed=7, min_logerr=2.0)
 
     def test_roundtrip(self, tmp_path, dist):
         path = str(tmp_path / "null")
         write_null_bundle(path, dist)
         d = read_null_bundle(path)
         assert d["n_null"] == 20
-        assert d["metric"] == "co"
+        assert d["metric"] == "jaccard"
+        assert d["contract"]["search_range"] == 5
+        assert d["contract"]["alignment_version"] == "circular-jaccard-v1"
+        assert set(d["contract"]) == set(dist.contract)
         np.testing.assert_array_equal(d["raw_scores"], dist.raw_scores)
         assert d["pairs"][0][0] == dist.pairs[0][0]
         assert d["contract"]["raw_scores_fingerprint"] == dist.contract["raw_scores_fingerprint"]
@@ -517,7 +520,7 @@ class TestNullBundle:
         path = str(tmp_path / "null")
         write_null_bundle(path, dist)
         manifest = tmp_path / "null" / "manifest.toml"
-        manifest.write_text(manifest.read_text().replace("format_version = 9", "format_version = 8"))
+        manifest.write_text(manifest.read_text().replace("format_version = 10", "format_version = 9"))
         with pytest.raises(ModelFormatError):
             read_null_bundle(path)
 
@@ -525,7 +528,7 @@ class TestNullBundle:
         path = str(tmp_path / "null")
         write_null_bundle(path, dist)
         manifest = tmp_path / "null" / "manifest.toml"
-        manifest.write_text(manifest.read_text().replace('metric = "co"', 'metric = "co_rowwise"'))
+        manifest.write_text(manifest.read_text().replace('metric = "jaccard"', 'metric = "co"'))
         with pytest.raises(ModelFormatError):
             read_null_bundle(path)
 

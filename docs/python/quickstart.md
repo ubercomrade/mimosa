@@ -46,17 +46,17 @@ result = compare(
     query,
     target,
     sequences,
-    metric="co",
-    search_range=10,
-    window_radius=10,
-    realign_window=3,
+    search_range=5,
+    min_logerr=2.0,
 )
 print(result.to_dict())
 ```
 
-Available metrics are `co`, `dice`, and `cosine`. The `co` and `dice` metrics
-average their score per contributing row. A separate FASTA batch can be passed
-as `background=` when score normalization needs a separate calibration set.
+The score is the weighted Jaccard similarity of the two circular `-log10(ERR)`
+profiles, reported with `metric == "jaccard"`. `min_logerr` defaults to `4.0`,
+which suits about `10^6` positions per strand; the bundled FASTA is smaller, so
+these examples lower it. A separate FASTA batch can be passed as `background=`
+when score normalization needs a separate calibration set.
 
 ## Reuse Prepared Profiles
 
@@ -65,10 +65,12 @@ Prepare one query once when comparing it with many targets:
 ```python
 from mimosa import compare_many, prepare_profile
 
-prepared_query = prepare_profile(query, sequences)
+prepared_query = prepare_profile(query, sequences, min_logerr=2.0, circular=True)
 targets = [target, read_model("examples/gata4.meme")]
-results = compare_many(prepared_query, targets, sequences, metric="cosine")
+results = compare_many(prepared_query, targets, sequences)
 ```
+
+Comparison requires `circular=True`; the default linear layout is rejected.
 
 For target-level parallelism, divide a total thread budget between joblib
 workers and Numba threads:
@@ -80,7 +82,6 @@ results = compare_many(
     sequences,
     total_threads=4,
     inner_threads=1,
-    metric="cosine",
 )
 ```
 
@@ -95,7 +96,7 @@ from mimosa import compare, prepare_profile, read_scores
 
 query_scores = read_scores("examples/scores_1.fasta")
 target_scores = read_scores("examples/scores_2.fasta")
-prepared_query = prepare_profile(query_scores)
+prepared_query = prepare_profile(query_scores, min_logerr=2.0, circular=True)
 result = compare(prepared_query, target_scores)
 ```
 
@@ -126,7 +127,7 @@ models = [query, target, read_model("examples/gata4.meme")]
 distribution = build_null(
     models,
     sequences=sequences,
-    metric="co",
+    min_logerr=2.0,
     n_samples=2000,
     seed=127,
 )

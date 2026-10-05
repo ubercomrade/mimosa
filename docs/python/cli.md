@@ -17,15 +17,16 @@ uv run mimosa compare QUERY TARGET \
 ```
 
 Model types are `scores`, `pwm`, `bamm`, `sitega`, `dimont`, and `slim`.
-Metrics are `co`, `dice`, and `cosine`.
+Every comparison reports the weighted Jaccard similarity of circular profiles
+as `"metric": "jaccard"`; see [Method and statistics](method.md).
 
 Important options:
 
 - `--fasta PATH` supplies the comparison sequences.
-- Without `--fasta`, `--num-sequences`, `--seq-length`, and `--seed` control generated DNA sequences.
+- Without `--fasta`, `--num-sequences` (default `10000`), `--seq-length` (default `100`), and `--seed` control generated uniform DNA sequences.
 - `--background PATH` supplies a separate sequence batch for normalization.
-- `--search-range`, `--window-radius`, and `--realign-window` configure alignment.
-- `--min-logerr` controls anchor selection and exact-tail calibration.
+- `--search-range` (default `5`) sets the largest circular shift tried in each direction.
+- `--min-logerr` (default `4.0`, must be positive) is the threshold a position must reach in either profile to contribute.
 - `--cache-dir PATH` enables prepared-profile disk/mmap caching.
 - `--pvalue --null-distribution PATH` adds empirical significance annotations.
 - `--effective-number-of-targets N` changes E-values without changing BH adjustment.
@@ -34,12 +35,16 @@ For a scores-only comparison, `--fasta` and `--background` are rejected because
 the profiles already contain the comparison data. `--null-distribution` and
 `--effective-number-of-targets` require `--pvalue`.
 
+The default threshold expects about `10^6` positions per strand. With fewer
+than 50 expected positions above the threshold, a warning is written to
+`stderr`; lower `--min-logerr` for small FASTA batches.
+
 Example:
 
 ```bash
 uv run mimosa compare examples/foxa2.meme examples/gata2.meme \
   --query-type pwm --target-type pwm \
-  --fasta examples/foreground.fa --metric cosine
+  --fasta examples/foreground.fa --min-logerr 2
 ```
 
 ## `compare-many`
@@ -73,8 +78,9 @@ uv run mimosa build-null MOTIFS \
 `MOTIFS` must be a directory containing at least two readable PWM files. Mimosa
 uses the first motif in each MEME file. `--background` supplies an optional
 separate normalization batch.
-`--num-samples`, `--seed`, `--metric`, the alignment options, and `--cache-dir`
-control construction. The summary is JSON on `stdout`.
+`--num-samples`, `--seed`, `--search-range`, `--min-logerr`, and `--cache-dir`
+control construction. A null bundle only annotates comparisons that use the
+same sequences, background, `--search-range`, and `--min-logerr`. The summary is JSON on `stdout`.
 
 ## `cache clear`
 

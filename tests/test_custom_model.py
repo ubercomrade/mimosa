@@ -94,10 +94,12 @@ class TestCustomModel:
 
     def test_compare_custom_vs_builtin(self, pwm, batch):
         custom = ShiftedPWM(pwm)
-        result = compare(custom, pwm, batch)
+        result = compare(custom, pwm, batch, min_logerr=2.0)
         assert result.query == "shifted-" + pwm.name
         assert result.target == pwm.name
-        assert 0 <= float(result.score) <= 1
+        # Circular profiles are indexed by site start, so the shift is zero.
+        assert float(result.score) == pytest.approx(1.0, abs=1e-3)
+        assert result.offset == 0
 
     def test_sites_via_custom(self, pwm, batch):
         custom = ShiftedPWM(pwm)

@@ -4,7 +4,8 @@
 
 - This is one Python package/CLI, not a monorepo: source is `src/mimosa`, tests are `tests`, and runnable fixtures are `examples`.
 - Entrypoints are `mimosa.cli:main` and `python -m mimosa.cli`.
-- `compare_many(query, targets, ...)` is one-query, one-metric-per-call, and preserves target order.
+- `compare_many(query, targets, ...)` is one-query and preserves target order.
+- The only similarity measure is the weighted Jaccard index (`metric == "jaccard"`) over circular logERR profiles; `compare`, `compare_many`, and `build_null` prepare profiles with `circular=True` and reject linear `PreparedProfile` inputs. `prepare_profile` defaults to the linear layout because other tools use it.
 - Check hypotheses, build mini-prototypes, and run other exploratory experiments in `experiments/`; it is ignored by Git.
 
 ## Environment
@@ -17,6 +18,7 @@
 
 - Full tests: `uv run pytest -q`.
 - Focused test: `uv run pytest -q tests/test_profiles.py::TestCompare::test_one_to_many`.
+- The example FASTA has about `1.5e5` positions per strand, too few for the default `min_logerr=4.0`; tests and examples that use it pass `min_logerr=2.0` to avoid the few-positions warning.
 - Lint: `uv run ruff check .`; Ruff is the only configured static check. There is no configured formatter, typecheck, or codegen step.
 - CLI tests spawn `python -m mimosa.cli` and require JSON-only stdout; diagnostics and progress belong on stderr.
 - CI-equivalent example smoke test: `uv run bash examples/run.sh`.
@@ -26,15 +28,16 @@
 
 - Numba row-parallel work requires more than one thread, at least `50_000` items, and at least `64` rows; normalization uses the item/thread thresholds.
 - Built-in scan uses row-parallel kernels when eligible; custom models remain serial.
+- Row-parallel alignment additionally requires `(query anchors + target anchors) * shifts >= 25_000`; serial and parallel kernels reduce rows in order and must stay bitwise identical.
 - `compare_many` derives joblib target workers from `total_threads / inner_threads`, runs the complete target pipeline in parallel workers when eligible, and preserves target order.
 - Do not add nested `prange` or another process pool; joblib outer parallelism and Numba inner parallelism are the measured execution layers.
 
 ## Cache
 
-- Prepared-profile cache format v4 stores raw score, offset, and anchor sections in read-only mmap-backed arrays; legacy pickle entries are still accepted.
+- Prepared-profile cache format v7 stores normalized score and offset sections plus the `circular` flag in read-only mmap-backed arrays; anchors are rebuilt per `min_logerr`, and entries from other formats are misses.
 - Never load an untrusted cache directory: the legacy fallback executes pickle, and checksums detect corruption but do not make pickle safe.
 - The disk cache does not retain prepared profiles in a process-local store; verified-entry state is per cache instance and prepared arrays are read-only mmap-backed sections.
-- Cache keys include model, sequences, background, Float32 `min_logerr`, normalization, and algorithm versions. Clear stale entries with `uv run mimosa cache clear --cache-dir .mimosa-cache`.
+- Cache keys include model, sequences, background, normalization, the `circular` layout, and algorithm versions; `min_logerr` is not part of the key. Clear stale entries with `uv run mimosa cache clear --cache-dir .mimosa-cache`.
 
 ## Benchmarks
 

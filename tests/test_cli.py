@@ -36,14 +36,16 @@ class TestCompareCommand:
             "scores",
             "--target-type",
             "scores",
+            "--min-logerr",
+            "2",
         )
         assert r.returncode == 0, r.stderr
         d = json.loads(r.stdout)
         assert d["query"] == "scores_1"
         assert d["target"] == "scores_2"
         assert d["orientation"] == "++"
-        assert d["offset"] == -6
-        assert d["metric"] == "co"
+        assert d["offset"] == 4
+        assert d["metric"] == "jaccard"
         assert "error" not in r.stdout
 
     def test_motif_models_with_fasta(self):
@@ -57,18 +59,57 @@ class TestCompareCommand:
             "pwm",
             "--fasta",
             "examples/foreground.fa",
+            "--min-logerr",
+            "2",
         )
         assert r.returncode == 0, r.stderr
+        assert r.stderr == ""
         d = json.loads(r.stdout)
         assert d["query"] == "MA0047.3"
-        assert d["n_sites"] == 199
+        assert d["n_sites"] == 2828
+
+    def test_defaults_use_generated_sequences_and_threshold_four(self):
+        r = run_cli(
+            "compare",
+            "examples/foxa2.meme",
+            "examples/foxa2.meme",
+            "--query-type",
+            "pwm",
+            "--target-type",
+            "pwm",
+        )
+        assert r.returncode == 0, r.stderr
+        assert r.stderr == ""
+        d = json.loads(r.stdout)
+        assert d["score"] == 1.0
+        assert d["offset"] == 0
+        assert 50 < d["n_sites"] < 200
+
+    def test_few_positions_warn_on_stderr_only(self):
+        r = run_cli(
+            "compare",
+            "examples/foxa2.meme",
+            "examples/gata2.meme",
+            "--query-type",
+            "pwm",
+            "--target-type",
+            "pwm",
+            "--fasta",
+            "examples/foreground.fa",
+        )
+        assert r.returncode == 0, r.stderr
+        assert "noisy" in r.stderr
+        assert json.loads(r.stdout)["metric"] == "jaccard"
 
     def test_missing_type(self):
         r = run_cli("compare", "a", "b")
         assert r.returncode != 0
         assert "error" in r.stderr
 
-    def test_invalid_metric(self):
+    @pytest.mark.parametrize(
+        "option", ("--metric", "--window-radius", "--circular")
+    )
+    def test_removed_options_are_rejected(self, option):
         r = run_cli(
             "compare",
             "examples/scores_1.fasta",
@@ -77,10 +118,11 @@ class TestCompareCommand:
             "scores",
             "--target-type",
             "scores",
-            "--metric",
-            "bogus",
+            option,
+            "1",
         )
-        assert r.returncode != 0
+        assert r.returncode == 2
+        assert "unrecognized arguments" in r.stderr
 
     def test_missing_file(self):
         r = run_cli(
@@ -93,21 +135,6 @@ class TestCompareCommand:
             "scores",
         )
         assert r.returncode == 2
-
-    def test_metric_variant(self):
-        r = run_cli(
-            "compare",
-            "examples/scores_1.fasta",
-            "examples/scores_2.fasta",
-            "--query-type",
-            "scores",
-            "--target-type",
-            "scores",
-            "--metric",
-            "cosine",
-        )
-        assert r.returncode == 0, r.stderr
-        assert json.loads(r.stdout)["metric"] == "cosine"
 
     @pytest.mark.parametrize("option", ("--fasta", "--background"))
     def test_scores_only_rejects_unused_sequence_options(self, option):
@@ -308,12 +335,10 @@ class TestCacheCommand:
     def test_null_compatibility_rejects_alignment_version(self):
         dist = SimpleNamespace(
             strategy="profile",
-            metric="co",
+            metric="jaccard",
             contract={
-                "search_range": 10,
-                "window_radius": 10,
-                "realign_window": 3,
-                "min_logerr": 0.0,
+                "search_range": 5,
+                "min_logerr": 4.0,
                 "alignment_version": "old-alignment",
             },
             sequence_fingerprint="none",
@@ -323,13 +348,10 @@ class TestCacheCommand:
         with pytest.raises(MimosaError, match="alignment version"):
             _validate_null_compatibility(
                 dist,
-                metric="co",
                 sequences=None,
                 background=None,
-                search_range=10,
-                window_radius=10,
-                realign_window=3,
-                min_logerr=0.0,
+                search_range=5,
+                min_logerr=4.0,
                 model_types=("pwm", "pwm"),
             )
 

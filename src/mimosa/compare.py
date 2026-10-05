@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -9,7 +10,8 @@ import numpy as np
 from joblib import Parallel, delayed
 
 from .models import BaMM, Dimont, MotifModel, PWM, SiteGA, Slim
-from .profiles.alignment import ProfileConfig, parse_profile_metric, profile_compare
+from .profiles.alignment import METRIC_NAME, ProfileConfig, profile_compare
+from .profiles.anchors import DEFAULT_MIN_LOGERR, parse_min_logerr
 from .profiles.prepared import (
     PreparedProfile,
     ScoreProfile,
@@ -24,7 +26,7 @@ class ComparisonResult:
     score: np.float32
     offset: int
     orientation: str
-    metric: str
+    metric: str = METRIC_NAME
     n_sites: int = 0
 
     def to_dict(self):
@@ -50,24 +52,51 @@ def _check_prepared_compatibility(query, target):
         raise ValueError("prepared profiles use different min_logerr thresholds.")
     if query.normalization != target.normalization:
         raise ValueError("prepared profiles use different normalization strategies.")
+    _check_circular(query)
+    _check_circular(target)
+
+
+def _check_circular(profile):
+    if isinstance(profile, PreparedProfile) and not profile.circular:
+        raise ValueError(
+            "comparison requires circular prepared profiles; "
+            "use prepare_profile(..., circular=True)."
+        )
+
+
+def _warn_if_few_positions(prepared):
+    """Warn when too few positions per strand are expected above the threshold.
+
+    Compared profiles share row layout and threshold, so checking the query
+    covers every target.
+    """
+    positions = prepared.bundle.forward.data.size
+    expected = positions * 10.0 ** -float(prepared.min_logerr)
+    if expected < MIN_EXPECTED_ANCHORS:
+        warnings.warn(
+            f"profile '{prepared.name}': only about {expected:.3g} of {positions} "
+            f"positions per strand are expected at "
+            f"min_logerr={float(prepared.min_logerr):g}; the {METRIC_NAME} "
+            "score is noisy. Use more sequence positions or a lower min_logerr.",
+            stacklevel=3,
+        )
 
 
 def _compare_prepared(query, target, config):
-    score, shift, orientation, n_sites, metric_str = profile_compare(
+    score, shift, orientation, n_sites = profile_compare(
         query.bundle,
         query.anchors,
         target.bundle,
         target.anchors,
         config,
-        query_site_start_offset=query.site_start_offset,
-        target_site_start_offset=target.site_start_offset,
     )
     return ComparisonResult(
-        query.name, target.name, score, shift, orientation, metric_str, n_sites
+        query.name, target.name, score, shift, orientation, METRIC_NAME, n_sites
     )
 
 
 _BUILTIN_MODELS = (PWM, BaMM, Dimont, SiteGA, Slim)
+MIN_EXPECTED_ANCHORS = 50
 _worker_cache_path: str | None = None
 _worker_cache_obj = None
 
@@ -146,6 +175,7 @@ def _prepare_side(
             min_logerr=threshold,
             normalization=normalization,
             cache=cache,
+            circular=True,
             _preparation_context=preparation_context,
         )
     if isinstance(model, ScoreProfile):
@@ -154,22 +184,25 @@ def _prepare_side(
             min_logerr=threshold,
             normalization=normalization,
             cache=cache,
+            circular=True,
             _preparation_context=preparation_context,
         )
     return None
 
 
-def compare(query, target, sequences=None, *, background=None, metric="co", search_range=10, window_radius=10, realign_window=3, min_logerr=None, normalization=None, cache=None):
-    """Compare two profiles or motif models.
+def compare(query, target, sequences=None, *, background=None, search_range=5, min_logerr=None, normalization=None, cache=None):
+    """Compare two profiles or motif models by weighted Jaccard similarity.
 
     Accepts (PreparedProfile, PreparedProfile), (PreparedProfile, ScoreProfile),
     (PreparedProfile, MotifModel, sequences), (MotifModel, MotifModel, sequences),
-    or (ScoreProfile, ScoreProfile).
+    or (ScoreProfile, ScoreProfile). Sequences are treated as circular, so
+    prepared inputs must come from ``prepare_profile(..., circular=True)``.
+    ``min_logerr=None`` takes the threshold of a prepared input, else 4.0.
     """
-    m = parse_profile_metric(metric)
-
     q_prepared = isinstance(query, PreparedProfile)
     t_prepared = isinstance(target, PreparedProfile)
+    _check_circular(query)
+    _check_circular(target)
 
     if (isinstance(query, ScoreProfile) and isinstance(target, MotifModel)) or (
         isinstance(query, MotifModel) and isinstance(target, ScoreProfile)
@@ -179,24 +212,25 @@ def compare(query, target, sequences=None, *, background=None, metric="co", sear
     if q_prepared and t_prepared:
         _check_prepared_compatibility(query, target)
         if min_logerr is not None:
-            _check_threshold(np.float32(min_logerr), query)
+            _check_threshold(parse_min_logerr(min_logerr), query)
         if normalization is not None and normalization != query.normalization:
             raise ValueError("prepared query and requested normalization differ.")
         threshold = query.min_logerr
         norm = query.normalization
     elif q_prepared or t_prepared:
         existing = query if q_prepared else target
-        threshold = existing.min_logerr if min_logerr is None else np.float32(min_logerr)
+        threshold = existing.min_logerr if min_logerr is None else parse_min_logerr(min_logerr)
         _check_threshold(threshold, existing)
         if normalization is not None and normalization != existing.normalization:
             raise ValueError("prepared query and requested normalization differ.")
         norm = existing.normalization
     else:
-        threshold = np.float32(0.0 if min_logerr is None else min_logerr)
+        threshold = parse_min_logerr(DEFAULT_MIN_LOGERR if min_logerr is None else min_logerr)
         norm = normalization
         if isinstance(query, ScoreProfile) and isinstance(target, ScoreProfile) and sequences is not None:
             raise ValueError("ScoreProfile comparison does not consume sequences.")
 
+    config = ProfileConfig(search_range=search_range, min_logerr=threshold)
     preparation_context = None
     if cache is not None and sequences is not None:
         from .cache import _make_preparation_context
@@ -223,8 +257,7 @@ def compare(query, target, sequences=None, *, background=None, metric="co", sear
     if pq is None or pt is None:
         raise TypeError(f"unsupported comparison inputs: {type(query).__name__} vs {type(target).__name__}")
     _check_prepared_compatibility(pq, pt)
-
-    config = ProfileConfig(metric=m, search_range=search_range, window_radius=window_radius, realign_window=realign_window, min_logerr=threshold)
+    _warn_if_few_positions(pq)
     return _compare_prepared(pq, pt, config)
 
 
@@ -234,10 +267,7 @@ def compare_many(
     sequences=None,
     *,
     background=None,
-    metric="co",
-    search_range=10,
-    window_radius=10,
-    realign_window=3,
+    search_range=5,
     min_logerr=None,
     normalization=None,
     cache=None,
@@ -262,6 +292,9 @@ def compare_many(
     if total_threads % inner_threads:
         raise ValueError("total_threads must be divisible by inner_threads.")
     target_sources = list(targets)
+    _check_circular(query)
+    for target in target_sources:
+        _check_circular(target)
     joblib_workers = min(total_threads // inner_threads, len(target_sources)) if target_sources else 1
     if joblib_workers > 1:
         if isinstance(query, MotifModel) and not isinstance(query, _BUILTIN_MODELS):
@@ -280,6 +313,15 @@ def compare_many(
         from .cache import _make_preparation_context
 
         preparation_context = _make_preparation_context(sequences, background)
+    if isinstance(query, PreparedProfile):
+        threshold = query.min_logerr
+        if min_logerr is not None:
+            _check_threshold(parse_min_logerr(min_logerr), query)
+    else:
+        threshold = parse_min_logerr(
+            DEFAULT_MIN_LOGERR if min_logerr is None else min_logerr
+        )
+    config = ProfileConfig(search_range=search_range, min_logerr=threshold)
     if not isinstance(query, PreparedProfile):
         query_source = query
         with _numba_thread_budget(inner_threads):
@@ -287,21 +329,17 @@ def compare_many(
                 query,
                 sequences,
                 background,
-                0.0 if min_logerr is None else min_logerr,
+                threshold,
                 normalization,
                 cache,
                 preparation_context,
             )
         if query is None:
             raise TypeError(f"unsupported comparison query: {type(query_source).__name__}")
-
-    if min_logerr is not None and np.float32(min_logerr) != query.min_logerr:
-        _check_threshold(np.float32(min_logerr), query)
-    threshold = query.min_logerr
     if normalization is not None and normalization != query.normalization:
         raise ValueError("prepared query and requested normalization differ.")
     norm = query.normalization
-    config = ProfileConfig(metric=parse_profile_metric(metric), search_range=search_range, window_radius=window_radius, realign_window=realign_window, min_logerr=threshold)
+    _warn_if_few_positions(query)
 
     if joblib_workers > 1:
         return Parallel(n_jobs=joblib_workers, backend="loky")(

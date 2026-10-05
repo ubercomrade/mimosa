@@ -31,20 +31,16 @@ class TestParallel:
 
     def test_alignment_dispatch_considers_shape_and_anchor_density(self, monkeypatch):
         monkeypatch.setattr("mimosa.parallel.get_num_threads", lambda: 2)
+        anchors = MIN_PARALLEL_ALIGNMENT_OPERATIONS // 11
         assert not use_alignment_parallel(
-            MIN_PARALLEL_ITEMS, rows=64, shifts=1, window_radius=0, anchor_count=64
+            MIN_PARALLEL_ITEMS, rows=64, shifts=11, anchor_count=anchors
         )
         assert use_alignment_parallel(
-            MIN_PARALLEL_ITEMS,
-            rows=64,
-            shifts=21,
-            window_radius=10,
-            anchor_count=64,
+            MIN_PARALLEL_ITEMS, rows=64, shifts=11, anchor_count=anchors + 1
         )
-        assert use_alignment_parallel(
-            MIN_PARALLEL_ITEMS,
-            rows=64,
-            shifts=2,
-            window_radius=0,
-            anchor_count=MIN_PARALLEL_ALIGNMENT_OPERATIONS,
+        assert not use_alignment_parallel(
+            MIN_PARALLEL_ITEMS - 1, rows=64, shifts=11, anchor_count=anchors + 1
+        )
+        assert not use_alignment_parallel(
+            MIN_PARALLEL_ITEMS, rows=63, shifts=11, anchor_count=anchors + 1
         )
