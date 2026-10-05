@@ -19,4 +19,5 @@ coverage.xml
 .env
 AGENTS.md
 PLAN.md
+PLAN_ Fi-NeMo.md
 experiments/
