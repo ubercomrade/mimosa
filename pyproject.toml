@@ -28,6 +28,8 @@ build-backend = "uv_build"
 
 [tool.uv.build-backend]
 module-name = "mimosa"
+# Ship what the test suite needs so the sdist can be tested on its own.
+source-include = ["tests/**", "examples/**", "benchmarks/**"]
 
 [tool.ruff]
 target-version = "py312"

@@ -1,5 +1,7 @@
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+# Make a failing native command (uv/mimosa) stop the script, not just the last one.
+$PSNativeCommandUseErrorActionPreference = $true
 Set-Location $PSScriptRoot
 
 uv run mimosa compare ./myog.ihbcp ./pif4.meme `

@@ -9,9 +9,17 @@ permissions:
   contents: read
 
 jobs:
+  checks:
+    name: Lint and tests
+    uses: ./.github/workflows/test.yml
+
   build_dist:
     name: Build distribution artifacts
+    needs: [checks]
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
 
@@ -36,23 +44,27 @@ jobs:
       - name: Check distribution metadata
         run: uvx twine check dist/*
 
-      - name: Test sdist installation and console entry point
+      - name: Test sdist installation, console entry point, and tests
         run: |
-           uv venv test_env
-           source test_env/bin/activate
-           uv pip install dist/*.tar.gz
-           uv pip install pytest
-           mimosa --version
-           pytest -q tests
+          mkdir sdist_src
+          tar -xzf dist/*.tar.gz -C sdist_src --strip-components=1
+          uv venv --python ${{ matrix.python-version }} test_env
+          source test_env/bin/activate
+          uv pip install dist/*.tar.gz pytest
+          cd sdist_src
+          mimosa --version
+          pytest -q
+          bash examples/run.sh
 
       - name: Test wheel console entry point
         run: |
-           uv venv wheel_env
-           source wheel_env/bin/activate
-           uv pip install dist/*.whl
-           mimosa --version
+          uv venv --python ${{ matrix.python-version }} wheel_env
+          source wheel_env/bin/activate
+          uv pip install dist/*.whl
+          mimosa --version
 
       - uses: actions/upload-artifact@v4
+        if: matrix.python-version == '3.13'
         with:
           name: dist
           path: dist/*
