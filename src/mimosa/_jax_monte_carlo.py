@@ -1,13 +1,10 @@
-"""Experimental ordered-pair R-B Monte Carlo using only JAX score kernels.
-
-Not a public API: shape-specialized compilation, resource budgeting and
-cross-backend reproducibility still need validation.
-"""
+"""Ordered-pair R-B Monte Carlo using JAX score kernels."""
 
 from __future__ import annotations
 
 import hashlib
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -40,7 +37,23 @@ def _profile(model, sequences, background):
 
 def direct_mc(queries, targets, sequences, *, k, seed, group="full",
               min_logerr=4.0, search_range=5, background=None):
-    """Return observed Float32 scores, counts and p-values for ordered pairs."""
+    """Return observed scores, exceedance counts and p-values for ordered pairs.
+
+    Rows correspond to queries and columns to targets. Each fixed query is
+    compared with independently randomized replicates of each target. Ties are
+    included, and p = (count + 1) / (k + 1).
+
+    Only PWM, BaMM, Dimont and Slim are supported. JAX manages device
+    execution; this routine does not change the caller's global x64 setting.
+    """
+    with jax.enable_x64(True):
+        return _direct_mc(queries, targets, sequences, k=k, seed=seed, group=group,
+                          min_logerr=min_logerr, search_range=search_range,
+                          background=background)
+
+
+def _direct_mc(queries, targets, sequences, *, k, seed, group,
+               min_logerr, search_range, background):
     k, seed = strict_integer(k, "k"), strict_integer(seed, "seed")
     search_range = strict_integer(search_range, "search_range")
     if k < 1 or seed < 0 or search_range < 0:

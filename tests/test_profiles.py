@@ -625,8 +625,7 @@ class TestCompare:
             query, target, batch, None, query.min_logerr, query.normalization,
             ProfileConfig(min_logerr=TAU0), None, None, 1,
         )
-        assert calls[0] == 1
-        assert calls[1] >= 1
+        assert calls == []
 
     def test_compare_many_applies_thread_budget_to_query_and_serial_target(
         self, pwm_pair, batch, monkeypatch
@@ -654,7 +653,7 @@ class TestCompare:
             inner_threads=2,
         )
 
-        assert observed_threads == [2, 2]
+        assert observed_threads == [previous_threads, previous_threads]
         assert numba.get_num_threads() == previous_threads
 
     @pytest.mark.parametrize("threshold", (1.0, TAU0))
@@ -702,7 +701,7 @@ class TestCompare:
         with pytest.raises(ValueError, match="divisible"):
             compare_many(pwm_pair[0], [pwm_pair[1]], batch, total_threads=3, inner_threads=2)
 
-    def test_compare_many_rejects_raw_custom_model_in_joblib_path(
+    def test_compare_many_accepts_raw_custom_model_with_legacy_budget(
         self, pwm_pair, batch
     ):
         from mimosa import MotifModel
@@ -715,14 +714,12 @@ class TestCompare:
                 forward.fill(0)
                 reverse.fill(0)
 
-        with pytest.raises(TypeError, match="custom models"):
-            compare_many(
-                pwm_pair[0],
-                [CustomModel(), CustomModel()],
-                batch,
-                total_threads=2,
-                inner_threads=1,
-            )
+        results = compare_many(
+            pwm_pair[0], [CustomModel(), CustomModel()], batch,
+            min_logerr=TAU0, total_threads=2, inner_threads=1,
+        )
+        assert len(results) == 2
+        assert results[0] == results[1]
 
     def test_compare_many_reprepares_duplicate_raw_targets_without_cache(
         self, pwm_pair, batch, monkeypatch
@@ -800,19 +797,10 @@ class TestCompare:
     def test_alignment_row_parallel_matches_serial(
         self, pwm_pair, batch, monkeypatch, threshold
     ):
-        import importlib
-
-        alignment_module = importlib.import_module("mimosa.profiles.alignment")
         query = circular_profile(pwm_pair[0], batch, min_logerr=threshold)
         target = circular_profile(pwm_pair[1], batch, min_logerr=threshold)
-        monkeypatch.setattr(
-            alignment_module, "use_alignment_parallel", lambda *args, **kwargs: False
-        )
         serial = compare(query, target)
-        monkeypatch.setattr(
-            alignment_module, "use_alignment_parallel", lambda *args, **kwargs: True
-        )
-        parallel = compare(query, target)
+        parallel = compare_many(query, [target], total_threads=2)[0]
         assert parallel == serial
 
     def test_prepared_profile_picklable(self, pwm_pair, batch):

@@ -29,7 +29,7 @@ from .randomization import (
 )
 
 SAMPLING_VERSION = "original-shuffled-ordered-pairs-v3"
-ALIGNMENT_VERSION = "circular-jaccard-jax-profile-v2"
+ALIGNMENT_VERSION = "circular-jaccard-jax-dense-v3"
 
 
 @dataclass(frozen=True)
@@ -186,6 +186,10 @@ class AnnotatedResult:
     null_id: str | None = None
     null_n: int | None = None
     null_estimator: str | None = None
+    mc_replicates: int | None = None
+    mc_exceedances: int | None = None
+    mc_seed: int | None = None
+    mc_group: str | None = None
 
     def __getattr__(self, name):
         # Only reached for names missing on the dataclass itself; guard
@@ -209,6 +213,15 @@ class AnnotatedResult:
             d["null_n"] = self.null_n
         if self.null_estimator is not None:
             d["null_estimator"] = self.null_estimator
+        if self.mc_replicates is not None:
+            d["annotation_schema_version"] = 2
+            d["monte_carlo"] = {
+                "replicates": self.mc_replicates,
+                "exceedances": self.mc_exceedances,
+                "seed": self.mc_seed,
+                "group": self.mc_group,
+                "version": "mimosa-direct-mc-v1",
+            }
         return d
 
 

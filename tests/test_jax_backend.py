@@ -3,8 +3,6 @@ import os
 import subprocess
 import sys
 
-os.environ.setdefault("JAX_ENABLE_X64", "true")
-
 import numpy as np
 import pytest
 
@@ -19,6 +17,12 @@ from mimosa.profiles.normalization import (  # noqa: E402
     EmpiricalLogTail, fit, normalize_bundle,
 )
 from mimosa.scan import _scan_batch_into  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _enable_x64_for_low_level_tests():
+    with jax.enable_x64(True):
+        yield
 
 
 def _legacy_scan(model, sequences, circular):
@@ -124,6 +128,29 @@ from mimosa import EncodedSequences, prepare_profile, read_model
 assert not jax.config.x64_enabled
 batch = EncodedSequences.from_strings(["ACGTN" * 8])
 prepare_profile(read_model("examples/foxa2.meme"), batch, min_logerr=2, circular=True)
+assert not jax.config.x64_enabled
+"""
+    env = dict(os.environ, JAX_PLATFORMS="cpu", JAX_ENABLE_X64="false")
+    subprocess.run([sys.executable, "-c", script], env=env, check=True)
+
+
+def test_public_monte_carlo_preserves_x64_and_pair_independence():
+    script = """
+import jax
+import numpy as np
+from mimosa import EncodedSequences, direct_mc, read_model
+q = read_model("examples/foxa2.meme")
+t = read_model("examples/gata4.meme")
+s = EncodedSequences.from_strings(["ACGTN" * 12, "", "TGCAT" * 10])
+b = EncodedSequences.from_strings(["TGCA" * 20])
+assert not jax.config.x64_enabled
+for group in ("full", "gc"):
+    kw = dict(k=2, seed=19, group=group, min_logerr=1, search_range=1, background=b)
+    single = direct_mc([q], [t], s, **kw)
+    many = direct_mc([t, q], [q, t], s, **kw)
+    for a, m in zip(single, many):
+        assert a[0, 0] == m[1, 1]
+    assert single[2][0, 0] == (single[1][0, 0] + 1) / 3
 assert not jax.config.x64_enabled
 """
     env = dict(os.environ, JAX_PLATFORMS="cpu", JAX_ENABLE_X64="false")

@@ -5,11 +5,6 @@ from __future__ import annotations
 import numpy as np
 
 from ..arrays import RaggedArray, StrandPair
-from ..parallel import use_parallel
-from .._kernels import (
-    transform_empirical_scores,
-    transform_empirical_scores_parallel,
-)
 
 
 class LogTailTable:
@@ -61,11 +56,13 @@ def transform_scores(table, scores, *, out=None):
         out = np.empty(scores.data.size, dtype=np.float32)
     elif out is not scores.data:
         raise ValueError("normalization output must be the input score buffer.")
-    parallel = use_parallel(scores.data.size)
     if not isinstance(table, LogTailTable):
         raise ValueError(f"unknown table type: {type(table)!r}")
-    kernel = transform_empirical_scores_parallel if parallel else transform_empirical_scores
-    kernel(scores.data, table.scores, table.log_tail, out)
+    import jax.numpy as jnp
+
+    indices = jnp.searchsorted(-jnp.asarray(table.scores), -jnp.asarray(scores.data), side="right") - 1
+    indices = jnp.clip(indices, 0, table.scores.size - 1)
+    out[:] = np.asarray(jnp.asarray(table.log_tail)[indices])
     return RaggedArray(out, scores.offsets)
 
 

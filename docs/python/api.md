@@ -95,11 +95,10 @@ prepare the profile again.
 
 `compare_many(query, targets, sequences=None, total_threads=1,
 inner_threads=1, **options)` keeps target order stable and reuses a prepared
-query. It derives `joblib_workers = min(total_threads / inner_threads, number of targets)`; the
-complete target preparation and alignment pipeline runs in each joblib worker
-when that value is greater than one. `inner_threads` is limited to 1 through 4
-and `total_threads` must be divisible by it. Raw custom models require serial
-comparison or preparation before calling the parallel path.
+query. Targets run sequentially in one process using JAX. The legacy thread
+arguments are validated but do not control JAX or target parallelism:
+`inner_threads` is limited to 1 through 4 and `total_threads` must be divisible
+by it. Raw custom models are scanned serially.
 
 `ComparisonResult` is immutable and exposes `query`, `target`, `score`,
 `offset`, `orientation`, `metric`, and `n_sites`, plus the `search_range` and

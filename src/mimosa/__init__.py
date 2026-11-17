@@ -65,6 +65,7 @@ from .statistics import (
     empirical_upper_tail_pvalue,
     evalue,
 )
+from ._jax_monte_carlo import direct_mc
 from .io import read_fasta, read_model, read_scores, write_model
 
 __version__ = version("mimosa-tool")
@@ -79,6 +80,7 @@ __all__ = [
     "ComparisonResult",
     "compare",
     "compare_many",
+    "direct_mc",
     "InvariantError",
     "MimosaError",
     "ModelDimensionError",

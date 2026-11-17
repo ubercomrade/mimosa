@@ -72,22 +72,8 @@ results = compare_many(prepared_query, targets, sequences)
 
 Comparison requires `circular=True`; the default linear layout is rejected.
 
-For target-level parallelism, divide a total thread budget between joblib
-workers and Numba threads:
-
-```python
-results = compare_many(
-    prepared_query,
-    targets,
-    sequences,
-    total_threads=4,
-    inner_threads=1,
-)
-```
-
-The derived target worker count is `min(total_threads / inner_threads, number of targets)`. Numba
-threads are limited to 1 through 4, and the total budget must be divisible by
-the inner budget.
+Targets are processed in order in a single process. JAX manages device
+execution; the legacy thread-budget arguments do not control JAX.
 
 For precomputed score tracks, use `read_scores`:
 

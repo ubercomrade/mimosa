@@ -61,7 +61,8 @@ uv run mimosa compare-many QUERY TARGET [TARGET ...] \
 ```
 
 `--numba-threads` is limited to 1 through 4. `TOTAL` must be positive and
-divisible by `NUMBA`; the derived joblib worker count is `TOTAL / NUMBA`.
+divisible by `NUMBA`. These legacy options do not control JAX or target
+parallelism; targets are processed in one process.
 Results are emitted as an ordered JSON array. `--pvalue` annotates every result
 after validating the comparison parameters against the null bundle.
 `--cache-dir` is optional; without it no cache directory or mmap reuse is

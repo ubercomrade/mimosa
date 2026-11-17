@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import warnings
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import numpy as np
-from joblib import Parallel, delayed
 
 from .models import BaMM, Dimont, MotifModel, PWM, SiteGA, Slim
 from .profiles.alignment import METRIC_NAME, ProfileConfig, profile_compare
@@ -133,18 +131,6 @@ _worker_cache_path: str | None = None
 _worker_cache_obj = None
 
 
-@contextmanager
-def _numba_thread_budget(threads):
-    from numba import get_num_threads, set_num_threads
-
-    previous = get_num_threads()
-    set_num_threads(threads)
-    try:
-        yield
-    finally:
-        set_num_threads(previous)
-
-
 def _worker_cache(directory):
     global _worker_cache_path, _worker_cache_obj
     if directory is None:
@@ -170,20 +156,15 @@ def _prepare_and_compare_with_threads(
     preparation_context,
     threads,
 ):
-    with _numba_thread_budget(threads):
-        target = _prepare_side(
-            target_source,
-            sequences,
-            background=background,
-            threshold=threshold,
-            normalization=normalization,
-            cache=_worker_cache(cache_directory),
-            preparation_context=preparation_context,
-        )
-        if target is None:
-            raise TypeError(f"unsupported comparison target: {type(target_source).__name__}")
-        _check_prepared_compatibility(query, target)
-        return _compare_prepared(query, target, config)
+    target = _prepare_side(
+        target_source, sequences, background=background, threshold=threshold,
+        normalization=normalization, cache=_worker_cache(cache_directory),
+        preparation_context=preparation_context,
+    )
+    if target is None:
+        raise TypeError(f"unsupported comparison target: {type(target_source).__name__}")
+    _check_prepared_compatibility(query, target)
+    return _compare_prepared(query, target, config)
 
 
 def _prepare_side(
@@ -295,8 +276,8 @@ def compare_many(
 ):
     """Compare one query against targets in stable order.
 
-    ``total_threads`` is divided between joblib target workers and Numba
-    threads. Target preparation and alignment run in the same worker.
+    Targets run in order in one process. The legacy thread arguments are
+    validated for compatibility but do not control JAX's execution pool.
     """
     if isinstance(total_threads, bool) or not isinstance(total_threads, (int, np.integer)):
         raise TypeError("total_threads must be a positive integer.")
@@ -314,19 +295,6 @@ def compare_many(
     _check_circular(query)
     for target in target_sources:
         _check_circular(target)
-    joblib_workers = min(total_threads // inner_threads, len(target_sources)) if target_sources else 1
-    if joblib_workers > 1:
-        if isinstance(query, MotifModel) and not isinstance(query, _BUILTIN_MODELS):
-            raise TypeError(
-                "custom models must be prepared before parallel compare_many or compared serially."
-            )
-        if any(
-            isinstance(target, MotifModel) and not isinstance(target, _BUILTIN_MODELS)
-            for target in target_sources
-        ):
-            raise TypeError(
-                "custom models must be prepared before parallel compare_many or compared serially."
-            )
     preparation_context = None
     if cache is not None and sequences is not None:
         from .cache import _make_preparation_context
@@ -343,16 +311,10 @@ def compare_many(
     config = ProfileConfig(search_range=search_range, min_logerr=threshold)
     if not isinstance(query, PreparedProfile):
         query_source = query
-        with _numba_thread_budget(inner_threads):
-            query = _prepare_side(
-                query,
-                sequences,
-                background,
-                threshold,
-                normalization,
-                cache,
-                preparation_context,
-            )
+        query = _prepare_side(
+            query, sequences, background, threshold, normalization, cache,
+            preparation_context,
+        )
         if query is None:
             raise TypeError(f"unsupported comparison query: {type(query_source).__name__}")
     if normalization is not None and normalization != query.normalization:
@@ -360,40 +322,14 @@ def compare_many(
     norm = query.normalization
     _warn_if_few_positions(query)
 
-    if joblib_workers > 1:
-        return Parallel(n_jobs=joblib_workers, backend="loky")(
-            delayed(_prepare_and_compare_with_threads)(
-                query,
-                target_source,
-                sequences,
-                background,
-                threshold,
-                norm,
-                config,
-                None if cache is None else cache.directory,
-                preparation_context,
-                int(inner_threads),
-            )
-            for target_source in target_sources
-        )
-
-    # Serial mode keeps preparation and comparison in one target-at-a-time pipeline.
     results = []
-    with _numba_thread_budget(inner_threads):
-        for target_source in target_sources:
-            target = _prepare_side(
-                target_source,
-                sequences,
-                background=background,
-                threshold=threshold,
-                normalization=norm,
-                cache=cache,
-                preparation_context=preparation_context,
-            )
-            if target is None:
-                raise TypeError(
-                    f"unsupported comparison target: {type(target_source).__name__}"
-                )
-            _check_prepared_compatibility(query, target)
-            results.append(_compare_prepared(query, target, config))
+    for target_source in target_sources:
+        target = _prepare_side(
+            target_source, sequences, background=background, threshold=threshold,
+            normalization=norm, cache=cache, preparation_context=preparation_context,
+        )
+        if target is None:
+            raise TypeError(f"unsupported comparison target: {type(target_source).__name__}")
+        _check_prepared_compatibility(query, target)
+        results.append(_compare_prepared(query, target, config))
     return results

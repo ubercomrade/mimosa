@@ -84,7 +84,7 @@ Built-in scanning and prepared-profile normalization use JAX. The default
 installation supports CPU execution; GPU execution requires a compatible JAX
 CUDA or ROCm plugin and driver as described in the
 [JAX installation guide](https://docs.jax.dev/en/latest/installation.html).
-The migration is ongoing: alignment and some lower-level operations still use
+The migration is ongoing: some lower-level operations still use
 Numba. Prepared-profile cache keys and null-distribution compatibility have
 changed; rebuild old null distributions after upgrading.
 
@@ -104,6 +104,14 @@ mimosa compare examples/foxa2.meme examples/gata2.meme \
   --query-type pwm --target-type pwm \
   --fasta examples/foreground.fa --min-logerr 2
 ```
+
+For a direct pair-specific Monte Carlo p-value, add for example
+`--pvalue --mc-replicates 1000 --mc-seed 127 --mc-group full`. The query is
+fixed and the target is independently relabeled in each replicate; `gc`
+restricts permutations to preserve A/T and C/G groups. The result includes
+the replicate count, exceedance count, seed, and permutation group. This
+requires motif models, not precomputed score profiles. During migration,
+supplying `--null-distribution` still selects the legacy pooled-null path.
 
 Compare precomputed score profiles:
 
@@ -193,11 +201,10 @@ Comparison only accepts profiles prepared with `circular=True`; the default
 `circular=False` keeps the linear scan layout for other uses of
 `prepare_profile`.
 
-`compare_many` derives at most `joblib_workers = total_threads / inner_threads`,
-capped by the number of targets.
-`inner_threads` must be from 1 through 4, and `total_threads` must be divisible
-by it. Built-in models and prepared profiles can use outer parallelism; prepare
-custom models first or use serial comparison.
+`compare_many` processes targets in order in a single process, using JAX's
+device execution. The legacy `total_threads` and `inner_threads` arguments
+are validated but do not control JAX threads or parallelize targets.
+`inner_threads` must be from 1 through 4, and `total_threads` divisible by it.
 
 The public API also includes `scan`, `read_scores`, `select_sites`,
 `reconstruct_pfm`, `build_null`, `annotate_results`, and `write_model`.
@@ -232,11 +239,11 @@ uv run python benchmarks/benchmark_performance.py
 
 The report measures full-pipeline `cache_miss_hot_jit` and
 `cache_hit_hot_filesystem` modes. Use comma-separated `--total-threads` and
-`--numba-threads` values; only divisible pairs are run. Each result reports the
-total budget, Numba budget, and derived joblib workers. Use `--phase-timings`
+`--numba-threads` values; only divisible pairs are run. These legacy budget
+values do not control JAX or target parallelism. Use `--phase-timings`
 to add isolated scan, normalization, anchor, fingerprint, cache, alignment,
 and JSON serialization timings. On Linux the report includes aggregate peak RSS
-for the complete joblib process tree; other platforms retain the parent-process
+for the process tree; other platforms retain the parent-process
 lifetime maximum as a fallback.
 `--cold-jit-cli` adds a separately labelled clean-process command-line startup
 sample; it is emitted only for one-target workloads and is not used for speedup
