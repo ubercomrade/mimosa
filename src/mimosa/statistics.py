@@ -15,13 +15,18 @@ from .io.bundles import (
     NULL_FORMAT_VERSION,
     content_fingerprint_float64,
     model_collection_fingerprint,
+    model_fingerprint,
     sequence_fingerprint,
 )
-from .models import PWM, strict_integer
+from .models import PWM, MotifModel, strict_integer
 from .profiles.alignment import METRIC_NAME, ProfileConfig
 from .profiles.anchors import DEFAULT_MIN_LOGERR, parse_min_logerr
 from .profiles.normalization import HybridEmpiricalLogTail, normalization_fingerprint
 from .profiles.prepared import _prepare_profile
+from .randomization import (
+    INPUT_RELABEL_STRATEGY, INPUT_RELABEL_VERSION,
+    model_calibration_group, relabel_model,
+)
 
 SAMPLING_VERSION = "original-shuffled-ordered-pairs-v3"
 ALIGNMENT_VERSION = "circular-jaccard-v1"
@@ -75,7 +80,7 @@ class NullDistribution:
             raise ValueError("null distribution seed must be non-negative.")
         if not self.sampling_version:
             raise ValueError("null distribution sampling_version must not be empty.")
-        if self.strategy != "profile":
+        if self.strategy not in ("profile", INPUT_RELABEL_STRATEGY):
             raise ValueError("only profile null distributions are supported.")
         metric = self.metric
         if metric != METRIC_NAME:
@@ -151,6 +156,25 @@ class NullDistribution:
                 "null distribution raw_scores fingerprint does not match the payload."
             )
         contract["raw_scores_fingerprint"] = actual_fingerprint
+        if self.strategy == INPUT_RELABEL_STRATEGY:
+            required_randomization = (
+                "randomization_version", "model_group", "model_seeds", "source_model_fingerprints",
+            )
+            missing = [key for key in required_randomization if key not in contract]
+            if missing:
+                raise ValueError("input-relabel contract is missing: " + ", ".join(missing) + ".")
+            if contract["randomization_version"] != INPUT_RELABEL_VERSION:
+                raise ValueError("unsupported input-relabel randomization version.")
+            if not isinstance(contract["model_group"], str) or not contract["model_group"]:
+                raise ValueError("input-relabel model_group must be a non-empty string.")
+            seeds = tuple(strict_integer(s, "model_seed") for s in contract["model_seeds"])
+            fingerprints = tuple(contract["source_model_fingerprints"])
+            if len(seeds) != n_models or any(s < 0 or s >= 2**63 for s in seeds):
+                raise ValueError("input-relabel model_seeds must identify every source model.")
+            if len(fingerprints) != n_models or any(not isinstance(s, str) or not s for s in fingerprints):
+                raise ValueError("input-relabel source fingerprints must identify every source model.")
+            contract["model_seeds"] = seeds
+            contract["source_model_fingerprints"] = fingerprints
         object.__setattr__(self, "contract", MappingProxyType(contract))
 
 @dataclass(frozen=True)
@@ -262,22 +286,27 @@ def _null_id(dist):
     ]
     if dist.model_collection_fingerprint is not None:
         parts.append(f"mcf={dist.model_collection_fingerprint}")
+    if dist.strategy == INPUT_RELABEL_STRATEGY:
+        parts.extend(str(c[k]) for k in (
+            "randomization_version", "model_group", "model_seeds", "source_model_fingerprints",
+        ))
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
 
 def check_null_compatibility(
-    dist, *, sequences, background, search_range, min_logerr
+    dist, *, sequences, background, search_range, min_logerr, models=None
 ):
     """Raise MimosaError unless ``dist`` applies to the described comparison.
 
     ``sequences`` and ``background`` are the comparison inputs (None if
-    absent). The null is not tied to a model type: profiles are compared on
-    the same normalized logERR scale whatever model produced them.
+    absent). Input-relabel nulls additionally require the compared models and
+    their common declared calibration group. Legacy profile bundles lack this
+    information: passing their parameter checks does not establish transfer
+    of calibration to another scoring formalism or motif collection.
     """
     expected_sequences = "none" if sequences is None else sequence_fingerprint(sequences)
     expected_background = "none" if background is None else sequence_fingerprint(background)
     checks = [
-        (dist.strategy, "profile", "null distribution strategy is incompatible with profile comparison."),
         (dist.contract["search_range"], search_range, "null distribution search range is incompatible with this comparison."),
         (dist.contract["min_logerr"], np.float32(min_logerr), "null distribution minimum log-ERR is incompatible with this comparison."),
         (dist.sequence_fingerprint, expected_sequences, "null distribution sequence fingerprint is incompatible with this comparison."),
@@ -288,6 +317,23 @@ def check_null_compatibility(
             raise MimosaError(msg)
     if dist.contract["alignment_version"] != ALIGNMENT_VERSION:
         raise MimosaError("null distribution alignment version is incompatible with this comparison.")
+    if dist.strategy not in ("profile", INPUT_RELABEL_STRATEGY):
+        raise MimosaError("null distribution strategy is incompatible with profile comparison.")
+    _check_null_model_group(dist, models)
+
+
+def _check_null_model_group(dist, models):
+    if dist.strategy == INPUT_RELABEL_STRATEGY:
+        if models is None or not len(models):
+            raise MimosaError("input-relabel null compatibility requires the compared models.")
+        expected = dist.contract["model_group"]
+        for model in models:
+            actual = model_calibration_group(model)
+            if actual != expected:
+                raise MimosaError(
+                    f"null calibration group '{expected}' is incompatible with '{actual}'; "
+                    "build a null for this model kind/order/comparison."
+                )
 
 
 def _check_result_parameters(result, dist):
@@ -303,7 +349,8 @@ def _check_result_parameters(result, dist):
         )
 
 
-def annotate_results(results, dist, *, effective_number_of_targets=None):
+def annotate_results(results, dist, *, effective_number_of_targets=None, models=None):
+    _check_null_model_group(dist, models)
     n_null = dist.n_null
     effective = len(results) if effective_number_of_targets is None else effective_number_of_targets
     if effective < 0:
@@ -369,15 +416,28 @@ def build_null(
     min_logerr=DEFAULT_MIN_LOGERR,
     normalization=None,
     cache=None,
+    randomization="pwm-shuffle",
 ):
+    """Build a pooled empirical reference using an explicit randomization.
+
+    ``pwm-shuffle`` retains historical PWM column/base shuffling. The opt-in
+    ``input-relabel`` mode uses coherent f(pi(x)) surrogates and one common
+    declared calibration group. Different model kinds/orders require separate
+    references; calibration of mixed-model pairs is not inferred by pooling.
+    Neither mode alone establishes a biological null or an FDR guarantee.
+    """
     config = ProfileConfig(search_range=search_range, min_logerr=min_logerr)
     search_range = config.search_range
     n_samples = strict_integer(n_samples, "n_samples")
     seed = strict_integer(seed, "seed")
     if len(models) < 2:
         raise ValueError("at least two models are required for null construction.")
-    if not all(isinstance(m, PWM) for m in models):
+    if randomization not in ("pwm-shuffle", "input-relabel"):
+        raise ValueError("randomization must be 'pwm-shuffle' or 'input-relabel'.")
+    if randomization == "pwm-shuffle" and not all(isinstance(m, PWM) for m in models):
         raise ValueError("null construction requires PWM models for mandatory shuffling.")
+    if not all(isinstance(m, MotifModel) for m in models):
+        raise ValueError("null construction requires functions of input DNA, not precomputed profiles.")
     names = [m.name for m in models]
     if len(set(names)) != len(names):
         raise ValueError("model names must be unique for null construction.")
@@ -389,14 +449,33 @@ def build_null(
         normalization = HybridEmpiricalLogTail()
 
     rng = np.random.default_rng(seed)
-    shuffled_models = [
-        _shuffle_null_model(model, int(rng.integers(0, 2**63 - 1))) for model in models
-    ]
+    randomization_contract = {}
+    if randomization == "input-relabel":
+        groups = {model_calibration_group(model) for model in models}
+        if len(groups) != 1:
+            raise ValueError(
+                "input-relabel null construction requires one calibration group; "
+                "build separate nulls for different model kinds/orders."
+            )
+        source_fingerprints = tuple(model_fingerprint(model) for model in models)
+        model_seeds = tuple(int(rng.integers(0, 2**63 - 1)) for _ in models)
+        shuffled_models = [relabel_model(model, seed=s) for model, s in zip(models, model_seeds)]
+        randomization_contract = {
+            "randomization_version": INPUT_RELABEL_VERSION,
+            "model_group": next(iter(groups)),
+            "model_seeds": model_seeds,
+            "source_model_fingerprints": source_fingerprints,
+        }
+    else:
+        shuffled_models = [
+            _shuffle_null_model(model, int(rng.integers(0, 2**63 - 1))) for model in models
+        ]
     profile_models = list(models) + shuffled_models
     variant_ids = [
         f"original:{index}:{model.name}" for index, model in enumerate(models)
     ] + [
-        f"shuffled:{index}:{model.name}" for index, model in enumerate(models)
+        f"{'relabeled' if randomization == 'input-relabel' else 'shuffled'}:{index}:{model.name}"
+        for index, model in enumerate(models)
     ]
 
     prepared = []
@@ -424,7 +503,10 @@ def build_null(
     pairs = []
     comparison_cache = {}
     for i, (query_idx, target_idx) in enumerate(work_items):
-        pair_key = (query_idx, target_idx)
+        pair_key = (
+            (min(query_idx, target_idx), max(query_idx, target_idx))
+            if randomization == "input-relabel" else (query_idx, target_idx)
+        )
         result = comparison_cache.get(pair_key)
         if result is None:
             result = compare(
@@ -453,9 +535,10 @@ def build_null(
         "sequence_fingerprint": seq_fp,
         "background_fingerprint": bg_fp,
         "raw_scores_fingerprint": content_fingerprint_float64(raw_scores),
+        **randomization_contract,
     }
     dist = NullDistribution(
-        strategy="profile",
+        strategy=INPUT_RELABEL_STRATEGY if randomization == "input-relabel" else "profile",
         metric=METRIC_NAME,
         raw_scores=raw_scores,
         pairs=pairs,

@@ -114,7 +114,7 @@ needed.
 ```python
 select_sites(model, sequences, selector, *, strands="best") -> SiteCollection
 reconstruct_pfm(model, sequences, selector, *, pseudocount=0.25, strands="best")
-annotate_results(results, distribution, *, effective_number_of_targets=None)
+annotate_results(results, distribution, *, effective_number_of_targets=None, models=None)
 build_null(
     models,
     *,
@@ -126,16 +126,46 @@ build_null(
     min_logerr=4.0,
     normalization=None,
     cache=None,
+    randomization="pwm-shuffle",
 ) -> NullDistribution
 ```
 
 Available selectors are `BestPerSequence`, `ThresholdHits`, and
 `TopFractionHits`. `SiteCollection.to_dict()` returns JSON-compatible lists.
 
-`NullDistribution` uses empirical upper-tail p-values. It does not contain a
-parametric fit object and is not tied to a model type. `annotate_results`
+`NullDistribution` uses empirical upper-tail p-values without a parametric
+fit. `randomization="input-relabel"` supports one built-in type/order or one
+declared custom calibration group; the historical default is PWM-only.
+`mimosa.statistics.check_null_compatibility(distribution, sequences=...,
+background=..., search_range=..., min_logerr=..., models=[query, target])`
+checks the input-relabel group before annotation. For this strategy,
+`annotate_results(..., models=[query, target])` also requires and checks the
+compared models. `annotate_results`
 rejects results whose `search_range` or `min_logerr` (recorded on
-`ComparisonResult`) differ from the null contract.
+`ComparisonResult`) differ from the null contract; it cannot infer model
+groups from an already computed score without these model inputs. A shared ERR scale does not guarantee
+that a null transfers between model orders, types or motif collections.
+
+## Fixed-window functions and input relabeling
+
+```python
+from mimosa import WindowModel, InputRelabeledModel, alphabet_permutations, relabel_model
+
+WindowModel(name, motif_length, score_windows, *, left_context=0,
+            right_context=0, fingerprint=None, calibration_group=None, batch_size=8192)
+alphabet_permutations(motif_length, seed=127) -> numpy.ndarray
+InputRelabeledModel(model, permutations, *, batch_size=8192)
+relabel_model(model, *, seed=127, permutations=None, batch_size=8192) -> MotifModel
+```
+
+The callback maps oriented uint8 windows (A/C/G/T/N = 0/1/2/3/4) to one finite
+real score per window. It must be deterministic and batch-independent.
+`fingerprint` must identify the scorer and learned parameters for caching/null
+construction; `calibration_group` is also required for a custom null.
+`InputRelabeledModel` always uses the generic input wrapper. `relabel_model`
+uses an exactly equivalent native table permutation for built-in types and
+the generic wrapper otherwise. Explicit permutations permit paired projections
+and replay; context flanks and N are unchanged. See [custom models](extending.md).
 
 ## Errors
 

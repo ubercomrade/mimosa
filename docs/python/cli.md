@@ -30,6 +30,7 @@ Important options:
 - `--cache-dir PATH` enables prepared-profile disk/mmap caching.
 - `--pvalue --null-distribution PATH` adds empirical significance annotations.
 - `--effective-number-of-targets N` changes E-values without changing BH adjustment.
+- `--query-order N` and `--target-order N` select an available BaMM order when reading input; other types reject these options.
 
 For a scores-only comparison, `--fasta` and `--background` are rejected because
 the profiles already contain the comparison data. `--null-distribution` and
@@ -67,7 +68,7 @@ created.
 
 ## `build-null`
 
-Build a PWM-only profile null distribution from a motif directory:
+Build a profile null distribution from a motif directory:
 
 ```bash
 uv run mimosa build-null MOTIFS \
@@ -75,13 +76,30 @@ uv run mimosa build-null MOTIFS \
   [--fasta FASTA] [--background FASTA] [options]
 ```
 
-`MOTIFS` must be a directory containing at least two readable PWM files. Mimosa
-uses the first motif in each MEME file. `--background` supplies an optional
-separate normalization batch.
+The default `--randomization pwm-shuffle` uses the first motif from each MEME
+file, preserving the historical PWM behavior. To use another model type, pass
+`--randomization input-relabel --model-type TYPE`. Types are `pwm` (MEME/PFM),
+`bamm` (ihbcp), `sitega` (mat), `dimont` and `slim` (xml). At least two uniquely
+named models of one type/order are required. `--order N` selects a BaMM order;
+it is rejected for other types. `--background` supplies an optional separate
+normalization batch.
 `--num-samples`, `--seed`, `--search-range`, `--min-logerr`, and `--cache-dir`
-control construction. A null bundle only annotates comparisons that use the
-same sequences, background, `--search-range`, and `--min-logerr`; it is not
-tied to a model type. The summary is JSON on `stdout`.
+control construction. Application requires the same sequences, background,
+`--search-range` and `--min-logerr`. Input-relabel bundles also require both
+compared models to match the recorded kind/order. The summary is JSON on
+`stdout`, including the randomization and calibration group when present.
+
+```bash
+uv run mimosa build-null examples/ --model-type bamm --order 0 \
+  --randomization input-relabel --min-logerr 3 --num-samples 2000 \
+  --seed 127 --output output/bamm0_null
+```
+
+This generates uniform DNA by default. The scalar-score invariance of input
+relabeling assumes uniform iid DNA; arbitrary FASTA/background inputs require
+separate justification. See [Method and statistics](method.md). Custom neural
+window functions are available through the Python API, not a built-in neural
+checkpoint reader.
 
 ## `cache clear`
 

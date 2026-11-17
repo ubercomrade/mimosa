@@ -1,5 +1,14 @@
 # Storage and Cache
 
+Input-relabel null bundles use the distinct strategy `profile-input-relabel`
+and include a `randomization` table with its algorithm version, model kind/order
+or declared group, per-source seeds and ordered source fingerprints. This
+metadata is required on read and makes the transformation replayable from the
+original scorers. Older readers reject the unfamiliar strategy. Legacy profile
+bundles keep their existing format and behavior. Matching a stored calibration
+group does not itself validate biological calibration or transfer to another
+motif collection.
+
 ## Model bundles
 
 `write_model(path, model)` writes a directory bundle for any built-in model:

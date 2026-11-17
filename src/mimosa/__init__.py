@@ -38,6 +38,12 @@ from .profiles.normalization import (
     normalization_fingerprint,
 )
 from .profiles.prepared import PreparedProfile, ScoreProfile, prepare_profile
+from .randomization import (
+    InputRelabeledModel,
+    WindowModel,
+    alphabet_permutations,
+    relabel_model,
+)
 from .scan import scan
 from .sites import (
     BestPerSequence,
@@ -97,6 +103,10 @@ __all__ = [
     "PreparedProfile",
     "ScoreProfile",
     "prepare_profile",
+    "InputRelabeledModel",
+    "WindowModel",
+    "alphabet_permutations",
+    "relabel_model",
     "scan",
     "BestPerSequence",
     "SiteCollection",

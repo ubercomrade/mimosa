@@ -66,12 +66,18 @@ def _validate_generated_dimensions(num_sequences, seq_length):
         )
 
 
-def _read_typed_model(path, model_type, background=0.25):
+def _read_typed_model(path, model_type, background=0.25, order=None):
+    if order is not None and model_type != "bamm":
+        raise MimosaError("an explicit order is supported only for BaMM input.")
     if model_type == "scores":
         return read_scores(path)
     if model_type not in MODEL_TYPE_MAP:
         raise MimosaError(f"unknown model type: {model_type}")
     kwargs = {"background": background}
+    if order is not None:
+        if order < 0:
+            raise MimosaError("BaMM order must be non-negative.")
+        kwargs["order"] = order
     if model_type != "pwm" and not Path(path).is_dir():
         kwargs["format"] = model_type
     model = read_model(path, **kwargs)
@@ -80,6 +86,8 @@ def _read_typed_model(path, model_type, background=0.25):
         raise MimosaError(
             f"model at '{path}' is {type(model).__name__}, not the requested {model_type} type."
         )
+    if order is not None and model.order != order:
+        raise MimosaError(f"model at '{path}' does not provide the requested BaMM order {order}.")
     return model
 
 
@@ -98,10 +106,10 @@ def _resolve_sequences(fasta_path, num_sequences, seq_length, seed):
 def _comparison_inputs(args):
     query_type = args.query_type
     target_type = args.target_type
-    query = _read_typed_model(args.query, query_type, args.background_freq)
+    query = _read_typed_model(args.query, query_type, args.background_freq, args.query_order)
     target_paths = args.targets if isinstance(args.targets, list) else [args.targets]
     targets = [
-        _read_typed_model(path, target_type, args.background_freq)
+        _read_typed_model(path, target_type, args.background_freq, args.target_order)
         for path in target_paths
     ]
     cache = Cache(args.cache_dir) if args.cache_dir else None
@@ -117,7 +125,7 @@ def _comparison_inputs(args):
     return query, targets, sequences, bg_sequences, cache
 
 
-def _annotate_comparison_results(results, args, sequences, background):
+def _annotate_comparison_results(results, args, sequences, background, models=None):
     if not args.pvalue:
         return results
     if not args.null_distribution:
@@ -138,9 +146,11 @@ def _annotate_comparison_results(results, args, sequences, background):
         background=background,
         search_range=args.search_range,
         min_logerr=args.min_logerr,
+        models=models,
     )
     return annotate_results(
-        results, dist, effective_number_of_targets=args.effective_number_of_targets
+        results, dist, effective_number_of_targets=args.effective_number_of_targets,
+        models=models,
     )
 
 
@@ -164,6 +174,7 @@ def _run_compare(args):
         args,
         sequences,
         background,
+        models=[query, *targets],
     )[0]
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     return 0
@@ -191,6 +202,7 @@ def _run_compare_many(args):
         args,
         sequences,
         background,
+        models=[query, *targets],
     )
     print(json.dumps([result.to_dict() for result in results], indent=2, sort_keys=True))
     return 0
@@ -201,12 +213,26 @@ def _run_build_null(args):
 
     if not os.path.isdir(args.motifs):
         raise MimosaError("motif collection path must be a directory.")
+    extensions = {
+        "pwm": (".meme", ".pfm"), "bamm": (".ihbcp",),
+        "sitega": (".mat",), "dimont": (".xml",), "slim": (".xml",),
+    }[args.model_type]
+    if args.randomization == "pwm-shuffle":
+        if args.model_type != "pwm":
+            raise MimosaError("non-PWM nulls require --randomization input-relabel.")
+        extensions = (".meme",)
+    if args.order is not None and args.model_type != "bamm":
+        raise MimosaError("--order is supported only with --model-type bamm.")
     files = sorted(
-        filename for filename in os.listdir(args.motifs) if filename.lower().endswith(".meme")
+        filename for filename in os.listdir(args.motifs)
+        if filename.lower().endswith(extensions) and os.path.isfile(os.path.join(args.motifs, filename))
     )
     if not files:
-        raise MimosaError(f"no pwm files found in {args.motifs}.")
-    models = [_read_typed_model(os.path.join(args.motifs, filename), "pwm") for filename in files]
+        raise MimosaError(f"no {args.model_type} files found in {args.motifs}.")
+    models = [
+        _read_typed_model(os.path.join(args.motifs, filename), args.model_type, order=args.order)
+        for filename in files
+    ]
     cache = Cache(args.cache_dir) if args.cache_dir else None
     sequences = _resolve_sequences(args.fasta, args.num_sequences, args.seq_length, args.seed)
     background = read_fasta(args.background)[0] if args.background else None
@@ -219,6 +245,7 @@ def _run_build_null(args):
         search_range=args.search_range,
         min_logerr=args.min_logerr,
         cache=cache,
+        randomization=args.randomization,
     )
     write_null_bundle(args.output, dist)
     summary = {
@@ -231,7 +258,10 @@ def _run_build_null(args):
         "strategy": dist.strategy,
         "estimator": "empirical_upper_tail",
         "normalization": dist.contract["normalization_version"],
+        "randomization": args.randomization,
     }
+    if "model_group" in dist.contract:
+        summary["model_group"] = dist.contract["model_group"]
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
 
@@ -265,6 +295,8 @@ def build_parser():
         )
         p.add_argument("--query-type", required=True, choices=PROFILE_MODEL_TYPES)
         p.add_argument("--target-type", required=True, choices=PROFILE_MODEL_TYPES)
+        p.add_argument("--query-order", type=int, help="BaMM order used to read the query")
+        p.add_argument("--target-order", type=int, help="BaMM order used to read the targets")
         if many:
             p.add_argument("--total-threads", type=int, default=1)
         p.add_argument(
@@ -300,6 +332,12 @@ def build_parser():
     p = sub.add_parser("build-null", help="build a null distribution from motif comparisons")
     p.add_argument("motifs", help="motif collection path")
     p.add_argument("--output", required=True)
+    p.add_argument("--model-type", choices=list(MODEL_TYPE_MAP), default="pwm")
+    p.add_argument("--order", type=int, help="BaMM order used to read this collection")
+    p.add_argument(
+        "--randomization", choices=("pwm-shuffle", "input-relabel"), default="pwm-shuffle",
+        help="input-relabel uses coherent position-specific alphabet permutations",
+    )
     p.add_argument("--fasta")
     p.add_argument("--background")
     p.add_argument(

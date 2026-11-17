@@ -122,6 +122,29 @@ mimosa compare examples/foxa2.meme examples/gata2.meme \
 
 `build-null` uses the first motif from each MEME file in its input directory.
 
+To construct a separate BaMM reference using coherent input relabeling:
+
+```bash
+mimosa build-null examples/ --model-type bamm --order 4 \
+  --randomization input-relabel --output output/bamm4_null \
+  --min-logerr 3 --num-samples 2000 --seed 127
+
+mimosa compare examples/myog.ihbcp examples/gata2.ihbcp \
+  --query-type bamm --target-type bamm --query-order 4 --target-order 4 \
+  --min-logerr 3 --seed 127 --pvalue --null-distribution output/bamm4_null
+```
+
+Both commands generate the same uniform DNA when no FASTA is supplied.
+`input-relabel` fixes an independent A/C/G/T permutation at each motif
+position and evaluates the unchanged function on recoded windows. Built-in
+models use an equivalent native table permutation; custom fixed-window
+functions use a batched wrapper. The null records its model kind/order and
+randomization design, and the CLI rejects a different calibration group.
+This supplies a common randomization procedure, not one universal score
+distribution. See [Method and statistics](docs/python/method.md) for its
+assumptions and [custom window functions](docs/python/extending.md) for CNN
+integration. Historical PWM shuffling remains the default.
+
 Manage the optional prepared-profile cache:
 
 ```bash
@@ -167,6 +190,8 @@ custom models first or use serial comparison.
 
 The public API also includes `scan`, `read_scores`, `select_sites`,
 `reconstruct_pfm`, `build_null`, `annotate_results`, and `write_model`.
+`WindowModel`, `alphabet_permutations`, `InputRelabeledModel`, and
+`relabel_model` expose the fixed-window randomization interface.
 
 ## Documentation
 
@@ -211,6 +236,18 @@ configuration as `resource_limited` and continues; pass
 Use `--coverage --skewed-rows --thresholds 1,2,4` for the optional
 heterogeneous suite (PWM, BaMM, SiteGA, a larger background, ragged rows, and
 anchor-density regimes).
+
+For a separate warmed-JIT, single-process input-relabel benchmark:
+
+```bash
+NUMBA_NUM_THREADS=1 NUMBA_CACHE_DIR=/tmp/mimosa-relabel-numba \
+  uv run python benchmarks/benchmark_input_relabel.py examples/myog.ihbcp \
+  --orders 0,4 --repeats 3 --output /tmp/mimosa-relabel-benchmark.json
+```
+
+It records construction, two-strand scanning, preparation without a disk cache,
+and warm profile loading. This measures one scoring function at a time, not
+the complete pairwise null construction, and does not predict CNN/GPU speed.
 
 ## License
 

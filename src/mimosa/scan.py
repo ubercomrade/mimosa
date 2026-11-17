@@ -29,6 +29,7 @@ from .models import (
     window_size,
 )
 from .parallel import use_parallel
+from .randomization import WindowModel, _scan_window_batch
 
 STRAND_POLICIES = ("forward", "reverse", "best", "both")
 
@@ -84,6 +85,8 @@ def _scan_batch_into(model, batch, strands, circular=False):
     offsets = _scan_offsets(batch, model)
     if circular and not np.array_equal(offsets, sequence_offsets):
         raise InvariantError("circular scan must yield one score per sequence base.")
+    if isinstance(model, WindowModel):
+        return _scan_window_batch(model, batch, offsets, strands)
     parallel = use_parallel(int(offsets[-1]), rows=len(batch))
     sfwd = batch_scan_forward_parallel if parallel else batch_scan_forward
     srev = batch_scan_reverse_parallel if parallel else batch_scan_reverse

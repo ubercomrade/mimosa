@@ -679,6 +679,7 @@ def read_model_bundle(path):
 # ── Null bundle write/read ───────────────────────────────────────────────────
 
 def write_null_bundle(path, dist):
+    from ..randomization import INPUT_RELABEL_STRATEGY
     if dist.n_null <= 0:
         raise InvariantError("null distribution n_null must be positive.")
     if dist.n_null != len(dist.raw_scores):
@@ -693,7 +694,7 @@ def write_null_bundle(path, dist):
         raise InvariantError("null distribution sampling_version must not be empty.")
     if not dist.strategy or not dist.metric:
         raise InvariantError("null distribution strategy/metric must not be empty.")
-    if dist.strategy != "profile":
+    if dist.strategy not in ("profile", INPUT_RELABEL_STRATEGY):
         raise InvariantError("only profile null distributions are supported.")
     if dist.metric != METRIC_NAME:
         raise InvariantError(f"unsupported profile metric '{dist.metric}'.")
@@ -765,15 +766,24 @@ def write_null_bundle(path, dist):
                 },
             },
         }
+        if dist.strategy == INPUT_RELABEL_STRATEGY:
+            manifest["randomization"] = {
+                "version": dist.contract["randomization_version"],
+                "model_group": dist.contract["model_group"],
+                "model_seeds": list(dist.contract["model_seeds"]),
+                "source_model_fingerprints": list(dist.contract["source_model_fingerprints"]),
+                "background_assumption": "uniform-iid-DNA",
+            }
         _write_bundle_manifest(os.path.join(stage, BUNDLE_MANIFEST_NAME), manifest)
 
     _with_bundle_write(path, writer)
 
 
 def read_null_bundle(path):
+    from ..randomization import INPUT_RELABEL_STRATEGY, INPUT_RELABEL_VERSION
     manifest = _read_bundle_manifest(path, NULL_FORMAT_VERSION, expected_kind="null_distribution")
     strategy = _required_manifest_string(manifest, "strategy", path, "null manifest")
-    if strategy != "profile":
+    if strategy not in ("profile", INPUT_RELABEL_STRATEGY):
         raise _bundle_error(path, f"unsupported null strategy '{strategy}'.")
     metric = _required_manifest_string(manifest, "metric", path, "null manifest")
     if metric != METRIC_NAME:
@@ -872,6 +882,29 @@ def read_null_bundle(path):
         "background_fingerprint": bg_fp,
         "raw_scores_fingerprint": raw_scores_fingerprint,
     }
+    if strategy == INPUT_RELABEL_STRATEGY:
+        randomization = _required_manifest_table(manifest, "randomization", path, "null manifest")
+        version = _required_manifest_string(randomization, "version", path, "randomization metadata")
+        if version != INPUT_RELABEL_VERSION:
+            raise _bundle_error(path, "unsupported input-relabel randomization version.")
+        group = _required_manifest_string(randomization, "model_group", path, "randomization metadata")
+        seeds = randomization.get("model_seeds")
+        fingerprints = randomization.get("source_model_fingerprints")
+        if not isinstance(seeds, list) or len(seeds) != n_models or any(
+            isinstance(s, bool) or not isinstance(s, int) or not 0 <= s < 2**63 for s in seeds
+        ):
+            raise _bundle_error(path, "randomization model_seeds must identify every source model.")
+        if not isinstance(fingerprints, list) or len(fingerprints) != n_models or any(
+            not isinstance(s, str) or not s for s in fingerprints
+        ):
+            raise _bundle_error(path, "randomization source fingerprints must identify every source model.")
+        assumption = _required_manifest_string(randomization, "background_assumption", path, "randomization metadata")
+        if assumption != "uniform-iid-DNA":
+            raise _bundle_error(path, "unsupported input-relabel background assumption.")
+        contract.update({
+            "randomization_version": version, "model_group": group,
+            "model_seeds": tuple(seeds), "source_model_fingerprints": tuple(fingerprints),
+        })
     return {
         "strategy": strategy,
         "metric": metric,
