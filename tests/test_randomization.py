@@ -1,25 +1,19 @@
 """Independent f(pi(x)) checks and end-to-end calibrated-null contracts."""
-from dataclasses import replace
 import hashlib
-import json
-import subprocess
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 from mimosa import (
-    EncodedSequences, InputRelabeledModel, NullDistribution, WindowModel,
-    alphabet_permutations, annotate_results, build_null, compare, prepare_profile,
+    EncodedSequences, InputRelabeledModel, WindowModel,
+    alphabet_permutations, prepare_profile,
     read_model, relabel_model, scan,
 )
 from mimosa.cache import Cache
-from mimosa.errors import MimosaError, ModelFormatError, ModelInterfaceError
-from mimosa.io.bundles import model_fingerprint, read_null_bundle, write_null_bundle
+from mimosa.errors import ModelInterfaceError
+from mimosa.io.bundles import model_fingerprint
 from mimosa.models import window_size
 from mimosa.scan import _scan_batch_into
-from mimosa.statistics import check_null_compatibility
 
 
 @pytest.fixture(params=[
@@ -171,67 +165,6 @@ def bamm_models():
     return [read_model(f"examples/{name}.ihbcp", order=0) for name in ("myog", "gata2")]
 
 
-def test_null_replay_bundle_and_compatibility(null_batch, bamm_models, tmp_path):
-    options = dict(sequences=null_batch, n_samples=24, seed=112, min_logerr=2, randomization="input-relabel")
-    a, b = build_null(bamm_models, **options), build_null(bamm_models, **options)
-    np.testing.assert_array_equal(a.raw_scores, b.raw_scores)
-    assert a.pairs == b.pairs
-    assert a.strategy == "profile-input-relabel"
-    assert a.contract["model_group"] == "BaMM:order=0"
-    assert isinstance(a.contract["model_seeds"], tuple)
-    path = tmp_path/"null"
-    write_null_bundle(path, a)
-    stored = NullDistribution(**read_null_bundle(path))
-    assert dict(stored.contract) == dict(a.contract)
-    assert stored.pairs == a.pairs
-    check_null_compatibility(stored, sequences=null_batch, background=None, search_range=5,
-                             min_logerr=2, models=bamm_models)
-    with pytest.raises(MimosaError, match="compared models"):
-        check_null_compatibility(stored, sequences=null_batch, background=None, search_range=5, min_logerr=2)
-    with pytest.raises(MimosaError, match="calibration group"):
-        check_null_compatibility(stored, sequences=null_batch, background=None, search_range=5,
-                                 min_logerr=2, models=[read_model("examples/myog.ihbcp", order=4)])
-    with pytest.raises(ValueError, match="one calibration group"):
-        build_null([bamm_models[0], read_model("examples/gata2.ihbcp", order=4)], **options)
-    variants = [*bamm_models, *[relabel_model(m, seed=s) for m, s in zip(bamm_models, a.contract["model_seeds"])]]
-    prepared = [prepare_profile(m, null_batch, min_logerr=2, circular=True) for m in variants]
-    for first, second, value in stored.pairs[:8]:
-        def index(label):
-            role, number, _ = label.split(":", 2)
-            return int(number)+(2 if role == "relabeled" else 0)
-        assert float(compare(prepared[index(first)], prepared[index(second)]).score) == value
-
-
-def test_generic_callable_null_equals_native(null_batch):
-    models = [read_model(f"examples/{name}.meme") for name in ("foxa2", "gata2")]
-    adapted = [WindowModel(m.name, m.motif_length, window_function(m), fingerprint=model_fingerprint(m),
-                           calibration_group="test-pwm-v1") for m in models]
-    options = dict(sequences=null_batch, n_samples=20, seed=112, min_logerr=2, randomization="input-relabel")
-    a, b = build_null(models, **options), build_null(adapted, **options)
-    np.testing.assert_array_equal(a.raw_scores, b.raw_scores)
-    assert a.pairs == b.pairs
-
-
-def test_custom_null_requires_explicit_group_and_fingerprint(null_batch):
-    a = WindowModel("a", 3, lambda x: x.sum(axis=1))
-    b = WindowModel("b", 3, lambda x: x.sum(axis=1))
-    with pytest.raises(ValueError, match="calibration_group"):
-        build_null([a, b], sequences=null_batch, randomization="input-relabel")
-    a.calibration_group = b.calibration_group = "toy"
-    with pytest.raises(ValueError, match="fingerprint"):
-        build_null([a, b], sequences=null_batch, randomization="input-relabel")
-
-
-def test_annotation_requires_and_checks_models(null_batch, bamm_models):
-    dist = build_null(bamm_models, sequences=null_batch, n_samples=3, min_logerr=2, randomization="input-relabel")
-    result = compare(*bamm_models, null_batch, min_logerr=2)
-    with pytest.raises(MimosaError, match="compared models"):
-        annotate_results([result], dist)
-    with pytest.raises(MimosaError, match="calibration group"):
-        annotate_results([result], dist, models=[read_model("examples/myog.ihbcp", order=4)])
-    assert annotate_results([result], dist, models=bamm_models)[0].p_value is not None
-
-
 def test_relabeled_profile_cache_reuses_normalization(null_batch, tmp_path):
     source = read_model("examples/myog.ihbcp", order=4)
     model = InputRelabeledModel(source, alphabet_permutations(source.motif_length, 5))
@@ -242,53 +175,8 @@ def test_relabeled_profile_cache_reuses_normalization(null_batch, tmp_path):
     assert a.anchors[0].positions.size < b.anchors[0].positions.size
 
 
-def test_contract_rejects_incomplete_randomization(null_batch, bamm_models):
-    dist = build_null(bamm_models, sequences=null_batch, n_samples=2, min_logerr=2, randomization="input-relabel")
-    contract = dict(dist.contract)
-    contract.pop("model_seeds")
-    with pytest.raises(ValueError, match="model_seeds"):
-        replace(dist, contract=contract)
-
-
-def test_cli_bamm_order_null_and_mismatched_order(tmp_path):
-    collection = tmp_path/"motifs"
-    collection.mkdir()
-    for name in ("myog", "gata2"):
-        (collection/f"{name}.ihbcp").write_bytes(Path(f"examples/{name}.ihbcp").read_bytes())
-    null = tmp_path/"null"
-    base = [sys.executable, "-m", "mimosa.cli"]
-    result = subprocess.run([*base, "build-null", str(collection), "--output", str(null),
-                             "--model-type", "bamm", "--order", "0", "--randomization", "input-relabel",
-                             "--num-samples", "4", "--fasta", "examples/foreground.fa", "--min-logerr", "2"],
-                            capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["model_group"] == "BaMM:order=0"
-    compare_args = [*base, "compare", "examples/myog.ihbcp", "examples/gata2.ihbcp",
-                    "--query-type", "bamm", "--target-type", "bamm", "--fasta", "examples/foreground.fa",
-                    "--min-logerr", "2", "--pvalue", "--null-distribution", str(null)]
-    matched = subprocess.run([*compare_args, "--query-order", "0", "--target-order", "0"], capture_output=True, text=True)
-    assert matched.returncode == 0, matched.stderr
-    assert "p-value" in json.loads(matched.stdout)
-    wrong = subprocess.run([*compare_args, "--query-order", "4", "--target-order", "4"], capture_output=True, text=True)
-    assert wrong.returncode == 2 and "calibration group" in wrong.stderr
-    assert not wrong.stdout
-
-
 def test_declared_function_fingerprint_changes_with_configuration():
     identity = hashlib.sha256(b"weights-v1").hexdigest()
     a = WindowModel("m", 3, lambda x: x.sum(axis=1), fingerprint=identity, calibration_group="toy-v1")
     b = WindowModel("m", 4, lambda x: x.sum(axis=1), fingerprint=identity, calibration_group="toy-v1")
     assert model_fingerprint(a) != model_fingerprint(b)
-
-
-def test_missing_randomization_metadata_rejected_on_read(null_batch, bamm_models, tmp_path):
-    dist = build_null(bamm_models, sequences=null_batch, n_samples=2, min_logerr=2, randomization="input-relabel")
-    path = tmp_path/"null"
-    write_null_bundle(path, dist)
-    manifest = path/"manifest.toml"
-    text = manifest.read_text()
-    start = text.index("[randomization]")
-    end = text.find("\n[", start+1)
-    manifest.write_text(text[:start]+(text[end:] if end >= 0 else ""))
-    with pytest.raises(ModelFormatError, match="randomization"):
-        read_null_bundle(path)

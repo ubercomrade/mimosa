@@ -51,7 +51,7 @@ serialize model parameters.
 scores complete oriented input windows:
 
 ```python
-from mimosa import WindowModel, build_null, relabel_model
+from mimosa import WindowModel, relabel_model
 
 model = WindowModel(
     "assayed-tf", motif_length=20, score_windows=my_scorer,
@@ -60,10 +60,10 @@ model = WindowModel(
     calibration_group="my-cnn-architecture-and-context-v1",
 )
 random_model = relabel_model(model, seed=112)
-# With at least two models in the same declared group:
-# null = build_null(models, sequences=dna, min_logerr=3,
-#                   randomization="input-relabel")
 ```
+
+The public direct Monte Carlo implementation currently supports built-in
+models only, not `WindowModel`.
 
 `my_scorer(windows)` receives a two-dimensional uint8 array of shape
 `(n, left_context + motif_length + right_context)`. It returns a real NumPy

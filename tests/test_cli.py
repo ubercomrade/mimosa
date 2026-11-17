@@ -2,16 +2,12 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
-from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from mimosa import prepare_profile, read_fasta, read_model
-from mimosa.statistics import check_null_compatibility
 from mimosa.errors import MimosaError
-from mimosa.io.bundles import model_collection_fingerprint, read_null_bundle
 
 MIMOSA = [sys.executable, "-m", "mimosa.cli"]
 
@@ -156,7 +152,6 @@ class TestCompareCommand:
     @pytest.mark.parametrize(
         "option",
         (
-            ("--null-distribution", "some-null"),
             ("--effective-number-of-targets", "2"),
         ),
     )
@@ -210,105 +205,6 @@ class TestCompareManyCommand:
         assert r.returncode != 0
 
 
-class TestBuildNullCommand:
-    def test_build_null(self, tmp_path):
-        motifs = tmp_path / "motifs"
-        motifs.mkdir()
-        for f in ["foxa2.meme", "gata2.meme", "gata4.meme"]:
-            with open(f"examples/{f}") as src, open(motifs / f, "w") as dst:
-                dst.write(src.read())
-        out = tmp_path / "null"
-        r = run_cli(
-            "build-null",
-            str(motifs),
-            "--output",
-            str(out),
-            "--num-samples",
-            "10",
-            "--fasta",
-            "examples/foreground.fa",
-            "--background",
-            "examples/background.fa",
-        )
-        assert r.returncode == 0, r.stderr
-        d = json.loads(r.stdout)
-        assert d["n_models"] == 3
-        assert d["n_null"] == 10
-        assert out.is_dir()
-        assert (out / "manifest.toml").is_file()
-        compared = run_cli(
-            "compare-many",
-            "examples/foxa2.meme",
-            "examples/gata2.meme",
-            "examples/gata4.meme",
-            "--query-type",
-            "pwm",
-            "--target-type",
-            "pwm",
-            "--fasta",
-            "examples/foreground.fa",
-            "--background",
-            "examples/background.fa",
-            "--pvalue",
-            "--null-distribution",
-            str(out),
-        )
-        assert compared.returncode == 0, compared.stderr
-        assert all("p-value" in item for item in json.loads(compared.stdout))
-
-    def test_build_null_requires_dir(self, tmp_path):
-        r = run_cli(
-            "build-null",
-            "examples/foreground.fa",
-            "--output",
-            str(tmp_path / "n"),
-        )
-        assert r.returncode != 0
-
-    def test_build_null_uses_first_motif_from_each_meme_file(self, tmp_path):
-        motifs = tmp_path / "motifs"
-        motifs.mkdir()
-        multi = motifs / "multi.meme"
-        multi.write_text(
-            (Path("examples/foxa2.meme").read_text(encoding="utf-8"))
-            + "\n"
-            + Path("examples/gata4.meme").read_text(encoding="utf-8")
-        )
-        single = motifs / "single.meme"
-        single.write_text(Path("examples/gata2.meme").read_text(encoding="utf-8"))
-        output = tmp_path / "null"
-
-        r = run_cli(
-            "build-null",
-            str(motifs),
-            "--output",
-            str(output),
-            "--num-samples",
-            "2",
-            "--fasta",
-            "examples/foreground.fa",
-        )
-
-        assert r.returncode == 0, r.stderr
-        stored = read_null_bundle(output)
-        assert stored["model_collection_fingerprint"] == model_collection_fingerprint(
-            [read_model(multi), read_model(single)]
-        )
-
-    @pytest.mark.parametrize("option", ("--num-sequences", "--seq-length", "--num-samples"))
-    def test_build_null_rejects_non_positive_generation_limits(self, tmp_path, option):
-        r = run_cli(
-            "build-null",
-            "examples",
-            "--output",
-            str(tmp_path / "null"),
-            option,
-            "0",
-        )
-        assert r.returncode == 2
-        assert "must be between" in r.stderr
-
-
 class TestCacheCommand:
     def test_clear(self, tmp_path):
         cache_dir = tmp_path / "cache"
@@ -332,29 +228,6 @@ class TestCacheCommand:
     def test_clear_broad_dir(self):
         r = run_cli("cache", "clear", "--cache-dir", "/")
         assert r.returncode != 0
-
-    def test_null_compatibility_rejects_alignment_version(self):
-        dist = SimpleNamespace(
-            strategy="profile",
-            metric="jaccard",
-            contract={
-                "search_range": 5,
-                "min_logerr": 4.0,
-                "normalization_version": "empirical-log-tail-v2",
-                "alignment_version": "old-alignment",
-            },
-            sequence_fingerprint="none",
-            background_fingerprint="none",
-        )
-        with pytest.raises(MimosaError, match="alignment version"):
-            check_null_compatibility(
-                dist,
-                sequences=None,
-                background=None,
-                search_range=5,
-                min_logerr=4.0,
-            )
-
 
 class TestVersion:
     def test_version(self):

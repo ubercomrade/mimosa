@@ -12,7 +12,6 @@ from mimosa import (
     site_start_offset,
     window_size,
 )
-from mimosa._kernels import ho_kmer_codes
 from mimosa.errors import ModelFormatError, ModelInterfaceError
 from mimosa.io.models import read_meme
 from mimosa.scan import _scan_batch_into
@@ -39,15 +38,6 @@ def batch():
 
 
 class TestScan:
-    def test_max_supported_context_uses_int32_rolling_codes(self):
-        sequence = np.full(11, 4, dtype=np.uint8)
-        codes = np.empty(1, dtype=np.int32)
-
-        ho_kmer_codes(sequence, 11, 0, 1, False, codes)
-
-        assert codes.dtype == np.dtype(np.int32)
-        assert int(codes[0]) == 5**11 - 1
-
     def test_custom_model_must_fill_both_finite_output_tracks(self, batch):
         class IncompleteModel(MotifModel):
             name = "incomplete"

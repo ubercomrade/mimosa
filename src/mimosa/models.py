@@ -304,11 +304,18 @@ class SiteGA(MotifModel):
 
     def scan_into(self, sequence, forward, reverse, /):
         _require_sitega_enabled()
-        from ._kernels import rolling_scan_forward, rolling_scan_reverse
-
         n_pos = forward.shape[0]
-        rolling_scan_forward(self.weights, sequence, 2, self.motif_length - 1, n_pos, forward)
-        rolling_scan_reverse(self.weights, sequence, 2, self.motif_length - 1, n_pos, reverse)
+        for pos in range(n_pos):
+            window = sequence[pos:pos + self.motif_length]
+            for out, row in ((forward, window), (reverse, window[::-1])):
+                total = np.float32(0)
+                for term in range(self.motif_length - 1):
+                    a, b = int(row[term]), int(row[term + 1])
+                    if out is reverse:
+                        a = a if a == 4 else 3 - a
+                        b = b if b == 4 else 3 - b
+                    total = np.float32(total + self.weights[5 * a + b, term])
+                out[pos] = total
 
 
 

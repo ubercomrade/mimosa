@@ -123,45 +123,20 @@ mimosa compare-many examples/foxa2.meme examples/gata2.meme examples/gata4.meme 
   --min-logerr 2 --total-threads 4 --numba-threads 1
 ```
 
-Build and use an empirical null distribution:
+Compute pair-specific Monte Carlo significance:
 
 ```bash
-mimosa build-null examples/ \
-  --output output/null_bundle \
-  --fasta examples/foreground.fa --background examples/background.fa \
-  --min-logerr 2 --num-samples 2000 --seed 127
-
 mimosa compare examples/foxa2.meme examples/gata2.meme \
   --query-type pwm --target-type pwm \
   --fasta examples/foreground.fa --background examples/background.fa \
   --min-logerr 2 \
-  --pvalue --null-distribution output/null_bundle
+  --pvalue --mc-replicates 2000 --mc-seed 127
 ```
 
-`build-null` uses the first motif from each MEME file in its input directory.
-
-To construct a separate BaMM reference using coherent input relabeling:
-
-```bash
-mimosa build-null examples/ --model-type bamm --order 4 \
-  --randomization input-relabel --output output/bamm4_null \
-  --min-logerr 3 --num-samples 2000 --seed 127
-
-mimosa compare examples/myog.ihbcp examples/gata2.ihbcp \
-  --query-type bamm --target-type bamm --query-order 4 --target-order 4 \
-  --min-logerr 3 --seed 127 --pvalue --null-distribution output/bamm4_null
-```
-
-Both commands generate the same uniform DNA when no FASTA is supplied.
-`input-relabel` fixes an independent A/C/G/T permutation at each motif
-position and evaluates the unchanged function on recoded windows. Built-in
-models use an equivalent native table permutation; custom fixed-window
-functions use a batched wrapper. The null records its model kind/order and
-randomization design, and the CLI rejects a different calibration group.
-This supplies a common randomization procedure, not one universal score
-distribution. See [Method and statistics](docs/python/method.md) for its
-assumptions and [custom window functions](docs/python/extending.md) for CNN
-integration. Historical PWM shuffling remains the default.
+Each replicate independently relabels the target, using either full alphabet
+permutations or the GC-preserving group. See
+[Method and statistics](docs/python/method.md) for assumptions and
+[custom window functions](docs/python/extending.md) for CNN integration.
 
 Manage the optional prepared-profile cache:
 
@@ -206,7 +181,7 @@ are validated but do not control JAX threads or parallelize targets.
 `inner_threads` must be from 1 through 4, and `total_threads` divisible by it.
 
 The public API also includes `scan`, `read_scores`, `select_sites`,
-`reconstruct_pfm`, `build_null`, `annotate_results`, and `write_model`.
+`reconstruct_pfm`, `direct_mc`, and `write_model`.
 `WindowModel`, `alphabet_permutations`, `InputRelabeledModel`, and
 `relabel_model` expose the fixed-window randomization interface.
 

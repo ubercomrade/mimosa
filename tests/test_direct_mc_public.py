@@ -3,6 +3,7 @@ import subprocess
 import sys
 
 import numpy as np
+import pytest
 
 from mimosa import EncodedSequences, compare, direct_mc, read_model
 
@@ -40,3 +41,26 @@ def test_cli_direct_monte_carlo(tmp_path):
         mc = result["monte_carlo"]
         assert (mc["replicates"], mc["seed"], mc["group"]) == (2, 7, "gc")
         assert result["p-value"] == (mc["exceedances"] + 1) / 3
+
+
+def test_removed_null_command_and_option():
+    command = [sys.executable, "-m", "mimosa.cli"]
+    assert subprocess.run([*command, "build-null"], capture_output=True).returncode == 2
+    result = subprocess.run([
+        *command, "compare", "examples/foxa2.meme", "examples/gata4.meme",
+        "--query-type", "pwm", "--target-type", "pwm",
+        "--null-distribution", "old", "--pvalue",
+    ], capture_output=True)
+    assert result.returncode == 2
+
+
+@pytest.mark.parametrize("options", [
+    {"k": 0, "seed": 1},
+    {"k": 2, "seed": -1},
+    {"k": 2, "seed": 1, "group": "invalid"},
+])
+def test_invalid_monte_carlo_options(options):
+    model = read_model("examples/foxa2.meme")
+    sequences = EncodedSequences.from_strings(["ACGT" * 10])
+    with pytest.raises(ValueError):
+        direct_mc([model], [model], sequences, **options)

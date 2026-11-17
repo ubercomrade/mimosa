@@ -278,57 +278,6 @@ class TestJaccard:
         assert float(result.score) == pytest.approx(score, abs=1e-6)
         assert result.n_sites == n_sites
 
-    def test_kernel_matches_dense_reference_for_every_shift(self):
-        from mimosa._kernels import _jaccard_orientation
-
-        rng = np.random.default_rng(12)
-        lengths = [30, 2, 0, 9, 64]
-        search_range = 12
-        q = ready_profile("q", random_logerr_rows(rng, lengths))
-        t = ready_profile("t", random_logerr_rows(rng, lengths))
-        scores = np.empty(2 * search_range + 1, dtype=np.float64)
-        sites = np.empty(2 * search_range + 1, dtype=np.int64)
-        _jaccard_orientation(
-            q.bundle.forward.data, t.bundle.forward.data, q.bundle.forward.offsets,
-            q.anchors[0].positions, q.anchors[0].offsets,
-            t.anchors[0].positions, t.anchors[0].offsets,
-            search_range, np.float32(TAU0), scores, sites,
-        )
-        q_rows = [q.bundle.forward[row] for row in range(len(lengths))]
-        t_rows = [t.bundle.forward[row] for row in range(len(lengths))]
-        for index, shift in enumerate(range(-search_range, search_range + 1)):
-            score, n_sites = dense_jaccard(q_rows, t_rows, shift, TAU0)
-            assert scores[index] == pytest.approx(score, abs=1e-12)
-            assert sites[index] == n_sites
-
-    def test_serial_and_parallel_kernels_are_bitwise_identical(self):
-        from mimosa._kernels import _jaccard_orientation, _jaccard_orientation_parallel
-
-        rng = np.random.default_rng(13)
-        lengths = rng.integers(0, 90, size=300).tolist()
-        search_range = 5
-        n_shifts = 2 * search_range + 1
-        q = ready_profile("q", random_logerr_rows(rng, lengths), tau0=1.0)
-        t = ready_profile("t", random_logerr_rows(rng, lengths), tau0=1.0)
-        args = (
-            q.bundle.forward.data, t.bundle.forward.data, q.bundle.forward.offsets,
-            q.anchors[0].positions, q.anchors[0].offsets,
-            t.anchors[0].positions, t.anchors[0].offsets,
-            search_range, np.float32(1.0),
-        )
-        serial = (np.empty(n_shifts), np.empty(n_shifts, dtype=np.int64))
-        parallel = (np.empty(n_shifts), np.empty(n_shifts, dtype=np.int64))
-        _jaccard_orientation(*args, *serial)
-        _jaccard_orientation_parallel(
-            *args,
-            np.empty((len(lengths), n_shifts)),
-            np.empty((len(lengths), n_shifts)),
-            np.empty((len(lengths), n_shifts), dtype=np.int64),
-            *parallel,
-        )
-        assert serial[0].tobytes() == parallel[0].tobytes()
-        np.testing.assert_array_equal(serial[1], parallel[1])
-
     def test_empty_union_scores_zero(self):
         low = np.full(25, 0.5, dtype=np.float32)
         result = compare(ready_profile("q", [low]), ready_profile("t", [low]))

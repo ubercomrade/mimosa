@@ -1,14 +1,5 @@
 # Storage and Cache
 
-Input-relabel null bundles use the distinct strategy `profile-input-relabel`
-and include a `randomization` table with its algorithm version, model kind/order
-or declared group, per-source seeds and ordered source fingerprints. This
-metadata is required on read and makes the transformation replayable from the
-original scorers. Older readers reject the unfamiliar strategy. Legacy profile
-bundles keep their existing format and behavior. Matching a stored calibration
-group does not itself validate biological calibration or transfer to another
-motif collection.
-
 ## Model bundles
 
 `write_model(path, model)` writes a directory bundle for any built-in model:
@@ -33,30 +24,8 @@ overwritten.
 
 ## Null bundles
 
-Null distributions use a versioned directory format:
-
-```text
-null_bundle/
-├── manifest.toml
-└── data/
-    ├── raw_null_scores.npy
-    └── pair_indices.npy
-```
-
-Raw scores are Float64 NPY data. Pair indices are stored in manifest-label
-index order and validated against the label table on read. The manifest stores
-the metric (`jaccard`), seed, sampling version, comparison
-contract (`search_range`, `min_logerr`, normalization and alignment versions),
-and payload checksums. Bundles written before format version 11 are rejected.
-
-Use the I/O utilities from `mimosa.io`:
-
-```python
-from mimosa.io import read_null_bundle, write_null_bundle
-
-write_null_bundle("output/null_bundle", distribution)
-stored = read_null_bundle("output/null_bundle")
-```
+Significance is evaluated per pair with direct Monte Carlo; no shared null
+distribution needs to be built or stored.
 
 ## Prepared-profile cache
 

@@ -29,13 +29,14 @@ Important options:
 - `--search-range` (default `5`) sets the largest circular shift tried in each direction.
 - `--min-logerr` (default `4.0`, must be positive) is the threshold a position must reach in either profile to contribute.
 - `--cache-dir PATH` enables prepared-profile disk/mmap caching.
-- `--pvalue --null-distribution PATH` adds empirical significance annotations.
+- `--pvalue` computes pair-specific Monte Carlo significance. `--mc-replicates`
+  sets K, `--mc-seed` the seed, and `--mc-group` either `full` or `gc`.
 - `--effective-number-of-targets N` changes E-values without changing BH adjustment.
 - `--query-order N` and `--target-order N` select an available BaMM order when reading input; other types reject these options.
 
 For a scores-only comparison, `--fasta` and `--background` are rejected because
-the profiles already contain the comparison data. `--null-distribution` and
-`--effective-number-of-targets` require `--pvalue`.
+the profiles already contain the comparison data. `--pvalue` requires motif
+models. `--effective-number-of-targets` requires `--pvalue`.
 
 The default threshold expects about `10^6` positions per strand. With fewer
 than 50 expected positions above the threshold, a warning is written to
@@ -63,45 +64,11 @@ uv run mimosa compare-many QUERY TARGET [TARGET ...] \
 `--numba-threads` is limited to 1 through 4. `TOTAL` must be positive and
 divisible by `NUMBA`. These legacy options do not control JAX or target
 parallelism; targets are processed in one process.
-Results are emitted as an ordered JSON array. `--pvalue` annotates every result
-after validating the comparison parameters against the null bundle.
+Results are emitted as an ordered JSON array. `--pvalue` computes a separate
+Monte Carlo p-value for every target.
 `--cache-dir` is optional; without it no cache directory or mmap reuse is
 created.
 
-## `build-null`
-
-Build a profile null distribution from a motif directory:
-
-```bash
-uv run mimosa build-null MOTIFS \
-  --output OUTPUT \
-  [--fasta FASTA] [--background FASTA] [options]
-```
-
-The default `--randomization pwm-shuffle` uses the first motif from each MEME
-file, preserving the historical PWM behavior. To use another model type, pass
-`--randomization input-relabel --model-type TYPE`. Types are `pwm` (MEME/PFM),
-`bamm` (ihbcp), `dimont` and `slim` (xml). At least two uniquely
-named models of one type/order are required. `--order N` selects a BaMM order;
-it is rejected for other types. `--background` supplies an optional separate
-normalization batch.
-`--num-samples`, `--seed`, `--search-range`, `--min-logerr`, and `--cache-dir`
-control construction. Application requires the same sequences, background,
-`--search-range` and `--min-logerr`. Input-relabel bundles also require both
-compared models to match the recorded kind/order. The summary is JSON on
-`stdout`, including the randomization and calibration group when present.
-
-```bash
-uv run mimosa build-null examples/ --model-type bamm --order 0 \
-  --randomization input-relabel --min-logerr 3 --num-samples 2000 \
-  --seed 127 --output output/bamm0_null
-```
-
-This generates uniform DNA by default. The scalar-score invariance of input
-relabeling assumes uniform iid DNA; arbitrary FASTA/background inputs require
-separate justification. See [Method and statistics](method.md). Custom neural
-window functions are available through the Python API, not a built-in neural
-checkpoint reader.
 
 ## `cache clear`
 

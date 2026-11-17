@@ -102,32 +102,17 @@ print(len(sites), pfm.shape)
 Float32 scores. `reconstruct_pfm` excludes ambiguous `N` bases and
 reverse-complements reverse-strand sites before counting.
 
-## Null Distributions
+## Pair-specific Monte Carlo
 
-`build_null` currently shuffles PWM models and samples ordered profile pairs:
+Compare each ordered query–target pair against independently randomized
+replicates of that target:
 
 ```python
-from mimosa import build_null
+from mimosa import direct_mc
 
-models = [query, target, read_model("examples/gata4.meme")]
-distribution = build_null(
-    models,
-    sequences=sequences,
-    min_logerr=2.0,
-    n_samples=2000,
-    seed=127,
+scores, counts, pvalues = direct_mc(
+    [query], [target], sequences, min_logerr=2.0,
+    k=2000, seed=127, group="full",
 )
+print(pvalues[0, 0])
 ```
-
-Annotate comparison results with empirical p-values, Benjamini-Hochberg
-adjustment, and E-values:
-
-```python
-from mimosa import annotate_results
-
-annotated = annotate_results([result], distribution)
-print(annotated[0].to_dict())
-```
-
-Use `mimosa.io.write_null_bundle` and `mimosa.io.read_null_bundle` for the
-portable null-bundle format. See [Storage](storage.md) for details.

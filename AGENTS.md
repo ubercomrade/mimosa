@@ -5,7 +5,7 @@
 - This is one Python package/CLI, not a monorepo: source is `src/mimosa`, tests are `tests`, and runnable fixtures are `examples`.
 - Entrypoints are `mimosa.cli:main` and `python -m mimosa.cli`.
 - `compare_many(query, targets, ...)` is one-query and preserves target order.
-- The only similarity measure is the weighted Jaccard index (`metric == "jaccard"`) over circular logERR profiles; `compare`, `compare_many`, and `build_null` prepare profiles with `circular=True` and reject linear `PreparedProfile` inputs. `prepare_profile` defaults to the linear layout because other tools use it. `PreparedProfile` is immutable; change `min_logerr` by preparing again.
+- The only similarity measure is the weighted Jaccard index (`metric == "jaccard"`) over circular logERR profiles; `compare` and `compare_many` prepare profiles with `circular=True` and reject linear `PreparedProfile` inputs. `prepare_profile` defaults to the linear layout because other tools use it. `PreparedProfile` is immutable; change `min_logerr` by preparing again.
 - Check hypotheses, build mini-prototypes, and run other exploratory experiments in `experiments/`; it is ignored by Git.
 
 ## Environment

@@ -60,3 +60,20 @@ def test_cli_does_not_offer_sitega():
     assert result.returncode != 0
     assert not result.stdout
     assert "sitega" in result.stderr
+
+
+def test_dormant_sitega_scanner_preserves_dinucleotide_scoring(monkeypatch):
+    monkeypatch.setattr(models, "_SITEGA_ENABLED", True)
+    weights = np.arange(100, dtype=np.float32).reshape(25, 4) / 10
+    model = SiteGA("test", weights, 4)
+    sequence = np.array([0, 1, 4, 3, 2, 0, 1], dtype=np.uint8)
+    fwd, rev = np.empty(4, np.float32), np.empty(4, np.float32)
+    model.scan_into(sequence, fwd, rev)
+    for i in range(4):
+        window = sequence[i:i + 4]
+        rc = np.array([4 if b == 4 else 3 - b for b in window[::-1]])
+        for values, actual in ((window, fwd[i]), (rc, rev[i])):
+            expected = np.float32(0)
+            for term in range(3):
+                expected = np.float32(expected + weights[5 * values[term] + values[term + 1], term])
+            assert actual == expected

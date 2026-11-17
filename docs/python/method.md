@@ -77,24 +77,21 @@ Sites are selected from raw forward/reverse scan tracks. A reverse-strand site
 is reverse-complemented before PFM counting. Ambiguous bases are skipped. PFM
 reconstruction defaults to a pseudocount of `0.25`.
 
-## Null distributions
+## Pair-specific Monte Carlo
 
-`build_null(..., randomization="pwm-shuffle")` retains historical PWM column
-and within-column base shuffling. The opt-in `randomization="input-relabel"`
-uses a fixed, independently drawn alphabet permutation at each motif position.
+For each ordered pair, the query is fixed and the target is independently
+relabeled in each of K replicates. Each replicate draws an alphabet permutation
+at each motif position. The `full` group permits all permutations; `gc`
+permutes A/T and C/G separately.
 For a function f of an oriented window it evaluates f(pi(x)); declared context
 outside the motif and N stay fixed. A reverse window is reverse-complemented
 before recoding. All occurrences of a coordinate in higher-order terms are
 recoded coherently. Built-in PWM, BaMM, Dimont and Slim tables compile
 this same operation directly; a generic window function uses input recoding.
 
-Both modes create one random variant per source, prepare the original and
-random profiles once, and retain the historical ordered-pair sampling. The
-sampler chooses a query uniformly from both sets, then retries the target to
-exclude two originals and a random variant compared with itself. This gives
-original-to-random pairs approximately half the mass, rather than uniformly
-sampling all eligible pairs. Similar random variants are not filtered out.
-Repeated and symmetric comparisons retain their original draw weights.
+Each randomized target is rescanned and renormalized on both strands, and the
+same threshold, shifts, orientations and maximum Jaccard calculation are
+applied as for the observed pair.
 
 On uniform iid DNA, coordinate-wise bijections preserve the complete scalar
 score distribution of individual windows for arbitrary deterministic f. They
@@ -104,33 +101,13 @@ tail/FDR calibration do not follow from this invariance. Dependence across
 models' responses, motif properties, and maximization over alignments can
 change the Jaccard reference distribution even after ERR normalization.
 
-Input-relabel references are currently built for one common model kind/order
-or explicitly declared custom calibration group. A mixed-model comparison
-needs its own specified null design; pooling unlike models is rejected.
-Matching a group is a compatibility check, not proof of transfer to an unseen
-motif collection. Source fingerprints, per-model seeds and the algorithm
-version make the randomization reproducible. The distinct bundle strategy
-`profile-input-relabel` prevents older clients silently treating it as a
-legacy model-agnostic reference.
-
-Application requires the same scoring DNA, normalization background,
-`search_range` and `min_logerr`. The CLI additionally checks both models'
-calibration groups for the input-relabel strategy. Python callers should use
-`mimosa.statistics.check_null_compatibility(..., models=[query, target])`
-before `annotate_results(..., models=[query, target])`; annotation also checks
-the supplied model groups. Scores alone cannot recover model types or orders.
-Legacy bundles do not record a model
-group; passing their mechanical checks alone does not validate cross-model
-transfer. Draws share finite source/random motifs and are not independent
-biological replicates.
-
-The empirical upper-tail p-value is:
+The Monte Carlo upper-tail p-value is:
 
 ```text
-(1 + count(null_score >= observed_score)) / (n_null + 1)
+(1 + count(random_score >= observed_score)) / (K + 1)
 ```
 
-`annotate_results` adds p-values, BH-adjusted p-values, and E-values. By
+The CLI adds p-values, BH-adjusted p-values, and E-values. By
 default, the E-value multiplier is the number of results; pass
 `effective_number_of_targets=` to override it. BH adjustment is unaffected by
 that override.
