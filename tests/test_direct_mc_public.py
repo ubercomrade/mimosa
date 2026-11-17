@@ -94,6 +94,6 @@ def test_monte_carlo_rejects_nonfinite_background_scores():
 def test_monte_carlo_rejects_nonfinite_randomized_scores(monkeypatch):
     model = read_model("examples/foxa2.meme")
     sequences = EncodedSequences.from_strings(["ACGT" * 10])
-    monkeypatch.setattr("mimosa._jax_monte_carlo.relabel_model", lambda *args, **kwargs: _overflow_model())
+    monkeypatch.setattr("mimosa.monte_carlo.relabel_model", lambda *args, **kwargs: _overflow_model())
     with pytest.raises(ModelFormatError, match="scan produced non-finite Float32 scores"):
         direct_mc([model], [model], sequences, k=2, seed=1, min_logerr=1)

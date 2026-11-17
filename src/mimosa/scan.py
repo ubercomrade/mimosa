@@ -66,7 +66,7 @@ def _circularize(batch, model):
 def _scan_batch_into(model, batch, strands, circular=False):
     _validate_model_contract(model)
     if isinstance(model, (PWM, BaMM, Dimont, Slim)):
-        from ._jax_backend import scan_circular, scan_linear
+        from .backend import scan_circular, scan_linear
 
         if circular:
             tracks = scan_circular(model, batch)

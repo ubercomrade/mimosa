@@ -278,7 +278,7 @@ class Slim(_ContextModel):
 
 
 def _scan_builtin_into(model, sequence, forward, reverse):
-    from ._jax_backend import scan_linear
+    from .backend import scan_linear
     from .arrays import EncodedSequences
 
     batch = EncodedSequences.from_rows([sequence])

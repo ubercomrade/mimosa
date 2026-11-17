@@ -11,8 +11,8 @@ jax = pytest.importorskip("jax")
 from mimosa import (  # noqa: E402
     EncodedSequences, SiteGA, compare, prepare_profile, read_model, relabel_model, window_size,
 )
-from mimosa._jax_backend import compare_circular, normalize_exact, scan_circular, scan_linear  # noqa: E402
-from mimosa._jax_monte_carlo import direct_mc  # noqa: E402
+from mimosa.backend import compare_circular, normalize_exact, scan_circular, scan_linear  # noqa: E402
+from mimosa.monte_carlo import direct_mc  # noqa: E402
 from mimosa.profiles.normalization import (  # noqa: E402
     EmpiricalLogTail, fit, normalize_bundle,
 )
@@ -218,7 +218,7 @@ def test_direct_mc_counts_identity_ties(monkeypatch):
     model = read_model("examples/foxa2.meme")
     sequences = EncodedSequences.from_strings(["ACGT" * 20, "TCGA" * 20])
     monkeypatch.setattr(
-        "mimosa._jax_monte_carlo._permutations",
+        "mimosa.monte_carlo._permutations",
         lambda model, *args: np.tile(np.arange(4), (model.motif_length, 1)),
     )
     scores, counts, pvalues = direct_mc(

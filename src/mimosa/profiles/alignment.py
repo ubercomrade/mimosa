@@ -42,7 +42,7 @@ def _score_orientation_pair(
     if not np.array_equal(offsets, target_scores.offsets):
         raise ValueError("profiles must have identical row lengths.")
     import jax
-    from .._jax_backend import compare_circular
+    from ..backend import compare_circular
 
     q = np.stack((query_scores.data, query_scores.data))
     t = np.stack((target_scores.data, target_scores.data))
@@ -75,7 +75,7 @@ def profile_compare(
     anchors must list the positions at or above ``config.min_logerr``.
     """
     import jax
-    from .._jax_backend import compare_circular
+    from ..backend import compare_circular
 
     offsets = query_bundle.forward.offsets
     if offsets.size != target_bundle.forward.offsets.size:

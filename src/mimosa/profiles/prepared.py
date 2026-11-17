@@ -41,7 +41,7 @@ def _normalize_with_jax(raw, calibration=None):
     import jax
     import jax.numpy as jnp
 
-    from .._jax_backend import normalize_exact
+    from ..backend import normalize_exact
 
     def values(bundle):
         forward, reverse = bundle.forward.data, bundle.reverse.data

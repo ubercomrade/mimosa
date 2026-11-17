@@ -1,4 +1,4 @@
-"""JAX scanning, exact normalization, and experimental comparison primitives.
+"""Backend primitives for JAX scanning, normalization, and comparison.
 
 Scanning and normalization are used by the public profile pipeline. Arrays
 stay on the selected JAX device until the caller converts them to NumPy.

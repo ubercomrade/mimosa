@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ._jax_backend import compare_circular, normalize_exact, scan_circular
+from .backend import compare_circular, normalize_exact, scan_circular
 from .arrays import EncodedSequences
 from .errors import ModelFormatError
 from .io.bundles import model_fingerprint

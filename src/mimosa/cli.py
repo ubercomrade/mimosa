@@ -127,7 +127,7 @@ def _comparison_inputs(args):
 def _annotate_comparison_results(results, args, sequences, background, models=None):
     if not args.pvalue:
         return results
-    from ._jax_monte_carlo import direct_mc
+    from .monte_carlo import direct_mc
     from .statistics import AnnotatedResult, adjusted_pvalues, evalue
 
     scores, counts, pvalues = direct_mc(
