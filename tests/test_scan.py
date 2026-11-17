@@ -43,7 +43,7 @@ class TestScan:
             name = "incomplete"
             motif_length = 1
 
-            def score_windows(self, windows):
+            def score_sites(self, windows):
                 return windows
 
         with pytest.raises(ModelInterfaceError, match="one real score per window"):
@@ -197,6 +197,18 @@ class TestCircularScan:
                 assert circular.forward[row][start] == pytest.approx(forward, abs=1e-4)
                 assert circular.reverse[row][start] == pytest.approx(reverse, abs=1e-4)
 
+    @pytest.mark.parametrize("index", [0, 1])
+    @pytest.mark.parametrize("circular", [False, True])
+    def test_window_path_matches_sequence_scanner_bitwise(self, index, circular, monkeypatch):
+        """The unified score_sites path equals the fast sequence kernels."""
+        model = self._models()[index]
+        sequences = self._sequences()
+        fast = _scan_batch(model, sequences, "both", circular=circular)
+        monkeypatch.setattr(type(model), "sequence_scanner", False)
+        window_path = _scan_batch(model, sequences, "both", circular=circular)
+        for a, b in ((fast.forward, window_path.forward), (fast.reverse, window_path.reverse)):
+            np.testing.assert_array_equal(a.data, b.data)
+            np.testing.assert_array_equal(a.offsets, b.offsets)
     def test_context_model_reads_left_context_from_the_ring(self):
         rng = np.random.default_rng(23)
         pwm_weights = rng.normal(size=(5, 4)).astype(np.float32)
@@ -218,7 +230,7 @@ class TestCircularScan:
             motif_length = 2
             left_context = 1
 
-            def score_windows(self, windows):
+            def score_sites(self, windows):
                 return windows[:, 1]
 
         sequences = EncodedSequences.from_rows([_seq(0, 1, 2, 3), _seq(2)])

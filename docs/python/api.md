@@ -124,16 +124,17 @@ Available selectors are `BestPerSequence`, `ThresholdHits`, and
 
 `direct_mc` returns matrices of observed scores, exceedance counts and
 p-values, with rows for queries and columns for targets. It supports built-in
-PWM, BaMM, Dimont and Slim models, including mixed types and orders. `group`
-is `full` or `gc`; ties are included. Custom models and score profiles are not
-supported by this Monte Carlo path.
+PWM, BaMM, Dimont and Slim models on the device-level pipeline and any other
+`MotifModel` with `score_sites` through the shared scan path (SiteGA is
+temporarily disabled). `group` is `full` or `gc`; ties are included. Score
+profiles are not supported by this Monte Carlo path.
 
 ## Fixed-window functions and input relabeling
 
 ```python
 from mimosa import WindowModel, InputRelabeledModel, alphabet_permutations, relabel_model
 
-WindowModel(name, motif_length, score_windows, *, left_context=0,
+WindowModel(name, motif_length, score_sites, *, left_context=0,
             right_context=0, fingerprint=None, calibration_group=None, batch_size=8192)
 alphabet_permutations(motif_length, seed=127) -> numpy.ndarray
 InputRelabeledModel(model, permutations, *, batch_size=8192)

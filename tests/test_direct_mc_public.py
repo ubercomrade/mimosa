@@ -44,6 +44,45 @@ def test_cli_direct_monte_carlo(tmp_path):
         assert result["p-value"] == (mc["exceedances"] + 1) / 3
 
 
+def test_custom_model_monte_carlo():
+    import jax.numpy as jnp
+
+    from mimosa import MotifModel
+
+    class Consensus(MotifModel):
+        name = "consensus"
+        motif_length = 3
+        fingerprint_value = "consensus-test-v1"
+
+        def __init__(self, pattern):
+            self.pattern = jnp.asarray(pattern, dtype=jnp.uint8)
+
+        def score_sites(self, windows):
+            return jnp.sum(windows == self.pattern, axis=1).astype(jnp.float32)
+
+        def fingerprint(self):
+            return self.fingerprint_value
+
+    pwm = read_model("examples/foxa2.meme")
+    custom = Consensus(np.array([0, 1, 2], dtype=np.uint8))
+    sequences = EncodedSequences.from_strings(["ACGTACGTAA" * 6, "TTTGGG" * 10])
+    options = dict(k=3, seed=11, min_logerr=1, search_range=2)
+    for query, target in ((custom, pwm), (pwm, custom), (custom, custom)):
+        observed, counts, pvalues = direct_mc([query], [target], sequences, **options)
+        result = compare(query, target, sequences, min_logerr=1, search_range=2)
+        assert observed[0, 0] == result.score
+        np.testing.assert_array_equal(pvalues, (counts + 1) / 4)
+        assert counts[0, 0] <= 3
+    repeat = direct_mc([custom], [pwm], sequences, **options)
+    assert repeat[1][0, 0] == counts[0, 0]
+
+
+def test_monte_carlo_rejects_non_motif_inputs():
+    sequences = EncodedSequences.from_strings(["ACGT" * 10])
+    with pytest.raises(TypeError, match="MotifModel inputs only"):
+        direct_mc(["model"], ["model"], sequences, k=2, seed=1)
+
+
 def test_removed_null_command_and_option():
     command = [sys.executable, "-m", "mimosa.cli"]
     assert subprocess.run([*command, "build-null"], capture_output=True).returncode == 2

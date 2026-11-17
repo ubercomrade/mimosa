@@ -26,7 +26,7 @@ _MAX_WINDOW_ELEMENTS = 1_048_576
 class WindowModel(MotifModel):
     """Adapt a deterministic batched function of oriented DNA windows.
 
-    ``score_windows`` receives a JAX (n, width) uint8 array, with A/C/G/T/N encoded
+    ``score_sites`` receives a JAX (n, width) uint8 array, with A/C/G/T/N encoded
     0/1/2/3/4, and returns n finite real scores. ``width`` includes both context
     flanks. Scores must not depend on batch size or other windows in the batch.
     The function must be JAX-traceable and return a real array.
@@ -39,7 +39,7 @@ class WindowModel(MotifModel):
     """
 
     def __init__(
-        self, name, motif_length, score_windows, *, left_context=0,
+        self, name, motif_length, score_sites, *, left_context=0,
         right_context=0, fingerprint=None, calibration_group=None,
         batch_size=DEFAULT_WINDOW_BATCH_SIZE,
     ):
@@ -50,18 +50,18 @@ class WindowModel(MotifModel):
         self.batch_size = strict_integer(batch_size, "batch_size")
         if self.batch_size < 1:
             raise ValueError("batch_size must be positive.")
-        if not callable(score_windows):
-            raise TypeError("score_windows must be callable.")
+        if not callable(score_sites):
+            raise TypeError("score_sites must be callable.")
         for field, value in (("fingerprint", fingerprint), ("calibration_group", calibration_group)):
             if value is not None and (not isinstance(value, str) or not value):
                 raise ValueError(f"{field} must be a non-empty string when supplied.")
-        self._score_windows = score_windows
+        self._score_sites = score_sites
         self._fingerprint = fingerprint
         self.calibration_group = calibration_group
         _validate_model_contract(self)
 
-    def score_windows(self, windows):
-        return self._score_windows(windows)
+    def score_sites(self, windows):
+        return self._score_sites(windows)
 
     def fingerprint(self):
         if self._fingerprint is None:
@@ -132,19 +132,7 @@ class InputRelabeledModel(WindowModel):
 
     def _recoded_scores(self, windows):
         transformed = jnp.asarray(self._full_permutations)[jnp.arange(windows.shape[1])[None, :], windows]
-        if isinstance(self.source_model, (PWM, BaMM, Dimont, Slim)):
-            from .backend import _linear_scan
-
-            width = transformed.shape[1]
-            starts = jnp.arange(len(transformed), dtype=jnp.int32) * width
-            output_starts = jnp.arange(len(transformed), dtype=jnp.int32)
-            return _linear_scan(
-                transformed.reshape(-1), starts, output_starts,
-                jnp.asarray(self.source_model.weights),
-                width=self.source_model.motif_length,
-                order=getattr(self.source_model, "order", 0),
-            )[0]
-        return self.source_model.score_windows(transformed)
+        return self.source_model.score_sites(transformed)
 
     def fingerprint(self):
         from .io.bundles import model_fingerprint

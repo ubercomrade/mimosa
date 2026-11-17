@@ -640,7 +640,7 @@ class TestCompare:
             name = "custom"
             motif_length = 1
 
-            def score_windows(self, windows):
+            def score_sites(self, windows):
                 return windows[:, 0] * 0
 
         results = compare_many(

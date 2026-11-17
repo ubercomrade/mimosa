@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from abc import ABC
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 import jax
@@ -171,12 +171,22 @@ class MotifModel(ABC):
     motif_length: int
     left_context: int = 0
     right_context: int = 0
-    # JAX kernels of built-in models wrap rows themselves; generic scorers
-    # receive explicitly circularized sequences.
-    circular_scan_aware = False
+    # Built-in models keep sequence-level JAX kernels as a fast path; generic
+    # scorers are window-based and receive explicitly circularized sequences.
+    sequence_scanner = False
 
     def fingerprint(self):
         return None
+
+    @abstractmethod
+    def score_sites(self, windows, /):
+        """Score forward-oriented windows: one real JAX score per window.
+
+        ``windows`` is a JAX array of shape ``(n, window_size(self))`` with
+        A/C/G/T/N encoded 0..4. The function must be traceable by ``jax.jit``
+        and return a finite real score for every window; the reverse strand is
+        scored by the same method on reverse-complemented windows.
+        """
 
     def scan(self, sequences, *, strands, circular=False):
         """Return ragged score tracks for a validated sequence batch."""
@@ -188,11 +198,11 @@ class MotifModel(ABC):
         if not isinstance(sequences, EncodedSequences):
             raise TypeError("sequences must be an EncodedSequences batch.")
         sequence_offsets = sequences.offsets
-        if circular and not self.circular_scan_aware:
+        if circular and not self.sequence_scanner:
             sequences = self._circularize(sequences)
         forward, reverse, offsets = self._scan_tracks(sequences, strands, circular)
         if (
-            circular and not self.circular_scan_aware
+            circular and not self.sequence_scanner
             and not np.array_equal(offsets, sequence_offsets)
         ):
             raise InvariantError("circular scan must yield one score per sequence base.")
@@ -241,7 +251,7 @@ class MotifModel(ABC):
 
     def _scan_tracks(self, sequences, strands, circular):
         """Return ``(forward, reverse, offsets)``; unrequested strands are None."""
-        if isinstance(self, (PWM, BaMM, Dimont, Slim)):
+        if self.sequence_scanner:
             from .backend import scan_circular, scan_linear
 
             if circular:
@@ -261,7 +271,7 @@ class MotifModel(ABC):
         data = jnp.asarray(sequences.data)
         forward = np.empty(count, np.float32) if strands != "reverse" else None
         reverse = np.empty(count, np.float32) if strands != "forward" else None
-        score = jax.jit(self.score_windows)
+        score = jax.jit(self.score_sites)
 
         def evaluate(windows):
             try:
@@ -272,7 +282,7 @@ class MotifModel(ABC):
             except Exception as exc:
                 raise ModelInterfaceError(
                     "scan", type(self).__name__,
-                    "score_windows must be JAX-traceable and return one real score per window.",
+                    "score_sites must be JAX-traceable and return one real score per window.",
                 ) from exc
 
         for start in range(0, count, batch_size):
@@ -327,11 +337,9 @@ def _validate_model_contract(model, capability="scan"):
             raise ModelInterfaceError(
                 capability, model_type, f"{field} must be {requirement}."
             )
-    if not isinstance(model, (PWM, BaMM, Dimont, Slim, SiteGA)) and not callable(
-        getattr(model, "score_windows", None)
-    ):
+    if not callable(getattr(model, "score_sites", None)):
         raise ModelInterfaceError(
-            capability, model_type, "score_windows must be callable."
+            capability, model_type, "score_sites must be callable."
         )
 
 
@@ -340,7 +348,7 @@ class PWM(MotifModel):
     name: str
     weights: np.ndarray
     background: tuple
-    circular_scan_aware = True
+    sequence_scanner = True
 
     def __post_init__(self):
         _validate_model_name(self.name, "PWM")
@@ -354,13 +362,18 @@ class PWM(MotifModel):
     def motif_length(self):
         return self.weights.shape[1]
 
+    def score_sites(self, windows, /):
+        from .backend import window_site_scores
+
+        return window_site_scores(self, windows)
+
 @dataclass(frozen=True, slots=True)
 class _ContextModel(MotifModel):
     name: str
     weights: np.ndarray
     order: int
     motif_length: int
-    circular_scan_aware = True
+    sequence_scanner = True
 
     def __post_init__(self):
         _validate_model_name(self.name, type(self).__name__)
@@ -379,6 +392,12 @@ class _ContextModel(MotifModel):
     @property
     def right_context(self):
         return self.order
+
+    def score_sites(self, windows, /):
+        from .backend import window_site_scores
+
+        return window_site_scores(self, windows)
+
 
 class BaMM(_ContextModel):
     pass
@@ -406,21 +425,14 @@ class SiteGA(MotifModel):
         object.__setattr__(self, "weights", weights)
         object.__setattr__(self, "motif_length", motif_length)
 
-    def _scan_legacy(self, sequence, forward, reverse, /):
-        """Dormant reference retained for future SiteGA validation."""
-        _require_sitega_enabled()
-        n_pos = forward.shape[0]
-        for pos in range(n_pos):
-            window = sequence[pos:pos + self.motif_length]
-            for out, row in ((forward, window), (reverse, window[::-1])):
-                total = np.float32(0)
-                for term in range(self.motif_length - 1):
-                    a, b = int(row[term]), int(row[term + 1])
-                    if out is reverse:
-                        a = a if a == 4 else 3 - a
-                        b = b if b == 4 else 3 - b
-                    total = np.float32(total + self.weights[5 * a + b, term])
-                out[pos] = total
+    def score_sites(self, windows, /):
+        """Dinucleotide scoring; equivalent to the dormant legacy reference."""
+        weights = jnp.asarray(self.weights)
+        total = jnp.zeros(windows.shape[0], dtype=jnp.float32)
+        for term in range(self.motif_length - 1):
+            code = 5 * windows[:, term].astype(jnp.int32) + windows[:, term + 1].astype(jnp.int32)
+            total = total + weights[code, term]
+        return total
 
 
 

@@ -46,6 +46,33 @@ def _circular_scan(data, row_start, row_length, weights, *, width, order):
     return jax.lax.fori_loop(0, width, base_term, (zero, zero))
 
 
+@partial(jax.jit, static_argnames=("width", "order"))
+def _window_site_scores(weights, windows, *, width, order):
+    """Score forward-oriented windows whose sites start at the window origin.
+
+    ``width`` is the motif length. Code accumulation and Float32 summation
+    follow the sequence-level kernels exactly, so both paths agree bitwise.
+    """
+    total = jnp.zeros(windows.shape[0], dtype=jnp.float32)
+    for term in range(width):
+        code = jnp.zeros(windows.shape[0], dtype=jnp.int32)
+        for j in range(order + 1):
+            code = 5 * code + windows[:, term + j].astype(jnp.int32)
+        total = total + weights[code, term]
+    return total
+
+
+def window_site_scores(model, windows):
+    """Score oriented windows with a built-in model's table."""
+    if not isinstance(model, (PWM, BaMM, Dimont, Slim)):
+        raise TypeError("window site scoring supports PWM, BaMM, Dimont and Slim only.")
+    return _window_site_scores(
+        jnp.asarray(model.weights), jnp.asarray(windows),
+        width=model.motif_length,
+        order=0 if isinstance(model, PWM) else model.order,
+    )
+
+
 def scan_circular(model, sequences):
     """Scan both strands at each position of ragged circular sequences.
 

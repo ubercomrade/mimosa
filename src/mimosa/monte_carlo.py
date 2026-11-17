@@ -10,9 +10,9 @@ import numpy as np
 
 from .backend import compare_circular, normalize_exact, scan_circular
 from .arrays import EncodedSequences
-from .errors import ModelFormatError
+from .errors import MimosaError, ModelFormatError
 from .io.bundles import model_fingerprint
-from .models import BaMM, Dimont, PWM, Slim, strict_integer
+from .models import MotifModel, SiteGA, strict_integer
 from .profiles.anchors import parse_min_logerr
 from .randomization import relabel_model
 
@@ -31,18 +31,32 @@ def _permutations(model, seed, replicate, group):
 
 
 def _profile(model, sequences, background):
-    raw = jnp.concatenate(scan_circular(model, sequences))
-    calibration = raw if background is None else jnp.concatenate(scan_circular(model, background))
-    # Reduce on device and synchronize only the scalar; checking both batches
-    # also covers every observed and randomized profile before normalization.
-    finite = jnp.all(jnp.isfinite(raw))
-    if background is not None:
-        finite = finite & jnp.all(jnp.isfinite(calibration))
-    if not bool(finite):
-        raise ModelFormatError(
-            "", f"{type(model).__name__} scan produced non-finite Float32 scores."
-        )
-    return normalize_exact(raw, calibration).reshape((2, sequences.data.size))
+    if getattr(model, "sequence_scanner", False):
+        raw = jnp.concatenate(scan_circular(model, sequences))
+        calibration = raw if background is None else jnp.concatenate(scan_circular(model, background))
+        # Reduce on device and synchronize only the scalar; checking both batches
+        # also covers every observed and randomized profile before normalization.
+        finite = jnp.all(jnp.isfinite(raw))
+        if background is not None:
+            finite = finite & jnp.all(jnp.isfinite(calibration))
+        if not bool(finite):
+            raise ModelFormatError(
+                "", f"{type(model).__name__} scan produced non-finite Float32 scores."
+            )
+        return normalize_exact(raw, calibration).reshape((2, sequences.data.size))
+    # Generic window scorers run through the shared scan path, which validates
+    # finiteness and yields host-side Float32 tracks.
+    pair = model.scan(sequences, strands="both", circular=True)
+    if background is None:
+        calibration = pair
+    else:
+        calibration = model.scan(background, strands="both", circular=True)
+    raw = np.concatenate((pair.forward.data, pair.reverse.data))
+    cal = (
+        raw if background is None
+        else np.concatenate((calibration.forward.data, calibration.reverse.data))
+    )
+    return normalize_exact(jnp.asarray(raw), jnp.asarray(cal)).reshape((2, sequences.data.size))
 
 
 def direct_mc(queries, targets, sequences, *, k, seed, group="full",
@@ -53,8 +67,10 @@ def direct_mc(queries, targets, sequences, *, k, seed, group="full",
     compared with independently randomized replicates of each target. Ties are
     included, and p = (count + 1) / (k + 1).
 
-    Only PWM, BaMM, Dimont and Slim are supported. JAX manages device
-    execution; this routine does not change the caller's global x64 setting.
+    Only PWM, BaMM, Dimont and Slim are supported natively on device; any other
+    MotifModel with ``score_sites`` is supported through the shared scan path
+    (SiteGA is temporarily disabled). JAX manages device execution; this
+    routine does not change the caller's global x64 setting.
     """
     with jax.enable_x64(True):
         return _direct_mc(queries, targets, sequences, k=k, seed=seed, group=group,
@@ -76,8 +92,15 @@ def _direct_mc(queries, targets, sequences, *, k, seed, group,
     if background is not None and not isinstance(background, EncodedSequences):
         raise TypeError("background must be an EncodedSequences batch.")
     queries, targets = list(queries), list(targets)
-    if not all(isinstance(m, (PWM, BaMM, Dimont, Slim)) for m in queries + targets):
-        raise TypeError("JAX Monte Carlo supports PWM, BaMM, Dimont and Slim only.")
+    for model in queries + targets:
+        if not isinstance(model, MotifModel):
+            raise TypeError("direct Monte Carlo supports MotifModel inputs only.")
+        if isinstance(model, SiteGA):
+            raise MimosaError("SiteGA is temporarily disabled.")
+        if not callable(getattr(model, "score_sites", None)):
+            raise TypeError(
+                f"{type(model).__name__} must provide a callable score_sites method."
+            )
     shape = (len(queries), len(targets))
     observed = np.empty(shape, dtype=np.float32)
     counts = np.zeros(shape, dtype=np.int64)

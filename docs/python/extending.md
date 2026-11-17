@@ -6,7 +6,7 @@ not require editing Mimosa or registering global plugins.
 ## Custom motif model
 
 A custom model subclasses `MotifModel` and provides `name`, `motif_length`, and
-a JAX-traceable `score_windows` method. Context models may also provide `left_context` and
+a JAX-traceable `score_sites` method. Context models may also provide `left_context` and
 `right_context`.
 
 ```python
@@ -22,7 +22,7 @@ class ConsensusModel(MotifModel):
     def __init__(self, pattern):
         self.pattern = jnp.asarray(pattern, dtype=jnp.uint8)
 
-    def score_windows(self, windows):
+    def score_sites(self, windows):
         return jnp.sum(windows == self.pattern, axis=1)
 ```
 
@@ -32,12 +32,12 @@ before calling the same method for the reverse strand; it checks output shape
 and finite Float32 values.
 
 The custom model participates in `scan`, `prepare_profile`, `compare`,
-`select_sites`, and `reconstruct_pfm`. Comparison scans circular sequences by
-passing wrapped windows with `left_context` bases on the left
+`direct_mc`, `select_sites`, and `reconstruct_pfm`. Comparison scans circular
+sequences by passing wrapped windows with `left_context` bases on the left
 and `window_size - left_context - 1` bases on the right, so no circular logic
 is needed in the model. A stable SHA-256 `fingerprint()` is
 needed for the prepared-profile cache. Arbitrary custom models are
-not accepted by `write_model` because `score_windows` does not define how to
+not accepted by `write_model` because `score_sites` does not define how to
 serialize model parameters.
 
 ## Batched fixed-window functions, including CNNs
@@ -49,16 +49,13 @@ scores complete oriented input windows:
 from mimosa import WindowModel, relabel_model
 
 model = WindowModel(
-    "assayed-tf", motif_length=20, score_windows=my_scorer,
+    "assayed-tf", motif_length=20, score_sites=my_scorer,
     left_context=10, right_context=10,
     fingerprint="stable-hash-of-scoring-code-and-learned-parameters",
     calibration_group="my-cnn-architecture-and-context-v1",
 )
 random_model = relabel_model(model, seed=112)
 ```
-
-The public direct Monte Carlo implementation currently supports built-in
-models only, not `WindowModel`.
 
 `my_scorer(windows)` receives a two-dimensional JAX uint8 array of shape
 `(n, left_context + motif_length + right_context)`. It returns a real JAX
@@ -86,9 +83,10 @@ not be preserved. The original learned parameters are unchanged. The
 composite function need not be representable by the original architecture
 without its input wrapper.
 
-For custom `MotifModel` implementations, input relabeling uses `score_windows`
-and canonical reverse-complement semantics. Direct Monte Carlo currently
-accepts built-in models only.
+For custom `MotifModel` implementations, input relabeling uses `score_sites`
+and canonical reverse-complement semantics. Direct Monte Carlo accepts any
+`MotifModel` with `score_sites`; built-in models run on the device-level JAX
+pipeline, others through the shared scan path.
 
 Native PWM/BaMM/Dimont/Slim surrogates compile the same input recoding
 into tables. Only the generic fallback needs explicit window enumeration.

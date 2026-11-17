@@ -39,7 +39,7 @@ class ShiftedPWM(MotifModel):
     def right_context(self):
         return 0
 
-    def score_windows(self, windows):
+    def score_sites(self, windows):
         weights = jnp.asarray(self._weights)
         return jnp.sum(weights[windows[:, 1:], jnp.arange(self.motif_length)], axis=1)
 
