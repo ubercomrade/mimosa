@@ -371,7 +371,7 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
     from mimosa.cache import Cache, _cached_mmap_prepared_profile, _store_normalized_profile, prepared_profile_cache_key
     from mimosa.io.bundles import model_fingerprint, sequence_fingerprint
     from mimosa.profiles.anchors import collect_both_anchors
-    from mimosa.profiles.normalization import EmpiricalLogTail, _fit_exact, normalize_bundle
+    from mimosa.profiles.prepared import _normalize_with_jax
     from mimosa.parallel import alignment_scratch_bytes
     from mimosa.profiles.alignment import ProfileConfig
     from mimosa.scan import _scan_batch_into
@@ -391,8 +391,7 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
     timings["scan"] = time.perf_counter() - started
 
     started = time.perf_counter()
-    table = _fit_exact(EmpiricalLogTail(), raw)
-    normalized = normalize_bundle(table, raw)
+    normalized = _normalize_with_jax(raw)
     timings["normalize"] = time.perf_counter() - started
 
     started = time.perf_counter()

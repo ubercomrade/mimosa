@@ -1,7 +1,8 @@
-"""Experimental JAX circular scanning and exact normalization primitives.
+"""JAX scanning, exact normalization, and experimental comparison primitives.
 
-This module is not yet connected to the public API. Its arrays stay on the
-selected JAX device. Callers must explicitly enable JAX x64 before using it;
+Scanning and normalization are used by the public profile pipeline. Arrays
+stay on the selected JAX device until the caller converts them to NumPy.
+Normalization and comparison require a local or global JAX x64 setting;
 this module does not change the process-wide JAX configuration.
 """
 
@@ -52,7 +53,6 @@ def scan_circular(model, sequences):
     Supports the four built-in families; SiteGA and custom models are not
     silently routed through this implementation.
     """
-    _require_x64()
     if not isinstance(model, (PWM, BaMM, Dimont, Slim)):
         raise TypeError("JAX circular scan supports PWM, BaMM, Dimont and Slim only.")
     if not isinstance(sequences, EncodedSequences):
@@ -67,6 +67,49 @@ def scan_circular(model, sequences):
         jnp.asarray(model.weights), width=model.motif_length,
         order=0 if isinstance(model, PWM) else model.order,
     )
+
+
+@partial(jax.jit, static_argnames=("width", "order"))
+def _linear_scan(data, row_start, output_start, weights, *, width, order):
+    position = jnp.arange(row_start.size, dtype=jnp.int32) - output_start
+
+    def base_term(term, scores):
+        def code_term(j, codes):
+            a, b = codes
+            f = data[row_start + position + term + j].astype(jnp.int32)
+            r = data[row_start + position + width + 2 * order - 1 - term - j].astype(jnp.int32)
+            return 5 * a + f, 5 * b + jnp.where(r == 4, 4, 3 - r)
+
+        zero = jnp.zeros(row_start.shape, dtype=jnp.int32)
+        fcode, rcode = jax.lax.fori_loop(0, order + 1, code_term, (zero, zero))
+        return scores[0] + weights[fcode, term], scores[1] + weights[rcode, term]
+
+    zero = jnp.zeros(row_start.shape, dtype=jnp.float32)
+    return jax.lax.fori_loop(0, width, base_term, (zero, zero))
+
+
+def scan_linear(model, sequences):
+    """Return two device score arrays and host offsets for linear sequences."""
+    if not isinstance(model, (PWM, BaMM, Dimont, Slim)):
+        raise TypeError("JAX linear scan supports PWM, BaMM, Dimont and Slim only.")
+    if not isinstance(sequences, EncodedSequences):
+        raise TypeError("sequences must be an EncodedSequences batch.")
+    if sequences.data.size > np.iinfo(np.int32).max:
+        raise ValueError("JAX scan currently supports at most 2**31-1 positions.")
+    order = 0 if isinstance(model, PWM) else model.order
+    lengths = np.diff(sequences.offsets)
+    counts = np.maximum(lengths - (model.motif_length + 2 * order) + 1, 0)
+    offsets = np.concatenate(([0], np.cumsum(counts, dtype=np.int64)))
+    if not offsets[-1]:
+        empty = jnp.empty(0, dtype=jnp.float32)
+        return (empty, empty), offsets
+    starts = np.repeat(sequences.offsets[:-1], counts).astype(np.int32)
+    out_starts = np.repeat(offsets[:-1], counts).astype(np.int32)
+    result = _linear_scan(
+        jnp.asarray(sequences.data), jnp.asarray(starts), jnp.asarray(out_starts),
+        jnp.asarray(model.weights), width=model.motif_length, order=order,
+    )
+    return result, offsets
 
 
 @jax.jit

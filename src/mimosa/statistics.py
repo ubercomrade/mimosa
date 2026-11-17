@@ -29,7 +29,7 @@ from .randomization import (
 )
 
 SAMPLING_VERSION = "original-shuffled-ordered-pairs-v3"
-ALIGNMENT_VERSION = "circular-jaccard-v1"
+ALIGNMENT_VERSION = "circular-jaccard-jax-profile-v2"
 
 
 @dataclass(frozen=True)

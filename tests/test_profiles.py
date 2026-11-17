@@ -117,11 +117,11 @@ class TestNormalization:
 
     def test_empirical_uses_upper_tail_from_separate_calibration(self):
         from mimosa import RaggedArray, StrandPair
-        from mimosa.profiles.normalization import _fit_exact, normalize_bundle
+        from mimosa.profiles.normalization import normalize_bundle
 
         foreground = RaggedArray.from_rows([[2.5]])
         calibration = RaggedArray.from_rows([[1.0, 2.0, 3.0]])
-        table = _fit_exact(EmpiricalLogTail(), StrandPair(calibration, calibration))
+        table = fit(EmpiricalLogTail(), calibration.data)
         normalized = normalize_bundle(table, StrandPair(foreground, foreground))
 
         assert normalized.forward[0][0] == pytest.approx(-np.log10(1 / 3))
@@ -207,12 +207,13 @@ class TestNormalization:
 
     def test_prepared_exact_scores_use_separate_background(self, pwm_pair, batch):
         from mimosa import scan
-        from mimosa.profiles.normalization import _fit_exact, normalize_bundle
+        from mimosa.profiles.normalization import normalize_bundle
 
         background = read_fasta("examples/background.fa")[0]
         raw = scan(pwm_pair[0], batch, strands="both")
         calibration = scan(pwm_pair[0], background, strands="both")
-        expected = normalize_bundle(_fit_exact(EmpiricalLogTail(), calibration), raw)
+        scores = np.concatenate((calibration.forward.data, calibration.reverse.data))
+        expected = normalize_bundle(fit(EmpiricalLogTail(), scores), raw)
 
         actual = prepare_profile(
             pwm_pair[0], batch, background=background, min_logerr=2.0

@@ -15,8 +15,6 @@ from .anchors import (
 )
 from .normalization import (
     EmpiricalLogTail,
-    _fit_exact,
-    normalize_bundle,
     normalization_fingerprint,
 )
 
@@ -36,6 +34,30 @@ def _all_finite(values, chunk_size=1 << 20):
         np.all(np.isfinite(values[start : start + chunk_size]))
         for start in range(0, values.size, chunk_size)
     )
+
+
+def _normalize_with_jax(raw, calibration=None):
+    """Normalize a strand bundle without changing global JAX precision."""
+    import jax
+    import jax.numpy as jnp
+
+    from .._jax_backend import normalize_exact
+
+    def values(bundle):
+        forward, reverse = bundle.forward.data, bundle.reverse.data
+        return forward if bundle.forward is bundle.reverse else np.concatenate((forward, reverse))
+
+    raw_values = values(raw)
+    calibration_values = raw_values if calibration is None else values(calibration)
+    with jax.enable_x64(True):
+        normalized = np.array(
+            normalize_exact(jnp.asarray(raw_values), jnp.asarray(calibration_values)),
+            dtype=np.float32, copy=True,
+        )
+    fwd_size = raw.forward.data.size
+    fwd = RaggedArray(normalized[:fwd_size], raw.forward.offsets)
+    rev = fwd if raw.forward is raw.reverse else RaggedArray(normalized[fwd_size:], raw.reverse.offsets)
+    return StrandPair(fwd, rev)
 
 
 class ScoreProfile:
@@ -271,14 +293,9 @@ def _prepare_profile(
             "model_or_scores must be a ScoreProfile or a MotifModel."
         )
 
-    table = _fit_exact(normalization, raw if calibration is None else calibration)
-    del calibration
-    norm_bundle = normalize_bundle(
-        table,
-        raw,
-        in_place=isinstance(model_or_scores, MotifModel),
-    )
-    del raw, table
+    normalization_fingerprint(normalization)
+    norm_bundle = _normalize_with_jax(raw, calibration)
+    del raw, calibration
     if cache is not None:
         from ..cache import _store_normalized_profile
 

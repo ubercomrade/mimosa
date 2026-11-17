@@ -7,8 +7,6 @@ import numpy as np
 from ..arrays import RaggedArray, StrandPair
 from ..parallel import use_parallel
 from .._kernels import (
-    count_unique_sorted,
-    fill_empirical_table_sorted,
     transform_empirical_scores,
     transform_empirical_scores_parallel,
 )
@@ -87,27 +85,3 @@ def normalize_bundle(table, bundle, *, in_place=False):
             out=bundle.reverse.data if in_place else None,
         ),
     )
-
-
-def _fit_exact(strategy, bundle):
-    """Build one threshold-independent exact empirical table."""
-    normalization_fingerprint(strategy)
-    fwd = bundle.forward.data
-    rev = bundle.reverse.data
-    if bundle.forward is bundle.reverse:
-        values = fwd.copy()
-    else:
-        values = np.empty(fwd.size + rev.size, dtype=np.float32)
-        values[: fwd.size] = fwd
-        values[fwd.size :] = rev
-    if values.size == 0:
-        return LogTailTable(
-            np.array([0.0], dtype=np.float32),
-            np.array([0.0], dtype=np.float32),
-        )
-    values.sort()
-    n_unique = count_unique_sorted(values)
-    scores = np.empty(n_unique, dtype=np.float32)
-    log_tail = np.empty(n_unique, dtype=np.float32)
-    fill_empirical_table_sorted(values, values.size, scores, log_tail)
-    return LogTailTable(scores, log_tail)

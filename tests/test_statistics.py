@@ -55,7 +55,7 @@ def make_dist(scores):
             "search_range": 5,
             "min_logerr": np.float32(4.0),
             "normalization_version": normalization_fingerprint(EmpiricalLogTail()),
-            "alignment_version": "circular-jaccard-v1",
+            "alignment_version": "circular-jaccard-jax-profile-v2",
             "sequence_fingerprint": "s" * 64,
             "background_fingerprint": "none",
             "raw_scores_fingerprint": content_fingerprint_float64(raw_scores),
@@ -163,7 +163,7 @@ class TestNullDistribution:
         d = build_null(pwm_models, sequences=batch, n_samples=30, seed=42, min_logerr=TAU0)
         assert d.n_null == 30
         assert d.metric == "jaccard"
-        assert d.contract["alignment_version"] == "circular-jaccard-v1"
+        assert d.contract["alignment_version"] == "circular-jaccard-jax-profile-v2"
         assert d.contract["search_range"] == 5
         assert d.contract["min_logerr"] == np.float32(TAU0)
         assert set(d.contract) == {

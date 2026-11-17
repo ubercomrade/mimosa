@@ -26,8 +26,8 @@
 
 ## Runtime Constraints
 
-- Numba row-parallel work requires more than one thread, at least `50_000` items, and at least `64` rows; normalization uses the item/thread thresholds.
-- Built-in scan uses row-parallel kernels when eligible; custom models remain serial.
+- Remaining Numba row-parallel work requires more than one thread, at least `50_000` items, and at least `64` rows; the low-level normalization transform uses the item/thread thresholds.
+- Built-in scanning and prepared-profile normalization use JAX; custom model scanning remains serial.
 - Row-parallel alignment additionally requires `(query anchors + target anchors) * shifts >= 25_000`; serial and parallel kernels reduce rows in order and must stay bitwise identical.
 - `compare_many` derives joblib target workers from `total_threads / inner_threads`, runs the complete target pipeline in parallel workers when eligible, and preserves target order.
 - Do not add nested `prange` or another process pool; joblib outer parallelism and Numba inner parallelism are the measured execution layers.

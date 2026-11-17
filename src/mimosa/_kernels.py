@@ -89,103 +89,6 @@ def rolling_scan_reverse(weights, seq, kmer_size, n_terms, n_pos, out):
         out[pos] = total
 
 
-@njit(cache=True)
-def batch_scan_forward(weights, seq_data, seq_offsets, out_data, out_offsets, n_terms):
-    n_rows = seq_offsets.shape[0] - 1
-    for row in range(n_rows):
-        start = seq_offsets[row]
-        stop = seq_offsets[row + 1]
-        n_pos = out_offsets[row + 1] - out_offsets[row]
-        if n_pos <= 0:
-            continue
-        pwm_scan_forward(weights, seq_data[start:stop], n_pos, n_terms, out_data[out_offsets[row] : out_offsets[row + 1]])
-
-
-@njit(parallel=True, cache=True)
-def batch_scan_forward_parallel(weights, seq_data, seq_offsets, out_data, out_offsets, n_terms):
-    n_rows = seq_offsets.shape[0] - 1
-    for row in prange(n_rows):
-        start = seq_offsets[row]
-        stop = seq_offsets[row + 1]
-        n_pos = out_offsets[row + 1] - out_offsets[row]
-        if n_pos <= 0:
-            continue
-        pwm_scan_forward(weights, seq_data[start:stop], n_pos, n_terms, out_data[out_offsets[row] : out_offsets[row + 1]])
-
-
-@njit(cache=True)
-def batch_scan_reverse(weights, seq_data, seq_offsets, out_data, out_offsets, n_terms):
-    n_rows = seq_offsets.shape[0] - 1
-    for row in range(n_rows):
-        start = seq_offsets[row]
-        stop = seq_offsets[row + 1]
-        n_pos = out_offsets[row + 1] - out_offsets[row]
-        if n_pos <= 0:
-            continue
-        pwm_scan_reverse(weights, seq_data[start:stop], n_pos, n_terms, out_data[out_offsets[row] : out_offsets[row + 1]])
-
-
-@njit(parallel=True, cache=True)
-def batch_scan_reverse_parallel(weights, seq_data, seq_offsets, out_data, out_offsets, n_terms):
-    n_rows = seq_offsets.shape[0] - 1
-    for row in prange(n_rows):
-        start = seq_offsets[row]
-        stop = seq_offsets[row + 1]
-        n_pos = out_offsets[row + 1] - out_offsets[row]
-        if n_pos <= 0:
-            continue
-        pwm_scan_reverse(weights, seq_data[start:stop], n_pos, n_terms, out_data[out_offsets[row] : out_offsets[row + 1]])
-
-
-@njit(cache=True)
-def batch_rolling_forward(weights, seq_data, seq_offsets, out_data, out_offsets, kmer_size, n_terms):
-    n_rows = seq_offsets.shape[0] - 1
-    for row in range(n_rows):
-        start = seq_offsets[row]
-        stop = seq_offsets[row + 1]
-        n_pos = out_offsets[row + 1] - out_offsets[row]
-        if n_pos <= 0:
-            continue
-        rolling_scan_forward(weights, seq_data[start:stop], kmer_size, n_terms, n_pos, out_data[out_offsets[row] : out_offsets[row + 1]])
-
-
-@njit(parallel=True, cache=True)
-def batch_rolling_forward_parallel(weights, seq_data, seq_offsets, out_data, out_offsets, kmer_size, n_terms):
-    n_rows = seq_offsets.shape[0] - 1
-    for row in prange(n_rows):
-        start = seq_offsets[row]
-        stop = seq_offsets[row + 1]
-        n_pos = out_offsets[row + 1] - out_offsets[row]
-        if n_pos <= 0:
-            continue
-        rolling_scan_forward(weights, seq_data[start:stop], kmer_size, n_terms, n_pos, out_data[out_offsets[row] : out_offsets[row + 1]])
-
-
-@njit(cache=True)
-def batch_rolling_reverse(weights, seq_data, seq_offsets, out_data, out_offsets, kmer_size, n_terms):
-    n_rows = seq_offsets.shape[0] - 1
-    for row in range(n_rows):
-        start = seq_offsets[row]
-        stop = seq_offsets[row + 1]
-        n_pos = out_offsets[row + 1] - out_offsets[row]
-        if n_pos <= 0:
-            continue
-        rolling_scan_reverse(weights, seq_data[start:stop], kmer_size, n_terms, n_pos, out_data[out_offsets[row] : out_offsets[row + 1]])
-
-
-@njit(parallel=True, cache=True)
-def batch_rolling_reverse_parallel(weights, seq_data, seq_offsets, out_data, out_offsets, kmer_size, n_terms):
-    n_rows = seq_offsets.shape[0] - 1
-    for row in prange(n_rows):
-        start = seq_offsets[row]
-        stop = seq_offsets[row + 1]
-        n_pos = out_offsets[row + 1] - out_offsets[row]
-        if n_pos <= 0:
-            continue
-        rolling_scan_reverse(weights, seq_data[start:stop], kmer_size, n_terms, n_pos, out_data[out_offsets[row] : out_offsets[row + 1]])
-
-
-
 # ── Circular padding ─────────────────────────────────────────────────────────
 
 @njit(cache=True)
@@ -244,33 +147,6 @@ def transform_empirical_scores_parallel(scores, table_scores, table_log_tail, ou
 
 
 # ── Anchor collection ────────────────────────────────────────────────────────
-
-@njit(cache=True)
-def count_unique_sorted(values):
-    if values.shape[0] == 0:
-        return 0
-    count = 1
-    for i in range(1, values.shape[0]):
-        if values[i] != values[i - 1]:
-            count += 1
-    return count
-
-
-@njit(cache=True)
-def fill_empirical_table_sorted(values, total_n, scores_out, log_tail_out):
-    out = 0
-    cumulative = 0
-    i = values.shape[0] - 1
-    while i >= 0:
-        score = values[i]
-        stop = i
-        while i >= 0 and values[i] == score:
-            i -= 1
-        cumulative += stop - i
-        scores_out[out] = score
-        log_tail_out[out] = np.float32(-np.log10(cumulative / total_n))
-        out += 1
-
 
 @njit(cache=True)
 def collect_threshold_anchors_csr(

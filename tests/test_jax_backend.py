@@ -1,5 +1,7 @@
 """Parity tests for the experimental, optional JAX primitives."""
 import os
+import subprocess
+import sys
 
 os.environ.setdefault("JAX_ENABLE_X64", "true")
 
@@ -8,13 +10,33 @@ import pytest
 
 jax = pytest.importorskip("jax")
 
-from mimosa import EncodedSequences, SiteGA, compare, prepare_profile, read_model, relabel_model  # noqa: E402
-from mimosa._jax_backend import compare_circular, normalize_exact, scan_circular  # noqa: E402
+from mimosa import (  # noqa: E402
+    EncodedSequences, SiteGA, compare, prepare_profile, read_model, relabel_model, window_size,
+)
+from mimosa._jax_backend import compare_circular, normalize_exact, scan_circular, scan_linear  # noqa: E402
 from mimosa._jax_monte_carlo import direct_mc  # noqa: E402
 from mimosa.profiles.normalization import (  # noqa: E402
-    EmpiricalLogTail, _fit_exact, normalize_bundle,
+    EmpiricalLogTail, fit, normalize_bundle,
 )
 from mimosa.scan import _scan_batch_into  # noqa: E402
+
+
+def _legacy_scan(model, sequences, circular):
+    forward, reverse, offsets = [], [], [0]
+    for row_index in range(len(sequences)):
+        row = sequences[row_index]
+        count = len(row) if circular else max(len(row) - window_size(model) + 1, 0)
+        if circular and len(row):
+            left = model.left_context
+            right = window_size(model) - left - 1
+            row = row[np.arange(-left, len(row) + right) % len(row)]
+        f, r = np.empty(count, np.float32), np.empty(count, np.float32)
+        if count:
+            model.scan_into(row, f, r)
+        forward.extend(f)
+        reverse.extend(r)
+        offsets.append(offsets[-1] + count)
+    return np.asarray(forward, np.float32), np.asarray(reverse, np.float32), np.asarray(offsets)
 
 
 @pytest.mark.parametrize("path,order", [
@@ -30,9 +52,29 @@ def test_ragged_circular_scan_matches_cpu(path, order, relabeled):
     if relabeled:
         model = relabel_model(model, seed=117)
     sequences = EncodedSequences.from_strings(["", "N", "AC", "ACGTNNGTA", "TGCATGCA" * 5])
-    expected = _scan_batch_into(model, sequences, "both", circular=True)
+    fwd, rev, _ = _legacy_scan(model, sequences, circular=True)
     actual = scan_circular(model, sequences)
-    for reference, result in zip((expected.forward.data, expected.reverse.data), actual):
+    for reference, result in zip((fwd, rev), actual):
+        np.testing.assert_array_equal(np.asarray(result), reference)
+
+
+@pytest.mark.parametrize("path,order", [
+    ("examples/foxa2.meme", None),
+    ("examples/myog.ihbcp", 0),
+    ("examples/myog.ihbcp", 4),
+    ("tests/fixtures/stat_dimont-model-1.xml", None),
+    ("tests/fixtures/slim/example-model-1.xml", None),
+])
+@pytest.mark.parametrize("relabeled", [False, True])
+def test_ragged_linear_scan_matches_cpu(path, order, relabeled):
+    model = read_model(path, order=order)
+    if relabeled:
+        model = relabel_model(model, seed=117)
+    sequences = EncodedSequences.from_strings(["", "N", "AC", "ACGTNNGTA", "TGCATGCA" * 5])
+    fwd, rev, expected_offsets = _legacy_scan(model, sequences, circular=False)
+    actual, offsets = scan_linear(model, sequences)
+    np.testing.assert_array_equal(offsets, expected_offsets)
+    for reference, result in zip((fwd, rev), actual):
         np.testing.assert_array_equal(np.asarray(result), reference)
 
 
@@ -43,7 +85,8 @@ def test_exact_normalization_matches_cpu(background):
     other = EncodedSequences.from_strings(["TGCATGCAN" * 7, "AC" * 20])
     raw = _scan_batch_into(model, sequences, "both", circular=True)
     calibration = _scan_batch_into(model, other, "both", circular=True) if background else raw
-    reference = normalize_bundle(_fit_exact(EmpiricalLogTail(), calibration), raw)
+    calibration_scores = np.concatenate((calibration.forward.data, calibration.reverse.data))
+    reference = normalize_bundle(fit(EmpiricalLogTail(), calibration_scores), raw)
     scores = np.concatenate((raw.forward.data, raw.reverse.data))
     cal = np.concatenate((calibration.forward.data, calibration.reverse.data))
     expected = np.concatenate((reference.forward.data, reference.reverse.data))
@@ -72,6 +115,19 @@ def test_empty_circular_batch():
     sequences = EncodedSequences.from_strings(["", ""])
     result = scan_circular(model, sequences)
     assert [np.asarray(a).size for a in result] == [0, 0]
+
+
+def test_public_preparation_does_not_change_jax_x64_configuration():
+    script = """
+import jax
+from mimosa import EncodedSequences, prepare_profile, read_model
+assert not jax.config.x64_enabled
+batch = EncodedSequences.from_strings(["ACGTN" * 8])
+prepare_profile(read_model("examples/foxa2.meme"), batch, min_logerr=2, circular=True)
+assert not jax.config.x64_enabled
+"""
+    env = dict(os.environ, JAX_PLATFORMS="cpu", JAX_ENABLE_X64="false")
+    subprocess.run([sys.executable, "-c", script], env=env, check=True)
 
 
 @pytest.mark.parametrize("search_range", [0, 2, 7])

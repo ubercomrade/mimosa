@@ -4,31 +4,19 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._kernels import (
-    batch_rolling_forward,
-    batch_rolling_forward_parallel,
-    batch_rolling_reverse,
-    batch_rolling_reverse_parallel,
-    batch_scan_forward,
-    batch_scan_forward_parallel,
-    batch_scan_reverse,
-    batch_scan_reverse_parallel,
-    circular_pad_rows,
-)
+from ._kernels import circular_pad_rows
 from .arrays import EncodedSequences, RaggedArray, StrandPair
 from .errors import InvariantError, ModelFormatError, ModelInterfaceError
 from .models import (
     BaMM,
     Dimont,
     PWM,
-    SiteGA,
     Slim,
     _validate_model_contract,
     n_positions,
     site_start_offset,
     window_size,
 )
-from .parallel import use_parallel
 from .randomization import WindowModel, _scan_window_batch
 
 STRAND_POLICIES = ("forward", "reverse", "best", "both")
@@ -79,6 +67,27 @@ def _circularize(batch, model):
 
 def _scan_batch_into(model, batch, strands, circular=False):
     _validate_model_contract(model)
+    if isinstance(model, (PWM, BaMM, Dimont, Slim)):
+        from ._jax_backend import scan_circular, scan_linear
+
+        if circular:
+            tracks = scan_circular(model, batch)
+            offsets = batch.offsets
+        else:
+            tracks, offsets = scan_linear(model, batch)
+        # Prepared-profile normalization writes into these host buffers.
+        fwd, rev = (np.array(track, dtype=np.float32, copy=True) for track in tracks)
+        _validate_finite_builtin_scores(fwd, model)
+        _validate_finite_builtin_scores(rev, model)
+        offsets.setflags(write=False)
+        if strands == "forward":
+            return RaggedArray(fwd, offsets)
+        if strands == "reverse":
+            return RaggedArray(rev, offsets)
+        if strands == "best":
+            return RaggedArray(np.maximum(fwd, rev), offsets)
+        return StrandPair(RaggedArray(fwd, offsets), RaggedArray(rev, offsets))
+
     if circular:
         sequence_offsets = batch.offsets
         batch = _circularize(batch, model)
@@ -87,73 +96,28 @@ def _scan_batch_into(model, batch, strands, circular=False):
         raise InvariantError("circular scan must yield one score per sequence base.")
     if isinstance(model, WindowModel):
         return _scan_window_batch(model, batch, offsets, strands)
-    parallel = use_parallel(int(offsets[-1]), rows=len(batch))
-    sfwd = batch_scan_forward_parallel if parallel else batch_scan_forward
-    srev = batch_scan_reverse_parallel if parallel else batch_scan_reverse
-    rfwd = batch_rolling_forward_parallel if parallel else batch_rolling_forward
-    rrev = batch_rolling_reverse_parallel if parallel else batch_rolling_reverse
-
-    if isinstance(model, PWM):
-        forward_kernel, reverse_kernel = sfwd, srev
-        kernel_args = (model.motif_length,)
-    elif isinstance(model, (BaMM, Dimont, Slim)):
-        forward_kernel, reverse_kernel = rfwd, rrev
-        kernel_args = (model.order + 1, model.motif_length)
-    elif isinstance(model, SiteGA):
-        forward_kernel, reverse_kernel = rfwd, rrev
-        kernel_args = (2, model.motif_length - 1)
-    else:
-        fwd = np.full(int(offsets[-1]), np.nan, dtype=np.float32)
-        rev = np.full(int(offsets[-1]), np.nan, dtype=np.float32)
-        for row in range(len(batch)):
-            start, stop = offsets[row], offsets[row + 1]
-            if stop > start:
-                model.scan_into(batch[row], fwd[start:stop], rev[start:stop])
-        _validate_custom_scan_output(fwd, rev, model)
-        if strands == "forward":
-            offsets.setflags(write=False)
-            return RaggedArray(fwd, offsets)
-        elif strands == "reverse":
-            offsets.setflags(write=False)
-            return RaggedArray(rev, offsets)
-        elif strands == "best":
-            np.maximum(fwd, rev, out=fwd)
-        else:
-            offsets.setflags(write=False)
-            return StrandPair(RaggedArray(fwd, offsets), RaggedArray(rev, offsets))
-        offsets.setflags(write=False)
-        return RaggedArray(fwd, offsets)
-
-    if strands == "forward":
-        data = np.empty(int(offsets[-1]), dtype=np.float32)
-        forward_kernel(model.weights, batch.data, batch.offsets, data, offsets, *kernel_args)
-    elif strands == "reverse":
-        data = np.empty(int(offsets[-1]), dtype=np.float32)
-        reverse_kernel(model.weights, batch.data, batch.offsets, data, offsets, *kernel_args)
-    else:
-        fwd = np.empty(int(offsets[-1]), dtype=np.float32)
-        rev = np.empty(int(offsets[-1]), dtype=np.float32)
-        forward_kernel(model.weights, batch.data, batch.offsets, fwd, offsets, *kernel_args)
-        reverse_kernel(model.weights, batch.data, batch.offsets, rev, offsets, *kernel_args)
-        if strands == "best":
-            np.maximum(fwd, rev, out=fwd)
-        else:
-            _validate_finite_builtin_scores(fwd, model)
-            _validate_finite_builtin_scores(rev, model)
-            offsets.setflags(write=False)
-            return StrandPair(RaggedArray(fwd, offsets), RaggedArray(rev, offsets))
-        data = fwd
-    _validate_finite_builtin_scores(data, model)
+    fwd = np.full(int(offsets[-1]), np.nan, dtype=np.float32)
+    rev = np.full(int(offsets[-1]), np.nan, dtype=np.float32)
+    for row in range(len(batch)):
+        start, stop = offsets[row], offsets[row + 1]
+        if stop > start:
+            model.scan_into(batch[row], fwd[start:stop], rev[start:stop])
+    _validate_custom_scan_output(fwd, rev, model)
     offsets.setflags(write=False)
-    return RaggedArray(data, offsets)
+    if strands == "forward":
+        return RaggedArray(fwd, offsets)
+    if strands == "reverse":
+        return RaggedArray(rev, offsets)
+    if strands == "best":
+        return RaggedArray(np.maximum(fwd, rev), offsets)
+    return StrandPair(RaggedArray(fwd, offsets), RaggedArray(rev, offsets))
 
 
 def scan(model, sequences, *, strands="forward"):
     """Scan a motif model against an EncodedSequences batch.
 
     Returns a RaggedArray for forward/reverse/best, or a StrandPair for both.
-    Large batches automatically use Numba parallel kernels; small batches stay
-    on the lower-overhead serial path.
+    Built-in models use JAX; custom models use their own ``scan_into`` method.
     """
     _validate_strand_policy(strands)
     if not isinstance(sequences, EncodedSequences):

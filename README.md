@@ -80,6 +80,14 @@ For development from a source checkout:
 uv sync --locked --group dev
 ```
 
+Built-in scanning and prepared-profile normalization use JAX. The default
+installation supports CPU execution; GPU execution requires a compatible JAX
+CUDA or ROCm plugin and driver as described in the
+[JAX installation guide](https://docs.jax.dev/en/latest/installation.html).
+The migration is ongoing: alignment and some lower-level operations still use
+Numba. Prepared-profile cache keys and null-distribution compatibility have
+changed; rebuild old null distributions after upgrading.
+
 ## CLI
 
 Compare two PWM models on generated sequences with the default settings:

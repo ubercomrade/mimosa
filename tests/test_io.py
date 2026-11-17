@@ -512,7 +512,7 @@ class TestNullBundle:
         assert d["n_null"] == 20
         assert d["metric"] == "jaccard"
         assert d["contract"]["search_range"] == 5
-        assert d["contract"]["alignment_version"] == "circular-jaccard-v1"
+        assert d["contract"]["alignment_version"] == "circular-jaccard-jax-profile-v2"
         assert set(d["contract"]) == set(dist.contract)
         np.testing.assert_array_equal(d["raw_scores"], dist.raw_scores)
         assert d["pairs"][0][0] == dist.pairs[0][0]
