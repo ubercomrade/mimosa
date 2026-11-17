@@ -1,7 +1,8 @@
 # Mimosa
 
 Mimosa is a Python 3.12–3.13 package and command-line tool for DNA motif comparison.
-It supports PWM/PFM, BaMM, SiteGA, Dimont, Slim, and precomputed score profiles.
+It supports PWM/PFM, BaMM, Dimont, Slim, and precomputed score profiles.
+SiteGA is temporarily disabled pending further development.
 Mimosa compares heterogeneous motif models through their behavior on the same
 DNA sequences rather than by forcing their internal representations into a
 common matrix.
@@ -57,10 +58,12 @@ statistical significance, and references.
 |---|---|---|
 | PWM/PFM | MEME, plain PFM, model bundle | `pwm` |
 | BaMM | `.ihbcp`, model bundle | `bamm` |
-| SiteGA | `.mat`, model bundle | `sitega` |
 | Dimont | Jstacs XML, model bundle | `dimont` |
 | Slim | Jstacs XML, model bundle | `slim` |
 | Score profile | FASTA-like numeric rows | `scores` |
+
+The SiteGA implementation and formats are retained for future work, but model
+construction, reading, and CLI use are currently unavailable.
 
 ## Installation
 
@@ -234,7 +237,7 @@ When projected temporary cache storage is unavailable, the report records that
 configuration as `resource_limited` and continues; pass
 `--allow-resource-overcommit` only when the host has enough reserved capacity.
 Use `--coverage --skewed-rows --thresholds 1,2,4` for the optional
-heterogeneous suite (PWM, BaMM, SiteGA, a larger background, ragged rows, and
+heterogeneous suite (PWM, BaMM, a larger background, ragged rows, and
 anchor-density regimes).
 
 For a separate warmed-JIT, single-process input-relabel benchmark:

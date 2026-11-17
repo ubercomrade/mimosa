@@ -26,6 +26,7 @@ from ..models import (
     PWM,
     SiteGA,
     Slim,
+    _require_sitega_enabled,
 )
 from ..profiles.alignment import METRIC_NAME
 from ..profiles.anchors import parse_min_logerr
@@ -456,6 +457,7 @@ def model_fingerprint(model):
             f"BaMM{{Float32, Matrix{{Float32}}}}|{model.name}|{body}"
         )
     if isinstance(model, SiteGA):
+        _require_sitega_enabled()
         body = content_fingerprint_float32(model.weights) + f"|ml={model.motif_length}"
         return content_fingerprint_string(
             f"SiteGA{{Float32, Matrix{{Float32}}}}|{model.name}|{body}"
@@ -521,6 +523,7 @@ def _bundle_spec(model):
             (("order", model.order), ("motif_length", model.motif_length)),
         )
     if isinstance(model, SiteGA):
+        _require_sitega_enabled()
         return "sitega", "representation", model.weights, (("motif_length", model.motif_length),)
     if isinstance(model, Dimont):
         return (
@@ -637,6 +640,7 @@ def _read_bamm_bundle(path, manifest, name):
 
 
 def _read_sitega_bundle(path, manifest, name):
+    _require_sitega_enabled()
     motif_length = _required_manifest_int(manifest, "motif_length", path, "SiteGA manifest", minimum=1, maximum=10_000)
     _validate_declared_model_shape(path, manifest, 25, motif_length, "SiteGA")
     representation = _read_model_array(path, manifest, "representation")

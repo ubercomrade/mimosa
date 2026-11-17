@@ -195,6 +195,7 @@ class TestBammReader:
             read_bamm(p)
 
 
+@pytest.mark.skip(reason="SiteGA is disabled")
 class TestSitega:
     def test_read(self):
         m = read_sitega("examples/sitega_stat6.mat")
@@ -401,6 +402,7 @@ class TestModelBundle:
         assert m2.order == m.order
         np.testing.assert_array_equal(m2.weights, m.weights)
 
+    @pytest.mark.skip(reason="SiteGA is disabled")
     def test_roundtrip_sitega(self, tmp_path):
         m = read_sitega("examples/sitega_stat6.mat")
         path = str(tmp_path / "s")

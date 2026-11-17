@@ -17,13 +17,13 @@ from .errors import MimosaError
 from .io.bundles import write_null_bundle
 from .io.fasta import MAX_FASTA_TOTAL_BASES, read_fasta, read_scores
 from .io.readers import read_model
-from .models import PWM, BaMM, Dimont, SiteGA, Slim
+from .models import PWM, BaMM, Dimont, Slim
 from .profiles.prepared import ScoreProfile
 
 MODEL_TYPE_MAP = {
     "pwm": PWM,
     "bamm": BaMM,
-    "sitega": SiteGA,
+    # "sitega": SiteGA,  # Temporarily unavailable.
     "dimont": Dimont,
     "slim": Slim,
 }
@@ -134,12 +134,6 @@ def _annotate_comparison_results(results, args, sequences, background, models=No
     from .statistics import NullDistribution, annotate_results, check_null_compatibility
 
     dist = NullDistribution(**read_null_bundle(args.null_distribution))
-    from .profiles.normalization import HybridEmpiricalLogTail, normalization_fingerprint
-
-    if dist.contract["normalization_version"] != normalization_fingerprint(
-        HybridEmpiricalLogTail()
-    ):
-        raise MimosaError("null distribution normalization is incompatible with this comparison.")
     check_null_compatibility(
         dist,
         sequences=sequences,
@@ -215,7 +209,8 @@ def _run_build_null(args):
         raise MimosaError("motif collection path must be a directory.")
     extensions = {
         "pwm": (".meme", ".pfm"), "bamm": (".ihbcp",),
-        "sitega": (".mat",), "dimont": (".xml",), "slim": (".xml",),
+        # "sitega": (".mat",),  # Temporarily unavailable.
+        "dimont": (".xml",), "slim": (".xml",),
     }[args.model_type]
     if args.randomization == "pwm-shuffle":
         if args.model_type != "pwm":

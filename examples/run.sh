@@ -22,17 +22,11 @@ mimosa compare ./foxa2.meme ./pif4.meme \
   --min-logerr 2 \
   --fasta ./foreground.fa
 
-mimosa compare ./sitega_stat6.mat ./pif4.meme \
-  --query-type sitega \
-  --target-type pwm \
-  --min-logerr 2 \
-  --fasta ./foreground.fa
-
-mimosa compare ./sitega_gata2.mat ./sitega_stat6.mat \
-  --query-type sitega \
-  --target-type sitega \
-  --min-logerr 2 \
-  --fasta ./foreground.fa
+# SiteGA examples are temporarily disabled.
+# mimosa compare ./sitega_stat6.mat ./pif4.meme \
+#   --query-type sitega --target-type pwm --min-logerr 2 --fasta ./foreground.fa
+# mimosa compare ./sitega_gata2.mat ./sitega_stat6.mat \
+#   --query-type sitega --target-type sitega --min-logerr 2 --fasta ./foreground.fa
 
 mimosa compare ./scores_1.fasta ./scores_2.fasta \
   --query-type scores \

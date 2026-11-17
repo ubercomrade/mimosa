@@ -6,7 +6,6 @@ from mimosa import (
     MotifModel,
     PWM,
     EncodedSequences,
-    SiteGA,
     pwm_from_pfm,
     reverse_complement,
     scan,
@@ -153,7 +152,8 @@ class TestCircularScan:
         return [
             PWM("pwm", rng.normal(size=(5, 7)).astype(np.float32), (0.25,) * 4),
             BaMM("bamm", rng.normal(size=(125, 6)).astype(np.float32), 2, 6),
-            SiteGA("sitega", rng.normal(size=(25, 6)).astype(np.float32), 6),
+            # SiteGA("sitega", rng.normal(size=(25, 6)).astype(np.float32), 6),
+            None,  # Retain the disabled case for future restoration.
         ]
 
     @staticmethod
@@ -163,7 +163,9 @@ class TestCircularScan:
         rows = [rng.integers(0, 5, size=n, dtype=np.uint8) for n in (40, 3, 0, 1, 17)]
         return EncodedSequences.from_rows(rows)
 
-    @pytest.mark.parametrize("index", range(3))
+    @pytest.mark.parametrize("index", [
+        0, 1, pytest.param(2, marks=pytest.mark.skip(reason="SiteGA is disabled")),
+    ])
     def test_matches_linear_scan_of_manually_wrapped_rows(self, index):
         model = self._models()[index]
         sequences = self._sequences()

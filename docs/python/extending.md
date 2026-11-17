@@ -98,7 +98,7 @@ models on each recoded window can be slow. A custom null additionally needs
 an explicit `calibration_group` string and stable `fingerprint()`; library
 callers check both compared models' group before annotating scores.
 
-Native PWM/BaMM/Dimont/Slim/SiteGA surrogates compile the same input recoding
+Native PWM/BaMM/Dimont/Slim surrogates compile the same input recoding
 into tables. Only the generic fallback needs explicit window enumeration.
 
 ## ScoreProfile

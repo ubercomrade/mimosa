@@ -59,7 +59,6 @@ For built-in models:
 | Model | Left context | Right context |
 |---|---:|---:|
 | PWM | 0 | 0 |
-| SiteGA | 0 | 0 |
 | BaMM | `order` | `order` |
 | Dimont | `order` | `order` |
 | Slim | `order` | `order` |

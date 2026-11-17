@@ -340,6 +340,7 @@ class TestCacheCommand:
             contract={
                 "search_range": 5,
                 "min_logerr": 4.0,
+                "normalization_version": "empirical-log-tail-v2",
                 "alignment_version": "old-alignment",
             },
             sequence_fingerprint="none",

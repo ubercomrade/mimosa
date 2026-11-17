@@ -15,7 +15,7 @@ from .arrays import EncodedSequences, RaggedArray, StrandPair
 from .errors import ModelInterfaceError
 from .models import (
     PWM, BaMM, Dimont, MotifModel, SiteGA, Slim,
-    _validate_model_contract, strict_integer, window_size,
+    _require_sitega_enabled, _validate_model_contract, strict_integer, window_size,
 )
 
 INPUT_RELABEL_VERSION = "input-alphabet-relabel-v1"
@@ -260,6 +260,7 @@ def model_calibration_group(model):
     if isinstance(model, (BaMM, Dimont, Slim)):
         return f"{type(model).__name__}:order={model.order}"
     if isinstance(model, SiteGA):
+        _require_sitega_enabled()
         return "SiteGA"
     declared = getattr(model, "calibration_group", None)
     if declared is not None:

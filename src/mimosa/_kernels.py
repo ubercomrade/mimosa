@@ -243,47 +243,6 @@ def transform_empirical_scores_parallel(scores, table_scores, table_log_tail, ou
         out[i] = table_log_tail[_upper_bound_desc(table_scores, scores[i])]
 
 
-@njit(cache=True)
-def _transform_hybrid_one(
-    score, minimum, bin_width, histogram_log_tail, exact_scores, exact_log_tail
-):
-    n_bins = histogram_log_tail.shape[0]
-    exact_size = exact_scores.shape[0]
-    if exact_size > 0 and score >= exact_scores[exact_size - 1]:
-        return exact_log_tail[_upper_bound_desc(exact_scores, score)]
-    if n_bins == 0:
-        return np.float32(0.0)
-    if bin_width == 0.0:
-        index = 0
-    else:
-        index = int(np.floor((float(score) - float(minimum)) / bin_width))
-    if index < 0:
-        index = 0
-    elif index >= n_bins:
-        index = n_bins - 1
-    return histogram_log_tail[index]
-
-
-@njit(cache=True)
-def transform_hybrid_scores(
-    scores, minimum, bin_width, histogram_log_tail, exact_scores, exact_log_tail, out
-):
-    for i in range(scores.shape[0]):
-        out[i] = _transform_hybrid_one(
-            scores[i], minimum, bin_width, histogram_log_tail, exact_scores, exact_log_tail
-        )
-
-
-@njit(parallel=True, cache=True)
-def transform_hybrid_scores_parallel(
-    scores, minimum, bin_width, histogram_log_tail, exact_scores, exact_log_tail, out
-):
-    for i in prange(scores.shape[0]):
-        out[i] = _transform_hybrid_one(
-            scores[i], minimum, bin_width, histogram_log_tail, exact_scores, exact_log_tail
-        )
-
-
 # ── Anchor collection ────────────────────────────────────────────────────────
 
 @njit(cache=True)

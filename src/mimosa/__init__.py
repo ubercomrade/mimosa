@@ -34,7 +34,6 @@ from .models import (
 from .profiles.alignment import ProfileConfig
 from .profiles.normalization import (
     EmpiricalLogTail,
-    HybridEmpiricalLogTail,
     normalization_fingerprint,
 )
 from .profiles.prepared import PreparedProfile, ScoreProfile, prepare_profile
@@ -98,7 +97,6 @@ __all__ = [
     "window_size",
     "ProfileConfig",
     "EmpiricalLogTail",
-    "HybridEmpiricalLogTail",
     "normalization_fingerprint",
     "PreparedProfile",
     "ScoreProfile",

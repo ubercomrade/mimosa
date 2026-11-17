@@ -140,11 +140,13 @@ class TestContextModels:
         assert d.left_context == 3
         assert s.left_context == 3
 
+    @pytest.mark.skip(reason="SiteGA is disabled")
     def test_sitega(self):
         m = SiteGA("sg", np.zeros((25, 6), dtype=np.float32), 6)
         assert m.left_context == 0
         assert window_size(m) == 6
 
+    @pytest.mark.skip(reason="SiteGA is disabled")
     def test_sitega_min_length(self):
         with pytest.raises(ModelDimensionError):
             SiteGA("sg", np.zeros((25, 1), dtype=np.float32), 1)

@@ -17,7 +17,6 @@ from mimosa import (
 from mimosa.profiles.anchors import collect_anchor_csr, collect_both_anchors
 from mimosa.profiles.normalization import (
     EmpiricalLogTail,
-    HybridEmpiricalLogTail,
     fit,
     normalization_fingerprint,
     transform_scores,
@@ -30,7 +29,7 @@ from mimosa.models import pwm_from_pfm
 
 
 def _lookup_score(table, score):
-    from mimosa.profiles.normalization import LogTailTable, HybridLogTailTable
+    from mimosa.profiles.normalization import LogTailTable
 
     if isinstance(table, LogTailTable):
         idx = min(
@@ -41,14 +40,6 @@ def _lookup_score(table, score):
             table.scores.size - 1,
         )
         return table.log_tail[idx]
-    if isinstance(table, HybridLogTailTable):
-        if table.exact_tail.scores.size and score >= table.exact_tail.scores[-1]:
-            return _lookup_score(table.exact_tail, score)
-        if table.log_tail.size == 0:
-            return np.float32(0.0)
-        index = 0 if table.bin_width == 0 else int((float(score) - float(table.minimum)) / table.bin_width)
-        index = min(max(index, 0), table.log_tail.size - 1)
-        return table.log_tail[index]
     raise ValueError(f"unknown table type: {type(table)!r}")
 
 
@@ -126,32 +117,14 @@ class TestNormalization:
 
     def test_empirical_uses_upper_tail_from_separate_calibration(self):
         from mimosa import RaggedArray, StrandPair
-        from mimosa.profiles.normalization import _fit_normalize
+        from mimosa.profiles.normalization import _fit_exact, normalize_bundle
 
         foreground = RaggedArray.from_rows([[2.5]])
         calibration = RaggedArray.from_rows([[1.0, 2.0, 3.0]])
-        _, normalized = _fit_normalize(
-            EmpiricalLogTail(),
-            StrandPair(foreground, foreground),
-            calibration=StrandPair(calibration, calibration),
-        )
+        table = _fit_exact(EmpiricalLogTail(), StrandPair(calibration, calibration))
+        normalized = normalize_bundle(table, StrandPair(foreground, foreground))
 
         assert normalized.forward[0][0] == pytest.approx(-np.log10(1 / 3))
-
-    def test_hybrid_exact_tail_uses_upper_tail_lookup(self):
-        from mimosa import RaggedArray
-        from mimosa.profiles.normalization import HybridLogTailTable, LogTailTable
-
-        exact = LogTailTable(
-            np.array([3.0, 2.0, 1.0], dtype=np.float32),
-            np.array([-np.log10(1 / 3), -np.log10(2 / 3), 0.0], dtype=np.float32),
-        )
-        table = HybridLogTailTable(
-            0.0, 1.0, np.zeros(4, dtype=np.float32), exact
-        )
-
-        normalized = transform_scores(table, RaggedArray.from_rows([[2.5]]))
-        assert normalized[0][0] == pytest.approx(-np.log10(1 / 3))
 
     def test_empty_scores(self):
         table = fit(EmpiricalLogTail(), np.array([], dtype=np.float32))
@@ -160,24 +133,6 @@ class TestNormalization:
     def test_nonfinite_rejected(self):
         with pytest.raises(ValueError):
             fit(EmpiricalLogTail(), np.array([1.0, np.nan], dtype=np.float32))
-
-    def test_hybrid_constant_scores(self):
-        table = fit(HybridEmpiricalLogTail(), np.full(100, 5.0, dtype=np.float32))
-        assert table.bin_width == 1.0
-        assert _lookup_score(table, np.float32(5.0)) == 0.0
-
-    def test_hybrid_histogram_shape(self):
-        rng = np.random.default_rng(1)
-        scores = rng.normal(size=1000).astype(np.float32)
-        table = fit(HybridEmpiricalLogTail(256), scores)
-        assert table.log_tail.size == 256
-
-    def test_hybrid_exact_tail(self):
-        rng = np.random.default_rng(2)
-        scores = rng.normal(size=10000).astype(np.float32)
-        table = fit(HybridEmpiricalLogTail(), scores, tail_logerr=1.0)
-        # top ~10% should be exact
-        assert table.exact_tail.scores.size > 500
 
     def test_transform_scores(self):
         from mimosa import RaggedArray
@@ -189,20 +144,6 @@ class TestNormalization:
             np.testing.assert_allclose(
                 out[i], [_lookup_score(table, s) for s in scores[i]], rtol=1e-6
             )
-
-    def test_hybrid_transform_matches_lookup(self):
-        from mimosa import RaggedArray
-
-        rng = np.random.default_rng(3)
-        values = rng.normal(size=2000).astype(np.float32)
-        scores = RaggedArray.from_rows([values[:1000], values[1000:]])
-        table = fit(HybridEmpiricalLogTail(256), scores.data, tail_logerr=1.0)
-        expected = np.array(
-            [_lookup_score(table, value) for value in scores.data], dtype=np.float32
-        )
-
-        serial = transform_scores(table, scores)
-        np.testing.assert_array_equal(serial.data, expected)
 
     def test_sparse_anchor_positions_do_not_allocate_full_candidate_buffer(
         self, monkeypatch
@@ -241,11 +182,7 @@ class TestNormalization:
         assert anchors.positions.tolist() == [offset]
 
     def test_fingerprint(self):
-        assert normalization_fingerprint(EmpiricalLogTail()) == "empirical-log-tail-v1"
-        assert (
-            normalization_fingerprint(HybridEmpiricalLogTail(1024))
-            == "hybrid-log-tail-v3;bins=1024"
-        )
+        assert normalization_fingerprint(EmpiricalLogTail()) == "empirical-log-tail-v2"
 
     def test_prepared_normalized_scores_are_threshold_independent(
         self, pwm_pair, batch
@@ -261,16 +198,21 @@ class TestNormalization:
         )
         assert lower.anchors[0].positions.size > higher.anchors[0].positions.size
 
+    def test_preparation_defaults_to_exact_empirical_normalization(self, pwm_pair, batch):
+        default = prepare_profile(pwm_pair[0], batch, min_logerr=2)
+        explicit = prepare_profile(pwm_pair[0], batch, min_logerr=2, normalization=EmpiricalLogTail())
+        assert default.normalization == EmpiricalLogTail()
+        np.testing.assert_array_equal(default.bundle.forward.data, explicit.bundle.forward.data)
+        np.testing.assert_array_equal(default.bundle.reverse.data, explicit.bundle.reverse.data)
+
     def test_prepared_exact_scores_use_separate_background(self, pwm_pair, batch):
         from mimosa import scan
-        from mimosa.profiles.normalization import _fit_normalize
+        from mimosa.profiles.normalization import _fit_exact, normalize_bundle
 
         background = read_fasta("examples/background.fa")[0]
         raw = scan(pwm_pair[0], batch, strands="both")
         calibration = scan(pwm_pair[0], background, strands="both")
-        _, expected = _fit_normalize(
-            EmpiricalLogTail(), raw, calibration=calibration
-        )
+        expected = normalize_bundle(_fit_exact(EmpiricalLogTail(), calibration), raw)
 
         actual = prepare_profile(
             pwm_pair[0], batch, background=background, min_logerr=2.0
@@ -911,7 +853,7 @@ class TestCompare:
         target = circular_profile(pwm_pair[1], batch)
 
         with pytest.raises(ValueError, match="requested normalization"):
-            compare(query, target, normalization=EmpiricalLogTail())
+            compare(query, target, normalization=object())
 
     def test_result_dict_includes_metric_and_zero_contributing_sites(self):
         result = ComparisonResult("query", "target", np.float32(0.0), 0, "++")

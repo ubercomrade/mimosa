@@ -27,17 +27,23 @@ shifts are visited from most negative to most positive.
 ## Normalization
 
 Prepared profiles use one threshold-independent exact empirical table. Every
-stored value therefore uses:
+stored value uses the empirical upper-tail count:
 
 ```text
 -log10(count(calibration_score >= score) / n_calibration)
 ```
 
+When the score exceeds every calibration score, the table clamps it to the
+maximum calibration score rather than returning an infinite value. An empty
+calibration table produces zero.
+
 The denominator is the full calibration count and normalized profile values are
-Float32. `HybridEmpiricalLogTail` remains the default strategy identifier and
-the low-level `fit(..., tail_logerr=...)` helper still supports hybrid tables,
-but `prepare_profile` canonicalizes the complete exact table so `min_logerr`
-only selects the contributing positions. Because both strands share one
+Float32. `EmpiricalLogTail` is the sole normalization strategy; `min_logerr`
+only selects contributing positions and does not change normalized values.
+Legacy hybrid normalization and its `bins` parameter are no longer supported.
+Prepared-profile cache entries from older formats are misses, and null
+distributions with older normalization identifiers must be rebuilt.
+Because both strands share one
 calibration, approximately a fraction `10^-t` of positions reaches a value
 `t`; tied scores and finite precision can change the exact count.
 
@@ -54,7 +60,7 @@ n_sites = |S|
 ```
 
 The score is `0` when `S` is empty and lies in `[0, 1]`. A model compared with
-itself scores `1` at offset `0`, and swapping query and target mirrors the
+itself scores `1` at offset `0` if its eligible union is nonempty, and swapping query and target mirrors the
 offset and orientation without changing the score. Both profiles must have the
 same row lengths.
 
@@ -79,7 +85,7 @@ uses a fixed, independently drawn alphabet permutation at each motif position.
 For a function f of an oriented window it evaluates f(pi(x)); declared context
 outside the motif and N stay fixed. A reverse window is reverse-complemented
 before recoding. All occurrences of a coordinate in higher-order terms are
-recoded coherently. Built-in PWM, BaMM, Dimont, Slim and SiteGA tables compile
+recoded coherently. Built-in PWM, BaMM, Dimont and Slim tables compile
 this same operation directly; a generic window function uses input recoding.
 
 Both modes create one random variant per source, prepare the original and

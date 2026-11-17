@@ -14,7 +14,7 @@ from .anchors import (
     parse_min_logerr,
 )
 from .normalization import (
-    HybridEmpiricalLogTail,
+    EmpiricalLogTail,
     _fit_exact,
     normalize_bundle,
     normalization_fingerprint,
@@ -156,7 +156,7 @@ class PreparedProfile:
         self.bundle = bundle
         self.anchors = anchors
         self.min_logerr = threshold
-        self.normalization = normalization if normalization is not None else HybridEmpiricalLogTail()
+        self.normalization = normalization if normalization is not None else EmpiricalLogTail()
         try:
             normalization_fingerprint(self.normalization)
         except ValueError as exc:
@@ -188,6 +188,7 @@ def prepare_profile(model_or_scores, sequences=None, *, background=None, min_log
     ``compare_many`` require; the default linear layout serves other tools.
     The returned ``PreparedProfile`` is immutable: to change ``min_logerr``,
     prepare the profile again.
+    Normalization uses a threshold-independent exact empirical table.
     """
     return _prepare_profile(
         model_or_scores,
@@ -223,7 +224,7 @@ def _prepare_profile(
     circular = bool(circular)
     threshold = parse_min_logerr(min_logerr)
     if normalization is None:
-        normalization = HybridEmpiricalLogTail()
+        normalization = EmpiricalLogTail()
 
     if cache is not None:
         from ..cache import _cached_prepared_profile

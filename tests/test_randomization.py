@@ -24,7 +24,9 @@ from mimosa.statistics import check_null_compatibility
 
 @pytest.fixture(params=[
     ("examples/foxa2.meme", None), ("examples/myog.ihbcp", 0),
-    ("examples/myog.ihbcp", 4), ("examples/sitega_gata2.mat", None),
+    ("examples/myog.ihbcp", 4),
+    pytest.param(("examples/sitega_gata2.mat", None),
+                 marks=pytest.mark.skip(reason="SiteGA is disabled")),
     ("tests/fixtures/stat_dimont-model-1.xml", None),
     ("tests/fixtures/slim/example-model-1.xml", None),
 ])

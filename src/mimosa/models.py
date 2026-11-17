@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .errors import ModelDimensionError, ModelFormatError, ModelInterfaceError
+from .errors import MimosaError, ModelDimensionError, ModelFormatError, ModelInterfaceError
 
 NUCLEOTIDE_CARDINALITY = 4
 PSEUDOCOUNT_PWM = 1e-4
@@ -16,6 +16,12 @@ MAX_CONTEXT_ORDER = 10
 MAX_CONTEXT_REPRESENTATION_ELEMENTS = 100_000_000
 MAX_DIMONT_SLIM_ORDER = 6
 MAX_DIMONT_SLIM_LENGTH = 30
+_SITEGA_ENABLED = False  # Keep the implementation for future validation and restoration.
+
+
+def _require_sitega_enabled():
+    if not _SITEGA_ENABLED:
+        raise MimosaError("SiteGA is temporarily disabled pending further development.")
 
 
 def _validate_model_name(name, model_type):
@@ -164,6 +170,8 @@ class MotifModel(ABC):
 
 def _validate_model_contract(model, capability="scan"):
     """Validate the public model contract before any geometry is computed."""
+    if isinstance(model, SiteGA):
+        _require_sitega_enabled()
     if not isinstance(model, MotifModel):
         raise ModelInterfaceError(
             capability, type(model).__name__, "model must be a MotifModel."
@@ -285,6 +293,7 @@ class SiteGA(MotifModel):
     motif_length: int
 
     def __post_init__(self):
+        _require_sitega_enabled()
         _validate_model_name(self.name, "SiteGA")
         weights = _as_float32_readonly(self.weights)
         motif_length = _validate_sitega(weights, self.motif_length)
@@ -292,6 +301,7 @@ class SiteGA(MotifModel):
         object.__setattr__(self, "motif_length", motif_length)
 
     def scan_into(self, sequence, forward, reverse, /):
+        _require_sitega_enabled()
         from ._kernels import rolling_scan_forward, rolling_scan_reverse
 
         n_pos = forward.shape[0]

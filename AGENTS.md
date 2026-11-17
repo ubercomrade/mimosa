@@ -34,7 +34,7 @@
 
 ## Cache
 
-- Prepared-profile cache format v7 stores normalized score and offset sections plus the `circular` flag in read-only mmap-backed arrays; anchors are rebuilt per `min_logerr`, and entries from other formats are misses.
+- Prepared-profile cache format v8 stores normalized score and offset sections plus the `circular` flag in read-only mmap-backed arrays; anchors are rebuilt per `min_logerr`, and entries from other formats are misses.
 - Cache and bundle readers use `allow_pickle=False`; there is no pickle fallback. Checksums detect corruption, not tampering, so still avoid loading untrusted cache directories.
 - The disk cache does not retain prepared profiles in a process-local store; verified-entry state is per cache instance and prepared arrays are read-only mmap-backed sections.
 - Cache keys include model, sequences, background, normalization, the `circular` layout, and algorithm versions; `min_logerr` is not part of the key. Clear stale entries with `uv run mimosa cache clear --cache-dir .mimosa-cache`.

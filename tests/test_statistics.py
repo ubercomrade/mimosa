@@ -15,7 +15,7 @@ from mimosa.io.bundles import content_fingerprint_float64
 from mimosa.io.fasta import read_fasta
 from mimosa.io.models import read_meme
 from mimosa.models import pwm_from_pfm
-from mimosa.profiles.normalization import HybridEmpiricalLogTail, normalization_fingerprint
+from mimosa.profiles.normalization import EmpiricalLogTail, normalization_fingerprint
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ def make_dist(scores):
             "metric": "jaccard",
             "search_range": 5,
             "min_logerr": np.float32(4.0),
-            "normalization_version": normalization_fingerprint(HybridEmpiricalLogTail()),
+            "normalization_version": normalization_fingerprint(EmpiricalLogTail()),
             "alignment_version": "circular-jaccard-v1",
             "sequence_fingerprint": "s" * 64,
             "background_fingerprint": "none",
@@ -99,6 +99,25 @@ class TestPValues:
 
 
 class TestNullDistribution:
+    @pytest.mark.parametrize("old_tag", [
+        "hybrid-log-tail-v3;bins=65536", "empirical-log-tail-v1",
+    ])
+    def test_old_normalization_is_not_usable(self, old_tag):
+        from mimosa.errors import MimosaError
+        from mimosa.statistics import check_null_compatibility
+
+        current = make_dist([0.2, 0.4])
+        legacy = NullDistribution(**{
+            **current.__dict__,
+            "contract": {**current.contract, "normalization_version": old_tag},
+        })
+        with pytest.raises(MimosaError, match="normalization.*rebuild"):
+            annotate_results([ComparisonResult("a", "b", np.float32(0.3), 0, "++")], legacy)
+        with pytest.raises(MimosaError, match="normalization.*rebuild"):
+            check_null_compatibility(
+                legacy, sequences=None, background=None, search_range=5, min_logerr=4,
+            )
+
     def test_validation(self):
         with pytest.raises(ValueError):
             NullDistribution(

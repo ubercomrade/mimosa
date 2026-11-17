@@ -48,7 +48,7 @@ def _arguments():
     parser.add_argument(
         "--coverage",
         action="store_true",
-        help="include BaMM and SiteGA targets and use a larger background batch",
+        help="include BaMM targets and use a larger background batch",
     )
     parser.add_argument(
         "--skewed-rows",
@@ -118,7 +118,7 @@ def _models(*, coverage=False):
         models.extend(
             (
                 read_model(ROOT / "examples" / "myog.ihbcp"),
-                read_model(ROOT / "examples" / "sitega_stat6.mat"),
+                # read_model(ROOT / "examples" / "sitega_stat6.mat"),  # Disabled.
             )
         )
     return models
@@ -137,7 +137,7 @@ def _targets(models, count, *, coverage=False):
     ]
     if not coverage:
         return pwm_targets
-    return ([models[-2], models[-1]] + pwm_targets)[:count]
+    return ([models[-1]] + pwm_targets)[:count]
 
 
 def _skew_batch(batch, count):
@@ -371,7 +371,7 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
     from mimosa.cache import Cache, _cached_mmap_prepared_profile, _store_normalized_profile, prepared_profile_cache_key
     from mimosa.io.bundles import model_fingerprint, sequence_fingerprint
     from mimosa.profiles.anchors import collect_both_anchors
-    from mimosa.profiles.normalization import HybridEmpiricalLogTail, _fit_exact, normalize_bundle
+    from mimosa.profiles.normalization import EmpiricalLogTail, _fit_exact, normalize_bundle
     from mimosa.parallel import alignment_scratch_bytes
     from mimosa.profiles.alignment import ProfileConfig
     from mimosa.scan import _scan_batch_into
@@ -391,7 +391,7 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
     timings["scan"] = time.perf_counter() - started
 
     started = time.perf_counter()
-    table = _fit_exact(HybridEmpiricalLogTail(), raw)
+    table = _fit_exact(EmpiricalLogTail(), raw)
     normalized = normalize_bundle(table, raw)
     timings["normalize"] = time.perf_counter() - started
 

@@ -16,7 +16,8 @@ uv run mimosa compare QUERY TARGET \
   [--fasta FASTA] [--background FASTA] [options]
 ```
 
-Model types are `scores`, `pwm`, `bamm`, `sitega`, `dimont`, and `slim`.
+Model types are `scores`, `pwm`, `bamm`, `dimont`, and `slim`. SiteGA is
+temporarily disabled.
 Every comparison reports the weighted Jaccard similarity of circular profiles
 as `"metric": "jaccard"`; see [Method and statistics](method.md).
 
@@ -79,7 +80,7 @@ uv run mimosa build-null MOTIFS \
 The default `--randomization pwm-shuffle` uses the first motif from each MEME
 file, preserving the historical PWM behavior. To use another model type, pass
 `--randomization input-relabel --model-type TYPE`. Types are `pwm` (MEME/PFM),
-`bamm` (ihbcp), `sitega` (mat), `dimont` and `slim` (xml). At least two uniquely
+`bamm` (ihbcp), `dimont` and `slim` (xml). At least two uniquely
 named models of one type/order are required. `--order N` selects a BaMM order;
 it is rejected for other types. `--background` supplies an optional separate
 normalization batch.

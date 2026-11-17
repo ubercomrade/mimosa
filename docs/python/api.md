@@ -28,8 +28,9 @@ read_scores(path) -> ScoreProfile
 write_model(path, model) -> None
 ```
 
-`read_model` reads MEME, PFM, BaMM, SiteGA, Dimont, Slim, and model bundles
-using the built-in format dispatch.
+`read_model` reads MEME, PFM, BaMM, Dimont, Slim, and model bundles using the
+built-in format dispatch. SiteGA readers and construction are temporarily
+disabled; existing files are not modified.
 
 `write_model` serializes built-in model families only. Custom models can scan
 and compare, but their arbitrary internal parameters are not a portable model

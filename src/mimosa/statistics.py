@@ -21,7 +21,7 @@ from .io.bundles import (
 from .models import PWM, MotifModel, strict_integer
 from .profiles.alignment import METRIC_NAME, ProfileConfig
 from .profiles.anchors import DEFAULT_MIN_LOGERR, parse_min_logerr
-from .profiles.normalization import HybridEmpiricalLogTail, normalization_fingerprint
+from .profiles.normalization import EmpiricalLogTail, normalization_fingerprint
 from .profiles.prepared import _prepare_profile
 from .randomization import (
     INPUT_RELABEL_STRATEGY, INPUT_RELABEL_VERSION,
@@ -304,6 +304,7 @@ def check_null_compatibility(
     information: passing their parameter checks does not establish transfer
     of calibration to another scoring formalism or motif collection.
     """
+    _check_null_normalization(dist)
     expected_sequences = "none" if sequences is None else sequence_fingerprint(sequences)
     expected_background = "none" if background is None else sequence_fingerprint(background)
     checks = [
@@ -320,6 +321,11 @@ def check_null_compatibility(
     if dist.strategy not in ("profile", INPUT_RELABEL_STRATEGY):
         raise MimosaError("null distribution strategy is incompatible with profile comparison.")
     _check_null_model_group(dist, models)
+
+
+def _check_null_normalization(dist):
+    if dist.contract.get("normalization_version") != normalization_fingerprint(EmpiricalLogTail()):
+        raise MimosaError("null distribution normalization is incompatible; rebuild the null distribution.")
 
 
 def _check_null_model_group(dist, models):
@@ -350,6 +356,7 @@ def _check_result_parameters(result, dist):
 
 
 def annotate_results(results, dist, *, effective_number_of_targets=None, models=None):
+    _check_null_normalization(dist)
     _check_null_model_group(dist, models)
     n_null = dist.n_null
     effective = len(results) if effective_number_of_targets is None else effective_number_of_targets
@@ -446,7 +453,7 @@ def build_null(
     if seed < 0:
         raise ValueError("seed must be non-negative.")
     if normalization is None:
-        normalization = HybridEmpiricalLogTail()
+        normalization = EmpiricalLogTail()
 
     rng = np.random.default_rng(seed)
     randomization_contract = {}

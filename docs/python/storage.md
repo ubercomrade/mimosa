@@ -22,7 +22,8 @@ model_bundle/
 ```
 
 Only the model-specific payload is present: PWM uses `weights.bin`; higher-order
-models and SiteGA use `representation.bin`. The manifest records the model
+models use `representation.bin`. SiteGA bundles remain on disk but cannot
+currently be read or written. The manifest records the model
 kind, name, shape, geometry, row-major layout, payload length, and SHA-256
 checksum.
 

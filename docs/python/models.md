@@ -1,6 +1,6 @@
 # Models and Formats
 
-Mimosa has five built-in motif model families and one external score-profile
+Mimosa has four available built-in motif model families and one external score-profile
 adapter.
 
 | Model | Public fields | Weight layout | Context |
@@ -9,7 +9,9 @@ adapter.
 | `BaMM` | `name`, `weights`, `order`, `motif_length` | `(5 ** (order + 1), motif_length)` | `order` on both sides |
 | `Dimont` | `name`, `weights`, `order`, `motif_length` | `(5 ** (order + 1), motif_length)` | `order` on both sides |
 | `Slim` | `name`, `weights`, `order`, `motif_length` | `(5 ** (order + 1), motif_length)` | `order` on both sides |
-| `SiteGA` | `name`, `weights`, `motif_length` | `(25, motif_length)` | none |
+
+The `SiteGA` implementation is retained but temporarily disabled, including
+construction, reading and scanning.
 
 All built-in model values are frozen dataclasses with contiguous read-only
 Float32 arrays. `Dimont.order` and `Slim.order` describe the materialized
@@ -38,9 +40,8 @@ BaMM `.ihbcp` files are materialized into a 5-ary context matrix. `order` can
 be supplied to `read_model` or the lower-level BaMM reader to materialize a
 lower order when the source contains higher orders.
 
-SiteGA `.mat` files use 25 dinucleotide rows. Dimont and Slim Jstacs XML files
-are parsed and materialized into the same 5-ary row layout used by context
-scanning.
+Dimont and Slim Jstacs XML files are parsed and materialized into the same
+5-ary row layout used by context scanning.
 
 ## Score profiles
 
