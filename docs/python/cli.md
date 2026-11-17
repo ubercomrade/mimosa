@@ -58,12 +58,10 @@ Compare one query against an ordered list of targets. All targets use the same
 ```bash
 uv run mimosa compare-many QUERY TARGET [TARGET ...] \
   --query-type QUERY_TYPE --target-type TARGET_TYPE \
-  [--total-threads TOTAL] [--numba-threads NUMBA] [options]
+  [options]
 ```
 
-`--numba-threads` is limited to 1 through 4. `TOTAL` must be positive and
-divisible by `NUMBA`. These legacy options do not control JAX or target
-parallelism; targets are processed in one process.
+Targets are processed in one process; JAX manages device execution.
 Results are emitted as an ordered JSON array. `--pvalue` computes a separate
 Monte Carlo p-value for every target.
 `--cache-dir` is optional; without it no cache directory or mmap reuse is

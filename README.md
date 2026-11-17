@@ -84,9 +84,8 @@ Built-in scanning and prepared-profile normalization use JAX. The default
 installation supports CPU execution; GPU execution requires a compatible JAX
 CUDA or ROCm plugin and driver as described in the
 [JAX installation guide](https://docs.jax.dev/en/latest/installation.html).
-The migration is ongoing: some lower-level operations still use
-Numba. The pooled-null interface has been removed; p-values use direct
-pair-specific Monte Carlo.
+The pooled-null interface has been removed; p-values use direct pair-specific
+Monte Carlo.
 
 ## CLI
 
@@ -120,7 +119,7 @@ mimosa compare examples/scores_1.fasta examples/scores_2.fasta \
 
 mimosa compare-many examples/foxa2.meme examples/gata2.meme examples/gata4.meme \
   --query-type pwm --target-type pwm --fasta examples/foreground.fa \
-  --min-logerr 2 --total-threads 4 --numba-threads 1
+  --min-logerr 2
 ```
 
 Compute pair-specific Monte Carlo significance:
@@ -232,8 +231,7 @@ anchor-density regimes).
 For a separate warmed-JIT, single-process input-relabel benchmark:
 
 ```bash
-NUMBA_NUM_THREADS=1 NUMBA_CACHE_DIR=/tmp/mimosa-relabel-numba \
-  uv run python benchmarks/benchmark_input_relabel.py examples/myog.ihbcp \
+uv run python benchmarks/benchmark_input_relabel.py examples/myog.ihbcp \
   --orders 0,4 --repeats 3 --output /tmp/mimosa-relabel-benchmark.json
 ```
 

@@ -5,7 +5,8 @@ import sys
 import numpy as np
 import pytest
 
-from mimosa import EncodedSequences, compare, direct_mc, read_model
+from mimosa import EncodedSequences, PWM, compare, direct_mc, read_model
+from mimosa.errors import ModelFormatError
 
 
 def test_direct_monte_carlo_public_observed_and_order():
@@ -64,3 +65,35 @@ def test_invalid_monte_carlo_options(options):
     sequences = EncodedSequences.from_strings(["ACGT" * 10])
     with pytest.raises(ValueError):
         direct_mc([model], [model], sequences, **options)
+
+
+def _overflow_model():
+    return PWM("overflow", np.full((5, 4), np.float32(2e38)), (0.25,) * 4)
+
+
+@pytest.mark.parametrize("bad_side", ["query", "target"])
+def test_monte_carlo_rejects_nonfinite_observed_scores(bad_side):
+    good = read_model("examples/foxa2.meme")
+    bad = _overflow_model()
+    sequences = EncodedSequences.from_strings(["ACGT" * 10])
+    query, target = (bad, good) if bad_side == "query" else (good, bad)
+    with pytest.raises(ModelFormatError, match="scan produced non-finite Float32 scores"):
+        direct_mc([query], [target], sequences, k=2, seed=1, min_logerr=1)
+
+
+def test_monte_carlo_rejects_nonfinite_background_scores():
+    weights = np.zeros((5, 4), dtype=np.float32)
+    weights[[0, 3]] = np.float32(2e38)
+    model = PWM("background-overflow", weights, (0.25,) * 4)
+    sequences = EncodedSequences.from_strings(["C" * 20])
+    background = EncodedSequences.from_strings(["A" * 20])
+    with pytest.raises(ModelFormatError, match="scan produced non-finite Float32 scores"):
+        direct_mc([model], [model], sequences, background=background, k=2, seed=1, min_logerr=1)
+
+
+def test_monte_carlo_rejects_nonfinite_randomized_scores(monkeypatch):
+    model = read_model("examples/foxa2.meme")
+    sequences = EncodedSequences.from_strings(["ACGT" * 10])
+    monkeypatch.setattr("mimosa._jax_monte_carlo.relabel_model", lambda *args, **kwargs: _overflow_model())
+    with pytest.raises(ModelFormatError, match="scan produced non-finite Float32 scores"):
+        direct_mc([model], [model], sequences, k=2, seed=1, min_logerr=1)

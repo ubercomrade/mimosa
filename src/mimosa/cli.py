@@ -186,8 +186,6 @@ def _run_compare_many(args):
         min_logerr=args.min_logerr,
         background=background,
         cache=cache,
-        total_threads=args.total_threads,
-        inner_threads=args.numba_threads,
     )
     results = _annotate_comparison_results(
         results,
@@ -231,11 +229,6 @@ def build_parser():
         p.add_argument("--target-type", required=True, choices=PROFILE_MODEL_TYPES)
         p.add_argument("--query-order", type=int, help="BaMM order used to read the query")
         p.add_argument("--target-order", type=int, help="BaMM order used to read the targets")
-        if many:
-            p.add_argument("--total-threads", type=int, default=1)
-        p.add_argument(
-            "--numba-threads", type=int, choices=range(1, 5), default=1
-        )
         p.add_argument("--search-range", type=int, default=5)
         p.add_argument("--min-logerr", type=float, default=4.0)
         p.add_argument("--fasta")
@@ -292,10 +285,6 @@ def main(argv=None):
         if args.command == "compare":
             return _run_compare(args)
         if args.command == "compare-many":
-            if args.total_threads < 1:
-                raise ValueError("total_threads must be a positive integer.")
-            if args.total_threads % args.numba_threads:
-                raise ValueError("total_threads must be divisible by numba-threads.")
             return _run_compare_many(args)
         if args.command == "cache":
             return _run_cache(args)

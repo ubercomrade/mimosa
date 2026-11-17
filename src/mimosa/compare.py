@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from .models import BaMM, Dimont, MotifModel, PWM, SiteGA, Slim
+from .models import MotifModel
 from .profiles.alignment import METRIC_NAME, ProfileConfig, profile_compare
 from .profiles.anchors import DEFAULT_MIN_LOGERR, parse_min_logerr
 from .profiles.prepared import (
@@ -125,46 +125,7 @@ def _compare_prepared(query, target, config):
     )
 
 
-_BUILTIN_MODELS = (PWM, BaMM, Dimont, SiteGA, Slim)
 MIN_EXPECTED_ANCHORS = 50
-_worker_cache_path: str | None = None
-_worker_cache_obj = None
-
-
-def _worker_cache(directory):
-    global _worker_cache_path, _worker_cache_obj
-    if directory is None:
-        return None
-    if _worker_cache_path == directory:
-        return _worker_cache_obj
-    from .cache import Cache
-
-    _worker_cache_path = directory
-    _worker_cache_obj = Cache(directory)
-    return _worker_cache_obj
-
-
-def _prepare_and_compare_with_threads(
-    query,
-    target_source,
-    sequences,
-    background,
-    threshold,
-    normalization,
-    config,
-    cache_directory,
-    preparation_context,
-    threads,
-):
-    target = _prepare_side(
-        target_source, sequences, background=background, threshold=threshold,
-        normalization=normalization, cache=_worker_cache(cache_directory),
-        preparation_context=preparation_context,
-    )
-    if target is None:
-        raise TypeError(f"unsupported comparison target: {type(target_source).__name__}")
-    _check_prepared_compatibility(query, target)
-    return _compare_prepared(query, target, config)
 
 
 def _prepare_side(

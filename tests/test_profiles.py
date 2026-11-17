@@ -561,38 +561,20 @@ class TestCompare:
             inner_threads=inner_threads,
         ) == expected
 
-    def test_joblib_worker_disables_inner_numba_threads(self, pwm_pair, batch, monkeypatch):
-        import importlib
-        import numba
-
-        compare_module = importlib.import_module("mimosa.compare")
-        calls = []
-        query = circular_profile(pwm_pair[0], batch)
-        target = circular_profile(pwm_pair[1], batch)
-        monkeypatch.setattr(numba, "set_num_threads", calls.append)
-        compare_module._prepare_and_compare_with_threads(
-            query, target, batch, None, query.min_logerr, query.normalization,
-            ProfileConfig(min_logerr=TAU0), None, None, 1,
-        )
-        assert calls == []
-
     def test_compare_many_applies_thread_budget_to_query_and_serial_target(
         self, pwm_pair, batch, monkeypatch
     ):
         import importlib
-        import numba
-
         compare_module = importlib.import_module("mimosa.compare")
-        observed_threads = []
+        observed = []
         original = compare_module._prepare_profile
 
-        def observed(*args, **kwargs):
-            observed_threads.append(numba.get_num_threads())
+        def observed_preparation(*args, **kwargs):
+            observed.append(True)
             assert kwargs["circular"] is True
             return original(*args, **kwargs)
 
-        previous_threads = numba.get_num_threads()
-        monkeypatch.setattr(compare_module, "_prepare_profile", observed)
+        monkeypatch.setattr(compare_module, "_prepare_profile", observed_preparation)
         compare_many(
             pwm_pair[0],
             [pwm_pair[1]],
@@ -602,8 +584,7 @@ class TestCompare:
             inner_threads=2,
         )
 
-        assert observed_threads == [previous_threads, previous_threads]
-        assert numba.get_num_threads() == previous_threads
+        assert observed == [True, True]
 
     @pytest.mark.parametrize("threshold", (1.0, TAU0))
     def test_compare_many_joblib_matches_serial(

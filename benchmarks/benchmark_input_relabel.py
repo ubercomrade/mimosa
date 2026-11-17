@@ -13,7 +13,6 @@ import sys
 import time
 
 import numpy as np
-from numba import get_num_threads
 from mimosa import (
     EncodedSequences, InputRelabeledModel, alphabet_permutations,
     prepare_profile, read_fasta, read_model, relabel_model,
@@ -112,7 +111,7 @@ def main():
         "seed":args.seed,"sequence_fingerprint":sequence_fingerprint(batch),
         "elapsed_seconds":time.perf_counter()-start_all,
         "runtime":{"python":sys.version,"numpy":np.__version__,"platform":platform.platform(),
-                   "numba_threads":get_num_threads(),"openblas_threads":os.environ.get("OPENBLAS_NUM_THREADS"),
+                   "openblas_threads":os.environ.get("OPENBLAS_NUM_THREADS"),
                    "load_average":list(os.getloadavg()),"max_rss_KiB":resource.getrusage(resource.RUSAGE_SELF).ru_maxrss},
         "source_sha256":{str(p):sha(p) for p in [Path(__file__).resolve(),implementation/"randomization.py",implementation/"scan.py"]},
         "limitations":"Warm JIT, one process; OS cache is not flushed; no CNN/GPU timing or biological replication."

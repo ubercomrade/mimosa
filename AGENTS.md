@@ -16,13 +16,13 @@
 
 ## Verification
 
-- Full tests: `uv run pytest -q`.
+- Full tests: `uv run pytest -q tests`.
 - Focused test: `uv run pytest -q tests/test_profiles.py::TestCompare::test_one_to_many`.
 - The example FASTA has about `1.5e5` positions per strand, too few for the default `min_logerr=4.0`; tests and examples that use it pass `min_logerr=2.0` to avoid the few-positions warning.
 - Lint: `uv run ruff check .`; Ruff is the only configured static check. There is no configured formatter, typecheck, or codegen step.
 - CLI tests spawn `python -m mimosa.cli` and require JSON-only stdout; diagnostics and progress belong on stderr.
 - CI-equivalent example smoke test: `uv run bash examples/run.sh`.
-- Numba JIT needs a separate warmup before timing. For performance work set `NUMBA_NUM_THREADS` explicitly and put `NUMBA_CACHE_DIR` outside the repository.
+- JAX JIT needs a separate warmup before timing; report the selected device and distinguish cold from warm measurements.
 
 ## Runtime Constraints
 
@@ -40,8 +40,8 @@
 ## Benchmarks
 
 - Production-path benchmark: `uv run python benchmarks/benchmark_performance.py`; it includes one-target and larger target workloads.
-- The production benchmark defaults to `10_000` sequences, real example FASTA inputs, `1/64/128/256` targets, three repeats, and divisible comma-separated total/Numba budgets; it is memory-heavy. Write results outside the repository with `--output /tmp/mimosa-performance.json`.
-- Keep `.mimosa-cache`, build/test caches, benchmark output, and Numba cache files out of version control.
+- The production benchmark defaults to `10_000` sequences, real example FASTA inputs, `1/64/128/256` targets and three repeats; it is memory-heavy. Legacy budget options do not control JAX. Write results outside the repository with `--output /tmp/mimosa-performance.json`.
+- Keep `.mimosa-cache`, build/test caches and benchmark output out of version control.
 
 ## CI And Release
 

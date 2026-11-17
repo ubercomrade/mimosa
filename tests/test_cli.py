@@ -189,7 +189,7 @@ class TestCompareManyCommand:
 
     @pytest.mark.parametrize(
         "option",
-        (("--total-threads", "3", "--numba-threads", "2"), ("--numba-threads", "5")),
+        (("--total-threads", "3"), ("--numba-threads", "5")),
     )
     def test_rejects_invalid_thread_budget(self, option):
         r = run_cli(

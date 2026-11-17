@@ -10,6 +10,7 @@ import numpy as np
 
 from ._jax_backend import compare_circular, normalize_exact, scan_circular
 from .arrays import EncodedSequences
+from .errors import ModelFormatError
 from .io.bundles import model_fingerprint
 from .models import BaMM, Dimont, PWM, Slim, strict_integer
 from .profiles.anchors import parse_min_logerr
@@ -32,6 +33,15 @@ def _permutations(model, seed, replicate, group):
 def _profile(model, sequences, background):
     raw = jnp.concatenate(scan_circular(model, sequences))
     calibration = raw if background is None else jnp.concatenate(scan_circular(model, background))
+    # Reduce on device and synchronize only the scalar; checking both batches
+    # also covers every observed and randomized profile before normalization.
+    finite = jnp.all(jnp.isfinite(raw))
+    if background is not None:
+        finite = finite & jnp.all(jnp.isfinite(calibration))
+    if not bool(finite):
+        raise ModelFormatError(
+            "", f"{type(model).__name__} scan produced non-finite Float32 scores."
+        )
     return normalize_exact(raw, calibration).reshape((2, sequences.data.size))
 
 
