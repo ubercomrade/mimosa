@@ -233,11 +233,7 @@ class PWM(MotifModel):
         return self.weights.shape[1]
 
     def scan_into(self, sequence, forward, reverse, /):
-        from ._kernels import pwm_scan_forward, pwm_scan_reverse
-
-        n_pos = forward.shape[0]
-        pwm_scan_forward(self.weights, sequence, n_pos, self.motif_length, forward)
-        pwm_scan_reverse(self.weights, sequence, n_pos, self.motif_length, reverse)
+        _scan_builtin_into(self, sequence, forward, reverse)
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,12 +262,7 @@ class _ContextModel(MotifModel):
         return self.order
 
     def scan_into(self, sequence, forward, reverse, /):
-        from ._kernels import rolling_scan_forward, rolling_scan_reverse
-
-        n_pos = forward.shape[0]
-        kmer = self.order + 1
-        rolling_scan_forward(self.weights, sequence, kmer, self.motif_length, n_pos, forward)
-        rolling_scan_reverse(self.weights, sequence, kmer, self.motif_length, n_pos, reverse)
+        _scan_builtin_into(self, sequence, forward, reverse)
 
 
 class BaMM(_ContextModel):
@@ -284,6 +275,17 @@ class Dimont(_ContextModel):
 
 class Slim(_ContextModel):
     pass
+
+
+def _scan_builtin_into(model, sequence, forward, reverse):
+    from ._jax_backend import scan_linear
+    from .arrays import EncodedSequences
+
+    batch = EncodedSequences.from_rows([sequence])
+    tracks, _ = scan_linear(model, batch)
+    n = len(forward)
+    forward[:] = np.asarray(tracks[0])[:n]
+    reverse[:] = np.asarray(tracks[1])[:n]
 
 
 @dataclass(frozen=True, slots=True)

@@ -85,8 +85,8 @@ installation supports CPU execution; GPU execution requires a compatible JAX
 CUDA or ROCm plugin and driver as described in the
 [JAX installation guide](https://docs.jax.dev/en/latest/installation.html).
 The migration is ongoing: some lower-level operations still use
-Numba. Prepared-profile cache keys and null-distribution compatibility have
-changed; rebuild old null distributions after upgrading.
+Numba. The pooled-null interface has been removed; p-values use direct
+pair-specific Monte Carlo.
 
 ## CLI
 
@@ -110,8 +110,7 @@ For a direct pair-specific Monte Carlo p-value, add for example
 fixed and the target is independently relabeled in each replicate; `gc`
 restricts permutations to preserve A/T and C/G groups. The result includes
 the replicate count, exceedance count, seed, and permutation group. This
-requires motif models, not precomputed score profiles. During migration,
-supplying `--null-distribution` still selects the legacy pooled-null path.
+requires motif models, not precomputed score profiles.
 
 Compare precomputed score profiles:
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from ._kernels import circular_pad_rows
 from .arrays import EncodedSequences, RaggedArray, StrandPair
 from .errors import InvariantError, ModelFormatError, ModelInterfaceError
 from .models import (
@@ -57,12 +56,11 @@ def _circularize(batch, model):
     """Wrap each sequence so scan index ``i`` is the site starting at base ``i``."""
     left = site_start_offset(model)
     right = window_size(model) - left - 1
-    lengths = np.diff(batch.offsets)
-    total = int(lengths.sum() + np.count_nonzero(lengths) * (left + right))
-    data = np.empty(total, dtype=batch.data.dtype)
-    offsets = np.empty(len(batch) + 1, dtype=np.int64)
-    circular_pad_rows(batch.data, batch.offsets, left, right, data, offsets)
-    return EncodedSequences(data, offsets)
+    rows = [
+        row[np.arange(-left, len(row) + right) % len(row)] if len(row) else row
+        for row in (batch[i] for i in range(len(batch)))
+    ]
+    return EncodedSequences.from_rows(rows)
 
 
 def _scan_batch_into(model, batch, strands, circular=False):

@@ -14,7 +14,6 @@ from . import __version__
 from .arrays import EncodedSequences
 from .cache import Cache, clearcache
 from .errors import MimosaError
-from .io.bundles import write_null_bundle
 from .io.fasta import MAX_FASTA_TOTAL_BASES, read_fasta, read_scores
 from .io.readers import read_model
 from .models import PWM, BaMM, Dimont, Slim
@@ -128,19 +127,6 @@ def _comparison_inputs(args):
 def _annotate_comparison_results(results, args, sequences, background, models=None):
     if not args.pvalue:
         return results
-    if args.null_distribution:
-        from .io.bundles import read_null_bundle
-        from .statistics import NullDistribution, annotate_results, check_null_compatibility
-
-        dist = NullDistribution(**read_null_bundle(args.null_distribution))
-        check_null_compatibility(
-            dist, sequences=sequences, background=background,
-            search_range=args.search_range, min_logerr=args.min_logerr, models=models,
-        )
-        return annotate_results(
-            results, dist, effective_number_of_targets=args.effective_number_of_targets,
-            models=models,
-        )
     from ._jax_monte_carlo import direct_mc
     from .statistics import AnnotatedResult, adjusted_pvalues, evalue
 
@@ -164,54 +150,6 @@ def _annotate_comparison_results(results, args, sequences, background, models=No
             mc_group=args.mc_group,
         ))
     return annotated
-
-
-def _run_build_null(args):
-    """Legacy pooled-null path, retained until its API and tests are removed."""
-    from .statistics import build_null
-
-    if not os.path.isdir(args.motifs):
-        raise MimosaError("motif collection path must be a directory.")
-    extensions = {
-        "pwm": (".meme", ".pfm"), "bamm": (".ihbcp",),
-        "dimont": (".xml",), "slim": (".xml",),
-    }[args.model_type]
-    if args.randomization == "pwm-shuffle":
-        if args.model_type != "pwm":
-            raise MimosaError("non-PWM nulls require --randomization input-relabel.")
-        extensions = (".meme",)
-    if args.order is not None and args.model_type != "bamm":
-        raise MimosaError("--order is supported only with --model-type bamm.")
-    files = sorted(
-        filename for filename in os.listdir(args.motifs)
-        if filename.lower().endswith(extensions) and os.path.isfile(os.path.join(args.motifs, filename))
-    )
-    if not files:
-        raise MimosaError(f"no {args.model_type} files found in {args.motifs}.")
-    models = [
-        _read_typed_model(os.path.join(args.motifs, filename), args.model_type, order=args.order)
-        for filename in files
-    ]
-    cache = Cache(args.cache_dir) if args.cache_dir else None
-    sequences = _resolve_sequences(args.fasta, args.num_sequences, args.seq_length, args.seed)
-    background = read_fasta(args.background)[0] if args.background else None
-    dist = build_null(
-        models, sequences=sequences, background=background, n_samples=args.num_samples,
-        seed=args.seed, search_range=args.search_range, min_logerr=args.min_logerr,
-        cache=cache, randomization=args.randomization,
-    )
-    write_null_bundle(args.output, dist)
-    summary = {
-        "output": args.output, "n_models": len(models), "n_null": dist.n_null,
-        "shuffle": True, "seed": dist.seed, "metric": dist.metric,
-        "strategy": dist.strategy, "estimator": "empirical_upper_tail",
-        "normalization": dist.contract["normalization_version"],
-        "randomization": args.randomization,
-    }
-    if "model_group" in dist.contract:
-        summary["model_group"] = dist.contract["model_group"]
-    print(json.dumps(summary, indent=2, sort_keys=True))
-    return 0
 
 
 def _run_compare(args):
@@ -315,7 +253,6 @@ def build_parser():
         p.add_argument("--seed", type=int, default=127)
         p.add_argument("--background-freq", type=float, default=0.25)
         p.add_argument("--cache-dir")
-        p.add_argument("--null-distribution")
         p.add_argument(
             "--effective-number-of-targets",
             type=_bounded_positive_integer("effective-number-of-targets", MAX_GENERATED_SEQUENCES),
@@ -327,22 +264,6 @@ def build_parser():
 
     add_compare_arguments("compare", False)
     add_compare_arguments("compare-many", True)
-
-    p = sub.add_parser("build-null", help="build a legacy pooled null distribution")
-    p.add_argument("motifs", help="motif collection path")
-    p.add_argument("--output", required=True)
-    p.add_argument("--model-type", choices=list(MODEL_TYPE_MAP), default="pwm")
-    p.add_argument("--order", type=int)
-    p.add_argument("--randomization", choices=("pwm-shuffle", "input-relabel"), default="pwm-shuffle")
-    p.add_argument("--fasta")
-    p.add_argument("--background")
-    p.add_argument("--num-sequences", type=_bounded_positive_integer("num-sequences", MAX_GENERATED_SEQUENCES), default=10_000)
-    p.add_argument("--seq-length", type=_bounded_positive_integer("seq-length", MAX_GENERATED_SEQUENCE_LENGTH), default=100)
-    p.add_argument("--seed", type=int, default=127)
-    p.add_argument("--num-samples", type=_bounded_positive_integer("num-samples", 1_000_000), default=2000)
-    p.add_argument("--search-range", type=int, default=5)
-    p.add_argument("--min-logerr", type=float, default=4.0)
-    p.add_argument("--cache-dir")
 
     p = sub.add_parser("cache", help="manage the disk cache")
     p.add_argument("operation", choices=("clear",), help="cache operation (clear)")
@@ -356,11 +277,9 @@ def _validate_cli_arguments(args):
     scores_only = args.query_type == args.target_type == "scores"
     if scores_only and (args.fasta is not None or args.background is not None):
         raise MimosaError("--fasta and --background are not used for scores-only comparison.")
-    if not args.pvalue and args.null_distribution is not None:
-        raise MimosaError("--null-distribution requires --pvalue.")
     if not args.pvalue and args.effective_number_of_targets is not None:
         raise MimosaError("--effective-number-of-targets requires --pvalue.")
-    if args.pvalue and not args.null_distribution and (args.query_type == "scores" or args.target_type == "scores"):
+    if args.pvalue and (args.query_type == "scores" or args.target_type == "scores"):
         raise MimosaError("--pvalue requires motif models, not score profiles.")
     if args.mc_seed < 0:
         raise MimosaError("--mc-seed must be non-negative.")
@@ -378,8 +297,6 @@ def main(argv=None):
             if args.total_threads % args.numba_threads:
                 raise ValueError("total_threads must be divisible by numba-threads.")
             return _run_compare_many(args)
-        if args.command == "build-null":
-            return _run_build_null(args)
         if args.command == "cache":
             return _run_cache(args)
         raise MimosaError(f"unknown command: {args.command}")

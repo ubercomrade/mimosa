@@ -35,8 +35,19 @@ def _legacy_scan(model, sequences, circular):
             right = window_size(model) - left - 1
             row = row[np.arange(-left, len(row) + right) % len(row)]
         f, r = np.empty(count, np.float32), np.empty(count, np.float32)
-        if count:
-            model.scan_into(row, f, r)
+        order = getattr(model, "order", 0)
+        width = window_size(model)
+        for pos in range(count):
+            window = row[pos:pos + width]
+            rc = np.where(window[::-1] == 4, 4, 3 - window[::-1])
+            for output, oriented in ((f, window), (r, rc)):
+                total = np.float32(0)
+                for term in range(model.motif_length):
+                    code = 0
+                    for base in oriented[term:term + order + 1]:
+                        code = 5 * code + int(base)
+                    total = np.float32(total + model.weights[code, term])
+                output[pos] = total
         forward.extend(f)
         reverse.extend(r)
         offsets.append(offsets[-1] + count)
