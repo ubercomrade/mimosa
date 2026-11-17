@@ -6,11 +6,11 @@ not require editing Mimosa or registering global plugins.
 ## Custom motif model
 
 A custom model subclasses `MotifModel` and provides `name`, `motif_length`, and
-`scan_into`. Context models may also provide `left_context` and
+a JAX-traceable `score_windows` method. Context models may also provide `left_context` and
 `right_context`.
 
 ```python
-import numpy as np
+import jax.numpy as jnp
 
 from mimosa import MotifModel
 
@@ -20,29 +20,24 @@ class ConsensusModel(MotifModel):
     motif_length = 4
 
     def __init__(self, pattern):
-        self.pattern = np.asarray(pattern, dtype=np.uint8)
+        self.pattern = jnp.asarray(pattern, dtype=jnp.uint8)
 
-    def scan_into(self, sequence, forward, reverse, /):
-        reverse_pattern = self.pattern[::-1].copy()
-        concrete = reverse_pattern != 4
-        reverse_pattern[concrete] = 3 - reverse_pattern[concrete]
-        for position in range(forward.size):
-            window = sequence[position : position + self.motif_length]
-            forward[position] = np.count_nonzero(window == self.pattern)
-            reverse[position] = np.count_nonzero(window == reverse_pattern)
+    def score_windows(self, windows):
+        return jnp.sum(windows == self.pattern, axis=1)
 ```
 
-The caller owns `forward` and `reverse`; the implementation fills both
-Float32 arrays for every complete model window. Input sequences are validated
-`uint8` arrays with codes `0..4`.
+The method receives a JAX array of oriented windows and returns one real score
+per window. Input codes are `0..4`. The backend reverse-complements windows
+before calling the same method for the reverse strand; it checks output shape
+and finite Float32 values.
 
 The custom model participates in `scan`, `prepare_profile`, `compare`,
 `select_sites`, and `reconstruct_pfm`. Comparison scans circular sequences by
-passing `scan_into` each sequence wrapped with `left_context` bases on the left
+passing wrapped windows with `left_context` bases on the left
 and `window_size - left_context - 1` bases on the right, so no circular logic
 is needed in the model. A stable SHA-256 `fingerprint()` is
-needed for the prepared-profile cache and null construction. Arbitrary custom models are
-not accepted by `write_model` because `scan_into` does not define how to
+needed for the prepared-profile cache. Arbitrary custom models are
+not accepted by `write_model` because `score_windows` does not define how to
 serialize model parameters.
 
 ## Batched fixed-window functions, including CNNs
@@ -65,11 +60,12 @@ random_model = relabel_model(model, seed=112)
 The public direct Monte Carlo implementation currently supports built-in
 models only, not `WindowModel`.
 
-`my_scorer(windows)` receives a two-dimensional uint8 array of shape
-`(n, left_context + motif_length + right_context)`. It returns a real NumPy
-vector of shape `(n,)`, finite after conversion to Float32. A framework adapter
-may convert to one-hot input, move it to a GPU, choose one specified output,
-and return CPU scores. Neural models must be in deterministic inference mode;
+`my_scorer(windows)` receives a two-dimensional JAX uint8 array of shape
+`(n, left_context + motif_length + right_context)`. It returns a real JAX
+vector of shape `(n,)`, finite after conversion to Float32. It must be
+traceable by `jax.jit`; NumPy operations that convert tracers to host arrays
+and callbacks implemented only in other frameworks are not supported.
+Neural models must be in deterministic inference mode;
 dropout, training-mode batch normalization and updates between calls violate
 the function contract. Outputs must be independent of batch size and other
 windows in the batch.
@@ -90,13 +86,9 @@ not be preserved. The original learned parameters are unchanged. The
 composite function need not be representable by the original architecture
 without its input wrapper.
 
-For custom `MotifModel` implementations, input relabeling uses the forward
-single-window scorer and canonical reverse-complement semantics. A model with
-different strand semantics should expose a suitable `WindowModel` function
-explicitly. Without a batched window callback, scanning arbitrary custom
-models on each recoded window can be slow. A custom null additionally needs
-an explicit `calibration_group` string and stable `fingerprint()`; library
-callers check both compared models' group before annotating scores.
+For custom `MotifModel` implementations, input relabeling uses `score_windows`
+and canonical reverse-complement semantics. Direct Monte Carlo currently
+accepts built-in models only.
 
 Native PWM/BaMM/Dimont/Slim surrogates compile the same input recoding
 into tables. Only the generic fallback needs explicit window enumeration.

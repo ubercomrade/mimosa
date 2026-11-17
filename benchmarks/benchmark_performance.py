@@ -363,7 +363,7 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
     from mimosa.io.bundles import model_fingerprint, sequence_fingerprint
     from mimosa.profiles.anchors import collect_both_anchors
     from mimosa.profiles.prepared import _normalize_with_jax
-    from mimosa.scan import _scan_batch_into
+    from mimosa.scan import _scan_batch
 
     timings = {}
 
@@ -376,7 +376,7 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
     )
 
     started = time.perf_counter()
-    raw = _scan_batch_into(models[0], sequences, "both", circular=True)
+    raw = _scan_batch(models[0], sequences, "both", circular=True)
     timings["scan"] = time.perf_counter() - started
 
     started = time.perf_counter()

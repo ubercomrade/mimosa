@@ -10,10 +10,10 @@ from mimosa import (
     read_model, relabel_model, scan,
 )
 from mimosa.cache import Cache
-from mimosa.errors import ModelInterfaceError
+from mimosa.errors import ModelFormatError, ModelInterfaceError
 from mimosa.io.bundles import model_fingerprint
 from mimosa.models import window_size
-from mimosa.scan import _scan_batch_into
+from mimosa.scan import _scan_batch
 
 
 @pytest.fixture(params=[
@@ -75,8 +75,8 @@ def test_native_and_generic_equal_explicit_input_recoding(model, circular):
     permutations = alphabet_permutations(model.motif_length, 112)
     native = relabel_model(model, permutations=permutations)
     wrapped = InputRelabeledModel(model, permutations, batch_size=7)
-    a = _scan_batch_into(native, batch, "both", circular)
-    b = _scan_batch_into(wrapped, batch, "both", circular)
+    a = _scan_batch(native, batch, "both", circular)
+    b = _scan_batch(wrapped, batch, "both", circular)
     expected = direct_recoded_reference(model, batch, permutations, circular)
     for x, y, z in zip((a.forward, a.reverse), (b.forward, b.reverse), expected):
         np.testing.assert_array_equal(x.offsets, y.offsets)
@@ -90,11 +90,11 @@ def test_identity_native_and_generic(model):
     np.testing.assert_array_equal(native.weights, model.weights)
     width = window_size(model)
     word = np.random.default_rng(3).integers(0, 4, size=width+2, dtype=np.uint8)
-    forward, reverse = np.empty(3, np.float32), np.empty(3, np.float32)
-    InputRelabeledModel(model, permutations).scan_into(word, forward, reverse)
+    actual = scan(InputRelabeledModel(model, permutations),
+                  EncodedSequences(word, np.array([0, len(word)])), strands="both")
     reference = scan(model, EncodedSequences(word, np.array([0, len(word)])), strands="both")
-    np.testing.assert_array_equal(forward, reference.forward.data)
-    np.testing.assert_array_equal(reverse, reference.reverse.data)
+    np.testing.assert_array_equal(actual.forward.data, reference.forward.data)
+    np.testing.assert_array_equal(actual.reverse.data, reference.reverse.data)
 
 
 def test_full_window_bijection_preserves_scalar_score_multiset():
@@ -122,14 +122,33 @@ def test_window_batch_size_and_strand_policies(policy):
         np.testing.assert_array_equal(u.offsets, v.offsets)
 
 
-@pytest.mark.parametrize("callback", [
-    lambda x: np.ones((len(x), 1)), lambda x: np.ones(len(x)+1),
-    lambda x: np.full(len(x), np.nan), lambda x: np.full(len(x), np.inf),
-    lambda x: np.full(len(x), 1e100), lambda x: np.full(len(x), 1+2j),
+def _invalid_window_callback(kind):
+    def callback(x):
+        if kind == "short":
+            return np.ones((len(x), 1))
+        if kind == "long":
+            return np.ones(len(x) + 1)
+        if kind == "nan":
+            return np.full(len(x), np.nan)
+        if kind == "inf":
+            return np.full(len(x), np.inf)
+        if kind == "large":
+            return np.full(len(x), 1e100)
+        return np.full(len(x), 1 + 2j)
+    return callback
+
+
+@pytest.mark.parametrize("kind,expected", [
+    ("short", ModelInterfaceError), ("long", ModelInterfaceError),
+    ("nan", ModelFormatError), ("inf", ModelFormatError),
+    ("large", ModelFormatError), ("complex", ModelInterfaceError),
 ])
-def test_invalid_window_outputs_are_rejected(callback):
-    with pytest.raises(ModelInterfaceError):
-        scan(WindowModel("invalid", 2, callback), EncodedSequences.from_strings(["ACGT"]))
+def test_invalid_window_outputs_are_rejected(kind, expected):
+    with pytest.raises(expected, match="scan"):
+        scan(
+            WindowModel("invalid", 2, _invalid_window_callback(kind)),
+            EncodedSequences.from_strings(["ACGT"]),
+        )
 
 
 def test_permutation_copy_freeze_and_fingerprints():

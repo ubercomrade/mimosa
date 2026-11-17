@@ -9,7 +9,7 @@ import numpy as np
 from .arrays import N_CODE, RaggedArray, StrandPair, reverse_complement
 from .errors import InvariantError, ModelDimensionError, ModelFormatError
 from .models import site_start_offset
-from .scan import _scan_batch_into
+from .scan import _scan_batch
 
 NUCLEOTIDE_CARDINALITY = 4
 
@@ -220,14 +220,14 @@ def _select_top_hit_arrays(coll, fraction):
 
 def _scan_bundle_for_sites(model, batch, strands):
     if strands == "forward":
-        fwd = _scan_batch_into(model, batch, "forward")
+        fwd = _scan_batch(model, batch, "forward")
         rev = RaggedArray(np.array([], dtype=np.float32), np.zeros(len(fwd) + 1, dtype=np.int64))
         return StrandPair(fwd, rev)
     if strands == "reverse":
-        rev = _scan_batch_into(model, batch, "reverse")
+        rev = _scan_batch(model, batch, "reverse")
         fwd = RaggedArray(np.array([], dtype=np.float32), np.zeros(len(rev) + 1, dtype=np.int64))
         return StrandPair(fwd, rev)
-    return _scan_batch_into(model, batch, "both")
+    return _scan_batch(model, batch, "both")
 
 
 def _collect_hits_from_bundle(selector, bundle, strands):

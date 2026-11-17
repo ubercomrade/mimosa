@@ -276,16 +276,16 @@ def _prepare_profile(
     elif isinstance(model_or_scores, MotifModel):
         if sequences is None:
             raise ValueError("motif prepared profiles require comparison sequences.")
-        from ..scan import _scan_batch_into
+        from ..scan import _scan_batch
 
-        raw = _scan_batch_into(model_or_scores, sequences, "both", circular)
+        raw = _scan_batch(model_or_scores, sequences, "both", circular)
         name = model_or_scores.name
         profile_site_start_offset = (
             0 if circular else site_start_offset(model_or_scores)
         )
         bg = sequences if background is None else background
         if bg is not sequences:
-            bg_raw = _scan_batch_into(model_or_scores, bg, "both", circular)
+            bg_raw = _scan_batch(model_or_scores, bg, "both", circular)
             calibration = bg_raw
             del bg_raw
     else:

@@ -16,7 +16,7 @@ from mimosa.monte_carlo import direct_mc  # noqa: E402
 from mimosa.profiles.normalization import (  # noqa: E402
     EmpiricalLogTail, fit, normalize_bundle,
 )
-from mimosa.scan import _scan_batch_into  # noqa: E402
+from mimosa.scan import _scan_batch  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -98,8 +98,8 @@ def test_exact_normalization_matches_cpu(background):
     model = read_model("examples/myog.ihbcp", order=4)
     sequences = EncodedSequences.from_strings(["ACGTNACGTN" * 5, "", "TTTTACGT" * 3])
     other = EncodedSequences.from_strings(["TGCATGCAN" * 7, "AC" * 20])
-    raw = _scan_batch_into(model, sequences, "both", circular=True)
-    calibration = _scan_batch_into(model, other, "both", circular=True) if background else raw
+    raw = _scan_batch(model, sequences, "both", circular=True)
+    calibration = _scan_batch(model, other, "both", circular=True) if background else raw
     calibration_scores = np.concatenate((calibration.forward.data, calibration.reverse.data))
     reference = normalize_bundle(fit(EmpiricalLogTail(), calibration_scores), raw)
     scores = np.concatenate((raw.forward.data, raw.reverse.data))

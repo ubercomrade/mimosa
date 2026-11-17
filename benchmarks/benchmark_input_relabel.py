@@ -19,7 +19,7 @@ from mimosa import (
 )
 from mimosa.cache import Cache
 from mimosa.io.bundles import model_fingerprint, sequence_fingerprint
-from mimosa.scan import _scan_batch_into
+from mimosa.scan import _scan_batch
 
 
 def sha(path):
@@ -70,10 +70,10 @@ def main():
             wrapped = InputRelabeledModel(model,permutations)
             variants = dict(zip(methods,(model,native,wrapped)))
             for variant in variants.values():
-                _scan_batch_into(variant,warmup,"both",True)
+                _scan_batch(variant,warmup,"both",True)
                 prepare_profile(variant,warmup,min_logerr=1,circular=True)
             # Validate the two implementations on the actual full scoring DNA.
-            a,b = [_scan_batch_into(v,batch,"both",True) for v in (native,wrapped)]
+            a,b = [_scan_batch(v,batch,"both",True) for v in (native,wrapped)]
             for x,y in ((a.forward,b.forward),(a.reverse,b.reverse)):
                 np.testing.assert_array_equal(x.data,y.data)
             del a,b
@@ -90,7 +90,7 @@ def main():
                 for method in rotated:
                     variant = variants[method]
                     for stage,function in [
-                        ("scan_both",lambda v=variant:_scan_batch_into(v,batch,"both",True)),
+                        ("scan_both",lambda v=variant:_scan_batch(v,batch,"both",True)),
                         ("prepare_no_cache",lambda v=variant:prepare_profile(v,batch,min_logerr=3,circular=True)),
                     ]:
                         seconds = measure(function)

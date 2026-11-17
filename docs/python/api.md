@@ -38,11 +38,14 @@ bundle.
 
 ```python
 scan(model, sequences, *, strands="forward") -> RaggedArray | StrandPair
+model.scan(sequences, *, strands, circular=False) -> RaggedArray | StrandPair
 ```
 
 The public scan boundary validates the model contract and sequence encoding.
 Built-in scan values are Float32. For `strands="both"`, the forward and
-reverse tracks have the same ragged row layout.
+reverse tracks have the same ragged row layout. The module function is a thin
+wrapper; the model's own `scan` method also supports the circular layout, used
+by comparison, and any strand policy.
 
 ## Profiles and comparison
 
@@ -137,8 +140,8 @@ InputRelabeledModel(model, permutations, *, batch_size=8192)
 relabel_model(model, *, seed=127, permutations=None, batch_size=8192) -> MotifModel
 ```
 
-The callback maps oriented uint8 windows (A/C/G/T/N = 0/1/2/3/4) to one finite
-real score per window. It must be deterministic and batch-independent.
+The JAX-traceable callback maps oriented uint8 windows (A/C/G/T/N = 0/1/2/3/4)
+to one finite real score per window. It must be deterministic and batch-independent.
 `fingerprint` identifies the scorer and learned parameters for caching.
 `InputRelabeledModel` always uses the generic input wrapper. `relabel_model`
 uses an exactly equivalent native table permutation for built-in types and

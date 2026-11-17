@@ -640,9 +640,8 @@ class TestCompare:
             name = "custom"
             motif_length = 1
 
-            def scan_into(self, sequence, forward, reverse, /):
-                forward.fill(0)
-                reverse.fill(0)
+            def score_windows(self, windows):
+                return windows[:, 0] * 0
 
         results = compare_many(
             pwm_pair[0], [CustomModel(), CustomModel()], batch,

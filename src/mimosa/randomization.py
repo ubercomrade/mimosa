@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import hashlib
 
+import jax.numpy as jnp
 import numpy as np
 
-from .arrays import EncodedSequences, RaggedArray, StrandPair
-from .errors import ModelInterfaceError
 from .models import (
     PWM, BaMM, Dimont, MotifModel, SiteGA, Slim,
     _require_sitega_enabled, _validate_model_contract, strict_integer, window_size,
@@ -24,20 +23,13 @@ DEFAULT_WINDOW_BATCH_SIZE = 8192
 _MAX_WINDOW_ELEMENTS = 1_048_576
 
 
-def _reverse_complement_windows(windows):
-    result = np.array(windows[:, ::-1], dtype=np.uint8, order="C", copy=True)
-    known = result < 4
-    result[known] = 3 - result[known]
-    return result
-
-
 class WindowModel(MotifModel):
     """Adapt a deterministic batched function of oriented DNA windows.
 
-    ``score_windows`` receives an (n, width) uint8 array, with A/C/G/T/N encoded
+    ``score_windows`` receives a JAX (n, width) uint8 array, with A/C/G/T/N encoded
     0/1/2/3/4, and returns n finite real scores. ``width`` includes both context
     flanks. Scores must not depend on batch size or other windows in the batch.
-    A GPU callback can convert the input and return a CPU NumPy score vector.
+    The function must be JAX-traceable and return a real array.
 
     ``fingerprint`` identifies the function and learned parameters for caching
     and null construction. ``calibration_group`` identifies a common scoring
@@ -68,31 +60,8 @@ class WindowModel(MotifModel):
         self.calibration_group = calibration_group
         _validate_model_contract(self)
 
-    def _evaluate_windows(self, windows):
-        raw = np.asarray(self._score_windows(windows))
-        if raw.shape != (len(windows),) or raw.dtype.kind not in "biuf":
-            raise ModelInterfaceError(
-                "scan", type(self).__name__,
-                "score_windows must return one real score per input window.",
-            )
-        with np.errstate(over="ignore", invalid="ignore"):
-            result = raw.astype(np.float32, copy=False)
-        if not np.all(np.isfinite(result)):
-            raise ModelInterfaceError(
-                "scan", type(self).__name__,
-                "score_windows must return finite Float32 scores.",
-            )
-        return result
-
-    def scan_into(self, sequence, forward, reverse, /):
-        width = window_size(self)
-        windows = np.lib.stride_tricks.sliding_window_view(sequence, width)
-        batch_size = min(self.batch_size, max(1, _MAX_WINDOW_ELEMENTS // width))
-        for start in range(0, len(windows), batch_size):
-            stop = start + batch_size
-            block = windows[start:stop]
-            forward[start:stop] = self._evaluate_windows(block)
-            reverse[start:stop] = self._evaluate_windows(_reverse_complement_windows(block))
+    def score_windows(self, windows):
+        return self._score_windows(windows)
 
     def fingerprint(self):
         if self._fingerprint is None:
@@ -102,33 +71,6 @@ class WindowModel(MotifModel):
             f"{self.right_context}|{self.calibration_group}|{self._fingerprint}"
         )
         return hashlib.sha256(identity.encode()).hexdigest()
-
-
-def _scan_window_batch(model, batch, offsets, strands):
-    """Batch windows across rows, retaining the scanner's exact row geometry."""
-    width = window_size(model)
-    batch_size = min(model.batch_size, max(1, _MAX_WINDOW_ELEMENTS // width))
-    count = int(offsets[-1])
-    forward = np.empty(count, np.float32) if strands != "reverse" else None
-    reverse = np.empty(count, np.float32) if strands != "forward" else None
-    for start in range(0, count, batch_size):
-        stop = min(start + batch_size, count)
-        positions = np.arange(start, stop, dtype=np.int64)
-        rows = np.searchsorted(offsets, positions, side="right") - 1
-        starts = batch.offsets[rows] + positions - offsets[rows]
-        windows = batch.data[starts[:, None] + np.arange(width)[None, :]]
-        if forward is not None:
-            forward[start:stop] = model._evaluate_windows(windows)
-        if reverse is not None:
-            reverse[start:stop] = model._evaluate_windows(_reverse_complement_windows(windows))
-    if strands == "forward":
-        return RaggedArray(forward, offsets)
-    if strands == "reverse":
-        return RaggedArray(reverse, offsets)
-    if strands == "best":
-        np.maximum(forward, reverse, out=forward)
-        return RaggedArray(forward, offsets)
-    return StrandPair(RaggedArray(forward, offsets), RaggedArray(reverse, offsets))
 
 
 def alphabet_permutations(motif_length, seed=127):
@@ -189,16 +131,20 @@ class InputRelabeledModel(WindowModel):
         return self._permutations
 
     def _recoded_scores(self, windows):
-        transformed = self._full_permutations[np.arange(windows.shape[1])[None, :], windows]
-        if isinstance(self.source_model, WindowModel):
-            return self.source_model._evaluate_windows(transformed)
-        from .scan import scan
+        transformed = jnp.asarray(self._full_permutations)[jnp.arange(windows.shape[1])[None, :], windows]
+        if isinstance(self.source_model, (PWM, BaMM, Dimont, Slim)):
+            from .backend import _linear_scan
 
-        width = transformed.shape[1]
-        encoded = EncodedSequences(
-            transformed.reshape(-1), np.arange(len(transformed) + 1, dtype=np.int64) * width,
-        )
-        return scan(self.source_model, encoded, strands="forward").data
+            width = transformed.shape[1]
+            starts = jnp.arange(len(transformed), dtype=jnp.int32) * width
+            output_starts = jnp.arange(len(transformed), dtype=jnp.int32)
+            return _linear_scan(
+                transformed.reshape(-1), starts, output_starts,
+                jnp.asarray(self.source_model.weights),
+                width=self.source_model.motif_length,
+                order=getattr(self.source_model, "order", 0),
+            )[0]
+        return self.source_model.score_windows(transformed)
 
     def fingerprint(self):
         from .io.bundles import model_fingerprint

@@ -26,7 +26,7 @@
 
 ## Runtime Constraints
 
-- Built-in scanning, profile normalization, anchor collection and dense Jaccard alignment use JAX; custom model scanning remains serial.
+- Built-in scanning, profile normalization, anchor collection and dense Jaccard alignment use JAX. Custom models provide a JAX-traceable `score_windows` method instead of buffer-filling scan_into.
 - `compare_many` processes targets in order in one process. Legacy thread-budget arguments are validated but do not control JAX execution.
 - Avoid multiple GPU worker processes; any new target parallelism needs explicit device and memory budgeting.
 

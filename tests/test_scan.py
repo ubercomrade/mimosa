@@ -14,7 +14,7 @@ from mimosa import (
 )
 from mimosa.errors import ModelFormatError, ModelInterfaceError
 from mimosa.io.models import read_meme
-from mimosa.scan import _scan_batch_into
+from mimosa.scan import _scan_batch
 
 
 def _seq(*bases):
@@ -38,15 +38,15 @@ def batch():
 
 
 class TestScan:
-    def test_custom_model_must_fill_both_finite_output_tracks(self, batch):
+    def test_custom_model_must_return_one_score_per_window(self, batch):
         class IncompleteModel(MotifModel):
             name = "incomplete"
             motif_length = 1
 
-            def scan_into(self, sequence, forward, reverse, /):
-                forward.fill(0.0)
+            def score_windows(self, windows):
+                return windows
 
-        with pytest.raises(ModelInterfaceError, match="fill both output tracks"):
+        with pytest.raises(ModelInterfaceError, match="one real score per window"):
             scan(IncompleteModel(), batch, strands="both")
 
     def test_builtin_scan_rejects_float32_overflow(self):
@@ -168,7 +168,7 @@ class TestCircularScan:
             ]
         )
 
-        circular = _scan_batch_into(model, sequences, "both", circular=True)
+        circular = _scan_batch(model, sequences, "both", circular=True)
         linear = scan(model, wrapped, strands="both")
 
         for strand, reference in (
@@ -182,7 +182,7 @@ class TestCircularScan:
     def test_pwm_index_is_the_site_start_on_both_strands(self):
         model = self._models()[0]
         sequences = self._sequences()
-        circular = _scan_batch_into(model, sequences, "both", circular=True)
+        circular = _scan_batch(model, sequences, "both", circular=True)
         width = model.motif_length
         for row in range(len(sequences)):
             sequence = sequences[row]
@@ -207,8 +207,8 @@ class TestCircularScan:
         bamm = BaMM("bamm", bamm_weights, 1, 4)
         sequences = self._sequences()
 
-        from_pwm = _scan_batch_into(pwm, sequences, "both", circular=True)
-        from_bamm = _scan_batch_into(bamm, sequences, "both", circular=True)
+        from_pwm = _scan_batch(pwm, sequences, "both", circular=True)
+        from_bamm = _scan_batch(bamm, sequences, "both", circular=True)
         np.testing.assert_allclose(from_bamm.forward.data, from_pwm.forward.data, atol=1e-5)
         np.testing.assert_allclose(from_bamm.reverse.data, from_pwm.reverse.data, atol=1e-5)
 
@@ -218,15 +218,13 @@ class TestCircularScan:
             motif_length = 2
             left_context = 1
 
-            def scan_into(self, sequence, forward, reverse, /):
-                for pos in range(forward.shape[0]):
-                    forward[pos] = sequence[pos + 1]
-                    reverse[pos] = sequence[pos]
+            def score_windows(self, windows):
+                return windows[:, 1]
 
         sequences = EncodedSequences.from_rows([_seq(0, 1, 2, 3), _seq(2)])
-        circular = _scan_batch_into(FirstBase(), sequences, "both", circular=True)
+        circular = _scan_batch(FirstBase(), sequences, "both", circular=True)
         np.testing.assert_array_equal(circular.forward.data, [0, 1, 2, 3, 2])
-        np.testing.assert_array_equal(circular.reverse.data, [3, 0, 1, 2, 2])
+        np.testing.assert_array_equal(circular.reverse.data, [3, 2, 1, 0, 1])
 
     def test_public_scan_stays_linear(self, pwm, batch):
         linear = scan(pwm, batch, strands="both")

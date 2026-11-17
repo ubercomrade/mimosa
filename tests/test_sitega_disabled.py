@@ -33,7 +33,7 @@ def test_existing_sitega_objects_and_bundles_are_rejected(tmp_path, monkeypatch)
     batch = EncodedSequences.from_strings(["ACGTACGT"])
     operations = [
         lambda: scan(model, batch),
-        lambda: model.scan_into(batch[0], np.empty(5, np.float32), np.empty(5, np.float32)),
+        lambda: model._scan_legacy(batch[0], np.empty(5, np.float32), np.empty(5, np.float32)),
         lambda: prepare_profile(model, batch, circular=True),
         lambda: compare(model, model, batch),
         lambda: relabel_model(model),
@@ -68,7 +68,7 @@ def test_dormant_sitega_scanner_preserves_dinucleotide_scoring(monkeypatch):
     model = SiteGA("test", weights, 4)
     sequence = np.array([0, 1, 4, 3, 2, 0, 1], dtype=np.uint8)
     fwd, rev = np.empty(4, np.float32), np.empty(4, np.float32)
-    model.scan_into(sequence, fwd, rev)
+    model._scan_legacy(sequence, fwd, rev)
     for i in range(4):
         window = sequence[i:i + 4]
         rc = np.array([4 if b == 4 else 3 - b for b in window[::-1]])
