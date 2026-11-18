@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import numpy as np
 
@@ -117,7 +118,7 @@ def read_scores(path):
         raise ModelFormatError(file, "score row count exceeds the limit.")
     if not rows:
         raise ModelFormatError(file, "score file contains no profiles.")
-    name = file.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    name = Path(file).stem
     return ScoreProfile(name, RaggedArray.from_rows(rows))
 
 

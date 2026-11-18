@@ -125,7 +125,9 @@ def _comparison_inputs(args):
 
 
 def _report_mc_storage(args, sequences, targets):
-    estimate = len(targets) * (2 * sequences.data.size * 4 + 256)
+    from .monte_carlo import _target_storage_estimate
+
+    estimate = _target_storage_estimate(sequences, targets)
     if args.mc_storage == "disk" or (
         args.mc_storage == "auto" and estimate > args.mc_memory_limit_mib * 1024**2
     ):

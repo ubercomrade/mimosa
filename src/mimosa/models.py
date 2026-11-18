@@ -24,6 +24,8 @@ MAX_DIMONT_SLIM_LENGTH = 30
 _SITEGA_ENABLED = False  # Keep the implementation for future validation and restoration.
 
 STRAND_POLICIES = ("forward", "reverse", "best", "both")
+DEFAULT_WINDOW_BATCH_SIZE = 8192
+_MAX_WINDOW_ELEMENTS = 1_048_576
 
 
 def _require_sitega_enabled():
@@ -259,8 +261,6 @@ class MotifModel(ABC):
             tracks, offsets = scan_linear(self, sequences)
             return tracks[0], tracks[1], offsets
 
-        from .randomization import _MAX_WINDOW_ELEMENTS, DEFAULT_WINDOW_BATCH_SIZE
-
         width = window_size(self)
         batch_size = min(
             getattr(self, "batch_size", DEFAULT_WINDOW_BATCH_SIZE),
@@ -433,8 +433,6 @@ class SiteGA(MotifModel):
             code = 5 * windows[:, term].astype(jnp.int32) + windows[:, term + 1].astype(jnp.int32)
             total = total + weights[code, term]
         return total
-
-
 
 # ── Geometry ─────────────────────────────────────────────────────────────────
 

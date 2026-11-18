@@ -25,6 +25,63 @@ def test_direct_monte_carlo_public_observed_and_order():
         assert scores[0, i] == result.score
 
 
+@pytest.mark.parametrize("group", ["full", "gc"])
+@pytest.mark.parametrize("algorithm", ["dense", "sparse"])
+def test_monte_carlo_counts_match_public_comparison_reference(group, algorithm):
+    from mimosa import prepare_profile, relabel_model
+    from mimosa.monte_carlo import _permutations
+
+    query = read_model("examples/foxa2.meme")
+    targets = [read_model("examples/gata4.meme"), query]
+    rng = np.random.default_rng(318)
+    sequences = EncodedSequences.from_rows([
+        np.empty(0, dtype=np.uint8), rng.integers(0, 5, 700, dtype=np.uint8),
+        rng.integers(0, 4, 321, dtype=np.uint8),
+    ])
+    background = EncodedSequences.from_rows([rng.integers(0, 4, 1200, dtype=np.uint8)])
+    options = dict(k=5, seed=91, group=group, min_logerr=1, search_range=2,
+                   background=background, algorithm=algorithm, batch_size=3,
+                   comparison_block_size=2)
+    observed, counts, pvalues = direct_mc(query, targets, sequences, **options)
+
+    def prepare(model):
+        return prepare_profile(model, sequences, background=background, min_logerr=1, circular=True)
+
+    fixed = [prepare(target) for target in targets]
+    query_profile = prepare(query)
+    expected_scores = np.array([[
+        compare(query_profile, target, search_range=2).score for target in fixed
+    ]], dtype=np.float32)
+    expected_counts = np.zeros((1, len(targets)), dtype=np.int64)
+    for replicate in range(options["k"]):
+        randomized = prepare(relabel_model(
+            query, permutations=_permutations(query, options["seed"], replicate, group),
+        ))
+        for j, target in enumerate(fixed):
+            expected_counts[0, j] += (
+                compare(randomized, target, search_range=2).score >= expected_scores[0, j]
+            )
+    np.testing.assert_array_equal(observed, expected_scores)
+    np.testing.assert_array_equal(counts, expected_counts)
+    np.testing.assert_array_equal(pvalues, (expected_counts + 1) / 6)
+
+
+@pytest.mark.parametrize("algorithm", ["dense", "sparse"])
+@pytest.mark.parametrize("storage", ["memory", "disk"])
+def test_monte_carlo_empty_sequences_and_targets(tmp_path, algorithm, storage):
+    model = read_model("examples/foxa2.meme")
+    sequences = EncodedSequences.from_strings(["", ""])
+    options = dict(k=3, seed=91, algorithm=algorithm, storage=storage,
+                   temp_dir=tmp_path, prefetch=2, batch_size=2)
+    observed, counts, pvalues = direct_mc(model, [model, model], sequences, **options)
+    np.testing.assert_array_equal(observed, [[0, 0]])
+    np.testing.assert_array_equal(counts, [[3, 3]])
+    np.testing.assert_array_equal(pvalues, [[1, 1]])
+    for result in direct_mc(model, [], sequences, **options):
+        assert result.shape == (1, 0)
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_cli_direct_monte_carlo(tmp_path):
     sequences = tmp_path / "input.fa"
     sequences.write_text(">a\n" + "ACGTN" * 12 + "\n")

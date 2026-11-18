@@ -200,8 +200,7 @@ def _compare_circular(query, target, row_start, row_length, threshold, *, search
 def compare_circular(query, target, offsets, *, min_logerr, search_range=5):
     """Return device scalar score, shift, orientation index, and site count.
 
-    Dense Float64 reductions are deliberately independent of the Numba
-    summation order. Inputs are two-strand arrays of shape ``(2, positions)``.
+    Dense Float64 reductions use inputs of shape ``(2, positions)``.
     """
     _require_x64()
     search_range = strict_integer(search_range, "search_range")

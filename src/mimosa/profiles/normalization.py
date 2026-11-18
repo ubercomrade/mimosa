@@ -1,4 +1,8 @@
-"""Empirical log-tail normalization strategies."""
+"""Empirical log-tail strategy and reference table implementation.
+
+The production profile pipeline uses ``backend.normalize_exact``. The table
+implementation below is retained as a reference for parity tests and callers.
+"""
 
 from __future__ import annotations
 

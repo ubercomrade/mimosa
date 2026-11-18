@@ -9,48 +9,6 @@ from .anchors import DEFAULT_MIN_LOGERR, parse_min_logerr
 
 METRIC_NAME = "jaccard"
 ORIENTATION_PAIRS = (("++", 0, 0), ("+-", 0, 1), ("-+", 1, 0), ("--", 1, 1))
-ORIENTATION_RANK = {"++": 0, "+-": 1, "-+": 2, "--": 3}
-
-
-def _orientation_pairs(query_bundle, target_bundle):
-    qs = query_bundle.forward is query_bundle.reverse
-    ts = target_bundle.forward is target_bundle.reverse
-    if qs and ts:
-        return (("++", 0, 0),)
-    if qs:
-        return (("++", 0, 0), ("+-", 0, 1))
-    if ts:
-        return (("++", 0, 0), ("-+", 1, 0))
-    return ORIENTATION_PAIRS
-
-
-def _score_orientation_pair(
-    query_bundle,
-    target_bundle,
-    query_anchors,
-    target_anchors,
-    query_strand,
-    target_strand,
-    search_range,
-    min_logerr,
-):
-    query_scores = query_bundle.forward if query_strand == 0 else query_bundle.reverse
-    target_scores = target_bundle.forward if target_strand == 0 else target_bundle.reverse
-    offsets = query_scores.offsets
-    if offsets.size != target_scores.offsets.size:
-        raise ValueError("profiles must have the same number of rows.")
-    if not np.array_equal(offsets, target_scores.offsets):
-        raise ValueError("profiles must have identical row lengths.")
-    import jax
-    from ..backend import compare_circular
-
-    q = np.stack((query_scores.data, query_scores.data))
-    t = np.stack((target_scores.data, target_scores.data))
-    with jax.enable_x64(True):
-        score, shift, _, sites = compare_circular(
-            q, t, offsets, min_logerr=min_logerr, search_range=search_range
-        )
-        return float(score), int(shift), int(sites)
 
 
 class ProfileConfig:

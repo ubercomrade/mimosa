@@ -494,18 +494,23 @@ class TestCompare:
 
     @pytest.mark.parametrize("columns", (1, 3, 5))
     def test_shifted_model_recovers_the_column_shift(self, pwm_pair, batch, columns):
-        from mimosa.profiles.alignment import _score_orientation_pair
-
         m1, _ = pwm_pair
         padding = np.zeros((5, columns), dtype=np.float32)
         shifted = PWM("shifted", np.hstack([padding, m1.weights]), m1.background)
         query = circular_profile(m1, batch)
         target = circular_profile(shifted, batch)
 
-        score, shift, _ = _score_orientation_pair(
-            query.bundle, target.bundle, query.anchors, target.anchors, 0, 0, 5, TAU0
-        )
-        assert (score, shift) == (1.0, -columns)
+        # Isolate the forward tracks through the public prepared-profile API.
+        forward_profiles = [
+            PreparedProfile(
+                profile.name, StrandPair(profile.bundle.forward, profile.bundle.forward),
+                (profile.anchors[0], profile.anchors[0]), profile.min_logerr,
+                profile.normalization, circular=True,
+            )
+            for profile in (query, target)
+        ]
+        forward = compare(*forward_profiles)
+        assert (forward.score, forward.offset) == (1.0, -columns)
         # Site starts coincide on the reverse strand, which ties at shift 0.
         result = compare(query, target)
         assert float(result.score) == 1.0
@@ -822,6 +827,15 @@ class TestScoreProfile:
 
 class TestPreparedImmutabilityAndConsistency:
     ROW = [np.linspace(0, 6, 60, dtype=np.float32)]
+
+    @pytest.mark.parametrize("offset", [True, 1.5, "1", -1])
+    def test_site_start_offset_requires_non_negative_integer(self, offset):
+        profile = ready_profile("q", self.ROW)
+        with pytest.raises(ValueError, match="non-negative integer"):
+            PreparedProfile(
+                profile.name, profile.bundle, profile.anchors,
+                profile.min_logerr, site_start_offset=offset,
+            )
 
     def test_prepared_profile_is_immutable(self):
         prepared = ready_profile("q", self.ROW)

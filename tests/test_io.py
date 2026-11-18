@@ -84,6 +84,13 @@ class TestScores:
         assert s.scores[0].tolist() == [1.0, 2.0, 3.0]
         assert s.scores[1].tolist() == [4.0]
 
+    def test_read_scores_name_from_nested_path(self, tmp_path):
+        directory = tmp_path / "profiles.with.dots"
+        directory.mkdir()
+        path = directory / "sample.v1.fasta"
+        path.write_text(">a\n1.0\n")
+        assert read_scores(path).name == "sample.v1"
+
     def test_read_scores_missing_header(self, tmp_path):
         p = tmp_path / "s.fasta"
         p.write_text("1.0\n")

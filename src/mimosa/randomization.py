@@ -13,14 +13,12 @@ import jax.numpy as jnp
 import numpy as np
 
 from .models import (
-    PWM, BaMM, Dimont, MotifModel, SiteGA, Slim,
+    PWM, BaMM, Dimont, MotifModel, SiteGA, Slim, DEFAULT_WINDOW_BATCH_SIZE,
     _require_sitega_enabled, _validate_model_contract, strict_integer, window_size,
 )
 
 INPUT_RELABEL_VERSION = "input-alphabet-relabel-v1"
 INPUT_RELABEL_STRATEGY = "profile-input-relabel"
-DEFAULT_WINDOW_BATCH_SIZE = 8192
-_MAX_WINDOW_ELEMENTS = 1_048_576
 
 
 class WindowModel(MotifModel):

@@ -29,6 +29,11 @@ _COMPARISON_BLOCK_SIZE = 8
 _REBUILD_ANCHORS = object()
 
 
+def _target_storage_estimate(sequences, targets):
+    """Estimate bytes needed to store normalized target profiles."""
+    return len(targets) * (2 * sequences.data.size * 4 + 256)
+
+
 @partial(jax.jit, static_argnames=("search_range",))
 def _count_exceedances(queries, target, starts, sizes, threshold, observed, *, search_range):
     """Compare a bounded block of query profiles against one target on device."""
@@ -166,6 +171,132 @@ def _target_sources(profiles, *, use_disk, cache, prefetch, offsets):
         executor.shutdown(wait=True, cancel_futures=True)
 
 
+class _TargetProfileStore:
+    """Keep target handles on the host, backed by memory, temporary files or cache.
+
+    The caller owns the temporary-directory lifetime. Only ``load`` transfers a
+    saved target to the device, so no device profiles accumulate in this store.
+    """
+
+    def __init__(self, sequences, background, *, root, cache):
+        self.sequences = sequences
+        self.background = background
+        self.root = root
+        self.cache = cache
+        self.profiles = []
+        self.context = None
+        if cache is not None:
+            from .cache import _make_preparation_context
+
+            self.context = _make_preparation_context(sequences, background)
+
+    def prepare(self, model):
+        if self.cache is None:
+            return None, _profile(model, self.sequences, self.background)
+        key, bundle = _cached_observed_profile(
+            model, self.sequences, self.background, self.cache, self.context,
+        )
+        return key, _bundle_to_device(bundle)
+
+    def append(self, key, profile):
+        if self.cache is not None:
+            self.profiles.append(key)
+        elif self.root is not None:
+            path = os.path.join(self.root, f"{len(self.profiles)}.npy")
+            np.save(path, np.asarray(profile, dtype=np.float32), allow_pickle=False)
+            self.profiles.append(path)
+        else:
+            self.profiles.append(np.asarray(profile, dtype=np.float32))
+
+    def sources(self, prefetch):
+        return _target_sources(
+            self.profiles, use_disk=self.root is not None, cache=self.cache,
+            prefetch=prefetch, offsets=self.sequences.offsets,
+        )
+
+    def load(self, saved, *, prefetch):
+        if self.cache is not None and not prefetch:
+            bundle = _read_cached_bundle(self.cache, saved, self.sequences.offsets)
+            if bundle is None:
+                raise OSError("cached target profile became unavailable during Monte Carlo.")
+            return _bundle_to_device(bundle)
+        if self.root is not None and not prefetch:
+            saved = np.load(saved, mmap_mode="r", allow_pickle=False)
+        return jnp.asarray(saved)
+
+
+def _prepare_observed_profiles(query, targets, store, score, *, threshold, algorithm,
+                               anchor_memory_limit, return_details):
+    """Score observed pairs and save targets with a bounded host anchor budget."""
+    observed = np.empty((1, len(targets)), dtype=np.float32)
+    details, target_anchors = [], []
+    anchor_bytes_used = 0
+    _, query_profile = store.prepare(query)
+    for j, target in enumerate(targets):
+        key, target_profile = store.prepare(target)
+        observed_score, shift, orientation, sites = score(query_profile, target_profile)
+        observed[0, j] = np.asarray(observed_score)
+        if return_details:
+            details.append((int(shift), int(orientation), int(sites)))
+        anchors = make_anchors(target_profile, threshold) if algorithm == "sparse" else None
+        if anchors is not None:
+            anchor_bytes = sum(item.nbytes for item in anchors)
+            if anchor_bytes_used + anchor_bytes <= anchor_memory_limit:
+                anchors = tuple(np.asarray(item) for item in anchors)
+                anchor_bytes_used += anchor_bytes
+            else:
+                anchors = _REBUILD_ANCHORS
+        target_anchors.append(anchors)
+        store.append(key, target_profile)
+        del target_profile
+    return observed, details, target_anchors
+
+
+def _prepare_replicate_blocks(query, sequences, background, *, first, end,
+                              comparison_block_size, seed, group, threshold, algorithm):
+    """Build one bounded batch; replicate identities do not depend on its layout."""
+    blocks = []
+    for block_start in range(first, end, comparison_block_size):
+        profiles = []
+        for replicate in range(block_start, min(block_start + comparison_block_size, end)):
+            variant = relabel_model(
+                query, permutations=_permutations(query, seed, replicate, group),
+            )
+            profiles.append(_profile(variant, sequences, background))
+        block = jnp.stack(profiles)
+        anchors = make_anchors(block, threshold) if algorithm == "sparse" else None
+        blocks.append((block, anchors))
+        del profiles
+    return blocks
+
+
+def _accumulate_exceedances(blocks, store, target_anchors, observed, counts, *,
+                            starts, sizes, threshold, search_range, prefetch):
+    """Stream fixed targets through a replicate batch and update host counts."""
+    with store.sources(prefetch) as sources:
+        for j, saved in sources:
+            target_profile = store.load(saved, prefetch=prefetch)
+            target_anchor = target_anchors[j]
+            if target_anchor is _REBUILD_ANCHORS:
+                target_anchor = make_anchors(target_profile, threshold)
+            counter = jnp.int64(0)
+            for block, query_anchor in blocks:
+                if not store.sequences.data.size:
+                    counter = counter + block.shape[0] * (jnp.float32(0) >= observed[0, j])
+                elif query_anchor is not None and target_anchor is not None:
+                    counter = counter + _count_sparse_exceedances(
+                        block, target_profile, *query_anchor, *target_anchor,
+                        starts, sizes, threshold, observed[0, j], search_range=search_range,
+                    )
+                else:
+                    counter = counter + _count_exceedances(
+                        block, target_profile, starts, sizes, threshold, observed[0, j],
+                        search_range=search_range,
+                    )
+            counts[0, j] += int(counter)
+            del target_profile
+
+
 def direct_mc(query, targets, sequences, *, k, seed, group="full",
               min_logerr=4.0, search_range=5, background=None,
               batch_size=8, storage="auto", memory_limit=256 * 1024**2,
@@ -240,12 +371,11 @@ def _direct_mc(query, targets, sequences, *, k, seed, group,
             raise TypeError(
                 f"{type(model).__name__} must provide a callable score_sites method."
             )
-    observed = np.empty((1, len(targets)), dtype=np.float32)
     counts = np.zeros((1, len(targets)), dtype=np.int64)
-    details = []
     if not targets:
+        observed = np.empty((1, 0), dtype=np.float32)
         result = (observed, counts, (counts + 1) / (k + 1))
-        return (*result, details) if return_details else result
+        return (*result, []) if return_details else result
     if sequences.data.size > np.iinfo(np.int32).max:
         raise ValueError("JAX comparison currently supports at most 2**31-1 positions.")
     lengths = np.diff(sequences.offsets)
@@ -259,108 +389,32 @@ def _direct_mc(query, targets, sequences, *, k, seed, group,
             query_profile, target_profile, starts, sizes, threshold, search_range=search_range,
         )
 
-    estimate = len(targets) * (2 * sequences.data.size * 4 + 256)
+    estimate = _target_storage_estimate(sequences, targets)
     use_disk = cache is None and (storage == "disk" or (storage == "auto" and estimate > memory_limit))
-    store = tempfile.TemporaryDirectory(prefix="mimosa-mc-", dir=temp_dir) if use_disk else nullcontext(None)
-    with store as root:
+    storage_context = (
+        tempfile.TemporaryDirectory(prefix="mimosa-mc-", dir=temp_dir)
+        if use_disk else nullcontext(None)
+    )
+    with storage_context as root:
         if use_disk and shutil.disk_usage(root).free < estimate:
             raise OSError(f"Monte Carlo target profiles need approximately {estimate} bytes "
                           f"of temporary space in {root}.")
-        target_profiles = []
-        target_anchors = []
-        target_anchor_bytes = 0
-        if cache is not None:
-            from .cache import _make_preparation_context
-
-            context = _make_preparation_context(sequences, background)
-            _, bundle = _cached_observed_profile(query, sequences, background, cache, context)
-            query_profile = _bundle_to_device(bundle)
-            del bundle
-        else:
-            query_profile = _profile(query, sequences, background)
-        for j, target in enumerate(targets):
-            if cache is not None:
-                key, bundle = _cached_observed_profile(target, sequences, background, cache, context)
-                target_profile = _bundle_to_device(bundle)
-            else:
-                target_profile = _profile(target, sequences, background)
-            observed_score, shift, orientation, sites = score(query_profile, target_profile)
-            observed[0, j] = np.asarray(observed_score)
-            if return_details:
-                details.append((int(shift), int(orientation), int(sites)))
-            anchors = make_anchors(target_profile, threshold) if algorithm == "sparse" else None
-            if anchors is None:
-                target_anchors.append(None)
-            else:
-                anchor_bytes = sum(item.nbytes for item in anchors)
-                if target_anchor_bytes + anchor_bytes <= anchor_memory_limit:
-                    target_anchors.append(tuple(np.asarray(item) for item in anchors))
-                    target_anchor_bytes += anchor_bytes
-                else:
-                    target_anchors.append(_REBUILD_ANCHORS)
-            if cache is not None:
-                target_profiles.append(key)
-                del bundle
-            elif use_disk:
-                host_profile = np.asarray(target_profile, dtype=np.float32)
-                path = os.path.join(root, f"{j}.npy")
-                np.save(path, host_profile, allow_pickle=False)
-                target_profiles.append(path)
-                del host_profile
-            else:
-                target_profiles.append(np.asarray(target_profile, dtype=np.float32))
-            del target_profile
-        del query_profile
+        target_store = _TargetProfileStore(sequences, background, root=root, cache=cache)
+        observed, details, target_anchors = _prepare_observed_profiles(
+            query, targets, target_store, score, threshold=threshold, algorithm=algorithm,
+            anchor_memory_limit=anchor_memory_limit, return_details=return_details,
+        )
         for first in range(0, k, batch_size):
-            blocks = []
-            end = min(first + batch_size, k)
-            for block_start in range(first, end, comparison_block_size):
-                profiles = []
-                for replicate in range(block_start, min(block_start + comparison_block_size, end)):
-                    variant = relabel_model(
-                        query, permutations=_permutations(query, seed, replicate, group),
-                    )
-                    profiles.append(_profile(variant, sequences, background))
-                block = jnp.stack(profiles)
-                anchors = make_anchors(block, threshold) if algorithm == "sparse" else None
-                blocks.append((block, anchors))
-                del profiles
-            with _target_sources(target_profiles, use_disk=use_disk, cache=cache,
-                                 prefetch=prefetch, offsets=sequences.offsets) as sources:
-                for j, saved in sources:
-                    if cache is not None and not prefetch:
-                        bundle = _read_cached_bundle(cache, saved, sequences.offsets)
-                        if bundle is None:
-                            raise OSError("cached target profile became unavailable during Monte Carlo.")
-                        target_profile = _bundle_to_device(bundle)
-                        del bundle
-                    else:
-                        host_profile = np.load(saved, mmap_mode="r", allow_pickle=False) if (
-                            use_disk and not prefetch
-                        ) else saved
-                        target_profile = jnp.asarray(host_profile)
-                    target_anchor = target_anchors[j]
-                    if target_anchor is _REBUILD_ANCHORS:
-                        target_anchor = make_anchors(target_profile, threshold)
-                    counter = jnp.int64(0)
-                    for block, query_anchor in blocks:
-                        if sequences.data.size:
-                            if query_anchor is not None and target_anchor is not None:
-                                counter = counter + _count_sparse_exceedances(
-                                    block, target_profile, *query_anchor, *target_anchor,
-                                    starts, sizes, threshold, observed[0, j], search_range=search_range,
-                                )
-                            else:
-                                counter = counter + _count_exceedances(
-                                    block, target_profile, starts, sizes, threshold, observed[0, j],
-                                    search_range=search_range,
-                                )
-                        else:
-                            counter = counter + block.shape[0] * (jnp.float32(0) >= observed[0, j])
-                    counts[0, j] += int(counter)
-                    del target_profile
-                    if cache is None or prefetch:
-                        del host_profile
+            blocks = _prepare_replicate_blocks(
+                query, sequences, background, first=first, end=min(first + batch_size, k),
+                comparison_block_size=comparison_block_size, seed=seed, group=group,
+                threshold=threshold, algorithm=algorithm,
+            )
+            _accumulate_exceedances(
+                blocks, target_store, target_anchors, observed, counts,
+                starts=starts, sizes=sizes, threshold=threshold,
+                search_range=search_range, prefetch=prefetch,
+            )
             del blocks
     result = (observed, counts, (counts + 1) / (k + 1))
     return (*result, details) if return_details else result

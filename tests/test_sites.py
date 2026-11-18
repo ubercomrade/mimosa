@@ -3,7 +3,9 @@ import pytest
 
 from mimosa import (
     BestPerSequence,
+    RaggedArray,
     SiteCollection,
+    StrandPair,
     ThresholdHits,
     TopFractionHits,
     build_pcm,
@@ -30,6 +32,51 @@ def batch():
 
 
 class TestSiteSelection:
+    @pytest.mark.parametrize("best_strand", [False, True])
+    @pytest.mark.parametrize("threshold", [-3, -1, 0, 2, 10])
+    def test_threshold_collection_matches_scalar_order(self, best_strand, threshold):
+        from mimosa.sites import _collect_threshold_hits, _select_top_hit_arrays
+
+        forward = [[], [-2, 0, 2, 2], [], [0, 1], []]
+        reverse = [[], [-1, 0, 1, 2], [], [2, 1], []]
+        bundle = StrandPair(
+            RaggedArray.from_rows(forward), RaggedArray.from_rows(reverse),
+        )
+        expected = []
+        for row, (fwd, rev) in enumerate(zip(forward, reverse)):
+            if best_strand:
+                for pos, (a, b) in enumerate(zip(fwd, rev)):
+                    if max(a, b) >= threshold:
+                        expected.append((row, pos, int(b > a), max(a, b)))
+            else:
+                for strand, track in enumerate((fwd, rev)):
+                    for pos, score in enumerate(track):
+                        if score >= threshold:
+                            expected.append((row, pos, strand, score))
+        actual = _collect_threshold_hits(bundle, threshold, best_strand=best_strand)
+        assert list(zip(actual.seq_indices, actual.starts, actual.strands, actual.scores)) == expected
+        # TopFractionHits must retain the same stable tie order before sorting.
+        top = _select_top_hit_arrays(actual, 0.5)
+        keep = max(1, len(expected) // 2)
+        expected_top = sorted(expected, key=lambda hit: -hit[3])[:keep]
+        assert list(zip(top.seq_indices, top.starts, top.strands, top.scores)) == expected_top
+
+    def test_threshold_collection_empty_or_single_strand(self):
+        from mimosa.sites import _collect_threshold_hits
+
+        empty = RaggedArray.from_rows([])
+        assert len(_collect_threshold_hits(StrandPair(empty, empty), -1)) == 0
+        empty_rows = RaggedArray.from_rows([[], [], []])
+        hits = RaggedArray.from_rows([[], [-1, 0], []])
+        for strand, bundle in enumerate((
+            StrandPair(hits, empty_rows), StrandPair(empty_rows, hits),
+        )):
+            actual = _collect_threshold_hits(bundle, -1)
+            assert actual.to_dict() == {
+                "seq_indices": [1, 1], "starts": [0, 1],
+                "strands": [strand, strand], "scores": [-1.0, 0.0],
+            }
+
     def test_best_per_sequence(self, pwm, batch):
         coll = select_sites(pwm, batch, BestPerSequence())
         assert isinstance(coll, SiteCollection)
@@ -110,6 +157,20 @@ class TestSiteCollection:
 
 
 class TestPfmReconstruction:
+    @pytest.mark.parametrize("shape", [(1, 0), (20, 0), (1, 40), (20, 1000)])
+    def test_build_pcm_matches_scalar_counts(self, shape):
+        rng = np.random.default_rng(112)
+        # Exercise a non-contiguous input, including unknown bases.
+        sites = rng.integers(0, 5, (shape[0], shape[1] * 2), dtype=np.uint8)[:, ::2]
+        expected = np.zeros((4, shape[0]), dtype=np.float32)
+        for column in sites.T:
+            for position, code in enumerate(column):
+                if code < 4:
+                    expected[code, position] += 1
+        actual = build_pcm(sites, shape[0])
+        assert actual.dtype == np.float32
+        np.testing.assert_array_equal(actual, expected)
+
     def test_reconstruct_matches_reference(self, pwm, batch):
         pfm = reconstruct_pfm(pwm, batch, BestPerSequence())
         assert pfm.shape == (4, pwm.motif_length)

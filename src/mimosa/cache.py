@@ -46,6 +46,8 @@ _PREPARED_PROFILE_SECTION_NAMES = (
     "forward_score_offsets",
     "reverse_score_offsets",
 )
+
+
 class Cache:
     def __init__(self, directory, *, timings=None):
         self.directory = str(directory)

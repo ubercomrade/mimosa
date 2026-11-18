@@ -6,7 +6,7 @@ import numpy as np
 
 from ..arrays import RaggedArray, StrandPair
 from ..errors import ModelFormatError
-from ..models import MotifModel, site_start_offset
+from ..models import MotifModel, site_start_offset, strict_integer
 from .anchors import (
     DEFAULT_MIN_LOGERR,
     AnchorCSR,
@@ -141,11 +141,11 @@ class PreparedProfile:
             or not all(isinstance(anchor_set, AnchorCSR) for anchor_set in anchors)
         ):
             raise TypeError("prepared profile anchors must be a pair of AnchorCSR values.")
-        if (
-            isinstance(site_start_offset, bool)
-            or not isinstance(site_start_offset, (int, np.integer))
-            or site_start_offset < 0
-        ):
+        try:
+            site_start_offset = strict_integer(site_start_offset, "site_start_offset")
+        except TypeError as exc:
+            raise ValueError("site_start_offset must be a non-negative integer.") from exc
+        if site_start_offset < 0:
             raise ValueError("site_start_offset must be a non-negative integer.")
         if not isinstance(circular, (bool, np.bool_)):
             raise TypeError("circular must be a boolean.")

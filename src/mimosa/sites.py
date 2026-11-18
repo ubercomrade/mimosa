@@ -143,51 +143,30 @@ def _collect_best_hits(bundle):
     )
 
 
-def _collect_threshold_hits(bundle, threshold):
-    seq_indices, starts, strands, scores = [], [], [], []
-    for seq_idx in range(len(bundle.forward)):
-        fwd = bundle.forward[seq_idx]
-        for pos in range(fwd.size):
-            if fwd[pos] >= threshold:
-                seq_indices.append(seq_idx)
-                starts.append(pos)
-                strands.append(0)
-                scores.append(fwd[pos])
-        rev = bundle.reverse[seq_idx]
-        for pos in range(rev.size):
-            if rev[pos] >= threshold:
-                seq_indices.append(seq_idx)
-                starts.append(pos)
-                strands.append(1)
-                scores.append(rev[pos])
-    return SiteCollection(
-        np.array(seq_indices, dtype=np.int64),
-        np.array(starts, dtype=np.int64),
-        np.array(strands, dtype=np.int8),
-        np.array(scores, dtype=np.float32),
-    )
-
-
-def _collect_best_strand_threshold_hits(bundle, threshold):
-    seq_indices, starts, strands, scores = [], [], [], []
+def _collect_threshold_hits(bundle, threshold, *, best_strand=False):
+    """Select hits in row/strand/position order, using bounded per-row masks."""
+    chunks = []
     for seq_idx in range(len(bundle.forward)):
         fwd = bundle.forward[seq_idx]
         rev = bundle.reverse[seq_idx]
-        if fwd.size == 0:
-            continue
-        for pos in range(fwd.size):
-            best = max(fwd[pos], rev[pos])
-            if best >= threshold:
-                seq_indices.append(seq_idx)
-                starts.append(pos)
-                strands.append(0 if fwd[pos] >= rev[pos] else 1)
-                scores.append(best)
-    return SiteCollection(
-        np.array(seq_indices, dtype=np.int64),
-        np.array(starts, dtype=np.int64),
-        np.array(strands, dtype=np.int8),
-        np.array(scores, dtype=np.float32),
-    )
+        tracks = (np.maximum(fwd, rev),) if best_strand else (fwd, rev)
+        for strand, track in enumerate(tracks):
+            positions = np.flatnonzero(track >= threshold)
+            if positions.size:
+                strands = (
+                    (rev[positions] > fwd[positions]).astype(np.int8)
+                    if best_strand else np.full(positions.size, strand, dtype=np.int8)
+                )
+                chunks.append((
+                    np.full(positions.size, seq_idx, dtype=np.int64),
+                    positions, strands, track[positions],
+                ))
+    if not chunks:
+        return SiteCollection(
+            np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=np.int8), np.empty(0, dtype=np.float32),
+        )
+    return SiteCollection(*(np.concatenate(parts) for parts in zip(*chunks)))
 
 
 def _sort_hit_arrays(coll):
@@ -234,9 +213,9 @@ def _collect_hits_from_bundle(selector, bundle, strands):
     if isinstance(selector, BestPerSequence):
         return _collect_best_hits(bundle)
     if isinstance(selector, ThresholdHits):
-        if strands == "best":
-            return _collect_best_strand_threshold_hits(bundle, selector.threshold)
-        return _collect_threshold_hits(bundle, selector.threshold)
+        return _collect_threshold_hits(
+            bundle, selector.threshold, best_strand=strands == "best",
+        )
     if isinstance(selector, TopFractionHits):
         base_coll = _collect_hits_from_bundle(selector.base, bundle, strands)
         return _select_top_hit_arrays(base_coll, selector.fraction)
@@ -292,11 +271,8 @@ def build_pcm(sites, motif_width):
     if np.any((sites < 0) | (sites > N_CODE)):
         raise ValueError("sites contain invalid DNA codes.")
     pcm = np.zeros((4, motif_width), dtype=np.float32)
-    for h in range(sites.shape[1]):
-        for p in range(motif_width):
-            code = sites[p, h]
-            if code < N_CODE:
-                pcm[code, p] += 1.0
+    for code in range(NUCLEOTIDE_CARDINALITY):
+        pcm[code] = np.count_nonzero(sites == code, axis=1)
     return pcm
 
 

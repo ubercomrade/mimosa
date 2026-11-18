@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .models import STRAND_POLICIES  # noqa: F401  (re-exported compatibility constant)
 
-__all__ = ["scan", "_scan_batch", "STRAND_POLICIES"]
+__all__ = ["scan", "STRAND_POLICIES"]
 
 
 def _scan_batch(model, batch, strands, circular=False):
