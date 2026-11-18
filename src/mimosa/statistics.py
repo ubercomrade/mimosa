@@ -17,6 +17,7 @@ class AnnotatedResult:
     mc_exceedances: int | None = None
     mc_seed: int | None = None
     mc_group: str | None = None
+    mc_algorithm: str | None = None
 
     def __getattr__(self, name):
         if name == "result" or (name.startswith("__") and name.endswith("__")):
@@ -36,7 +37,8 @@ class AnnotatedResult:
             d["monte_carlo"] = {
                 "replicates": self.mc_replicates, "exceedances": self.mc_exceedances,
                 "seed": self.mc_seed, "group": self.mc_group,
-                "version": "mimosa-direct-mc-v1",
+                "version": "mimosa-direct-mc-v2", "randomized": "query",
+                "algorithm": self.mc_algorithm,
             }
         return d
 

@@ -79,8 +79,8 @@ reconstruction defaults to a pseudocount of `0.25`.
 
 ## Pair-specific Monte Carlo
 
-For each ordered pair, the query is fixed and the target is independently
-relabeled in each of K replicates. Each replicate draws an alphabet permutation
+The single query is independently relabeled in each of K replicates; targets
+remain fixed and share the same query replicates. Each replicate draws an alphabet permutation
 at each motif position. The `full` group permits all permutations; `gc`
 permutes A/T and C/G separately.
 For a function f of an oriented window it evaluates f(pi(x)); declared context
@@ -89,7 +89,7 @@ before recoding. All occurrences of a coordinate in higher-order terms are
 recoded coherently. Built-in PWM, BaMM, Dimont and Slim tables compile
 this same operation directly; a generic window function uses input recoding.
 
-Each randomized target is rescanned and renormalized on both strands, and the
+Each randomized query is rescanned and renormalized on both strands, and the
 same threshold, shifts, orientations and maximum Jaccard calculation are
 applied as for the observed pair.
 
@@ -100,6 +100,9 @@ all dependence between overlapping windows. A biological null hypothesis and
 tail/FDR calibration do not follow from this invariance. Dependence across
 models' responses, motif properties, and maximization over alignments can
 change the Jaccard reference distribution even after ERR normalization.
+This query-randomization protocol differs from the previous target-randomization
+protocol and can produce different p-values. Shared replicates induce dependence
+between targets' estimates; BH adjustment's assumptions should be considered.
 
 The Monte Carlo upper-tail p-value is:
 

@@ -115,19 +115,46 @@ needed.
 ```python
 select_sites(model, sequences, selector, *, strands="best") -> SiteCollection
 reconstruct_pfm(model, sequences, selector, *, pseudocount=0.25, strands="best")
-direct_mc(queries, targets, sequences, *, k, seed, group="full",
-          min_logerr=4.0, search_range=5, background=None)
+direct_mc(query, targets, sequences, *, k, seed, group="full",
+          min_logerr=4.0, search_range=5, background=None,
+          batch_size=8, storage="auto", memory_limit=268435456, temp_dir=None,
+          comparison_block_size=8, algorithm="sparse", prefetch=0,
+          anchor_memory_limit=268435456)
 ```
 
 Available selectors are `BestPerSequence`, `ThresholdHits`, and
 `TopFractionHits`. `SiteCollection.to_dict()` returns JSON-compatible lists.
 
 `direct_mc` returns matrices of observed scores, exceedance counts and
-p-values, with rows for queries and columns for targets. It supports built-in
+p-values, each with shape `(1, number_of_targets)`. It randomizes the single
+query and uses the same replicates for all fixed targets. It supports built-in
 PWM, BaMM, Dimont and Slim models on the device-level pipeline and any other
 `MotifModel` with `score_sites` through the shared scan path (SiteGA is
 temporarily disabled). `group` is `full` or `gc`; ties are included. Score
 profiles are not supported by this Monte Carlo path.
+
+Random query profiles are held on the device in batches. Target profiles are
+stored on the host or in isolated temporary files: `storage` is `memory`,
+`disk`, or `auto`, which switches to disk when estimated profile bytes exceed
+`memory_limit`. `temp_dir` chooses the temporary directory's parent. Disk
+capacity is checked approximately; quotas and concurrent use can still cause
+write failures. Temporary files are cleaned on normal completion and handled
+exceptions, but may remain after abrupt termination.
+`comparison_block_size` controls vectorized comparisons within each batch;
+larger values can increase GPU throughput and peak device memory.
+The default `algorithm="sparse"` uses threshold-anchor comparisons, falls back
+to dense comparison for dense anchors, and checks near-ties with the dense
+kernel. Set `algorithm="dense"` to always use the dense kernel. Different
+reduction orders may still cause numerical differences; this is not a
+cross-device bitwise identity guarantee. Anchors use additional host and
+device memory.
+Retained target-anchor arrays are capped by `anchor_memory_limit` (default
+256 MiB); anchors that do not fit are rebuilt for each query batch. Zero
+disables retention. This is not a limit on total host or device memory.
+`prefetch` enables bounded host read-ahead of disk-backed targets (0 disables
+it; values up to 64). It can improve throughput on large disk-backed workloads
+at the cost of approximately one full profile per queued target, plus the
+profile currently being processed. It has no effect on in-memory storage.
 
 ## Fixed-window functions and input relabeling
 

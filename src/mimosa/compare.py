@@ -92,15 +92,20 @@ def _warn_if_few_positions(prepared):
     Compared profiles share row layout and threshold, so checking the query
     covers every target.
     """
-    positions = prepared.bundle.forward.data.size
-    expected = positions * 10.0 ** -float(prepared.min_logerr)
+    _warn_if_few_positions_count(
+        prepared.name, prepared.bundle.forward.data.size, prepared.min_logerr, stacklevel=4,
+    )
+
+
+def _warn_if_few_positions_count(name, positions, min_logerr, *, stacklevel=3):
+    expected = positions * 10.0 ** -float(min_logerr)
     if expected < MIN_EXPECTED_ANCHORS:
         warnings.warn(
-            f"profile '{prepared.name}': only about {expected:.3g} of {positions} "
+            f"profile '{name}': only about {expected:.3g} of {positions} "
             f"positions per strand are expected at "
-            f"min_logerr={float(prepared.min_logerr):g}; the {METRIC_NAME} "
+            f"min_logerr={float(min_logerr):g}; the {METRIC_NAME} "
             "score is noisy. Use more sequence positions or a lower min_logerr.",
-            stacklevel=3,
+            stacklevel=stacklevel,
         )
 
 

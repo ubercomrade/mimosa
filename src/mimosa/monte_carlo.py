@@ -3,23 +3,46 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import shutil
+import tempfile
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, nullcontext
+from functools import partial
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .backend import compare_circular, normalize_exact, scan_circular
-from .arrays import EncodedSequences
+from .backend import _compare_circular, normalize_exact, scan_circular
+from .arrays import EncodedSequences, RaggedArray, StrandPair
 from .errors import MimosaError, ModelFormatError
 from .io.bundles import model_fingerprint
 from .models import MotifModel, SiteGA, strict_integer
 from .profiles.anchors import parse_min_logerr
+from .profiles.normalization import EmpiricalLogTail
+from .profiles.sparse import count_exceedances as _count_sparse_exceedances, make_anchors
 from .randomization import relabel_model
+
+_COMPARISON_BLOCK_SIZE = 8
+_REBUILD_ANCHORS = object()
+
+
+@partial(jax.jit, static_argnames=("search_range",))
+def _count_exceedances(queries, target, starts, sizes, threshold, observed, *, search_range):
+    """Compare a bounded block of query profiles against one target on device."""
+    scores = jax.vmap(
+        lambda query: _compare_circular(
+            query, target, starts, sizes, threshold, search_range=search_range,
+        )[0]
+    )(queries)
+    return jnp.sum(scores >= observed, dtype=jnp.int64)
 
 
 def _permutations(model, seed, replicate, group):
     identity = model_fingerprint(model)
-    digest = hashlib.sha256(f"mimosa-direct-mc-v1|{seed}|{replicate}|{identity}".encode()).digest()
+    digest = hashlib.sha256(f"mimosa-direct-mc-v2|{seed}|{replicate}|{identity}".encode()).digest()
     rng = np.random.default_rng(np.random.SeedSequence(np.frombuffer(digest, dtype="<u4")))
     if group == "full":
         return np.array([rng.permutation(4) for _ in range(model.motif_length)], dtype=np.uint8)
@@ -59,13 +82,109 @@ def _profile(model, sequences, background):
     return normalize_exact(jnp.asarray(raw), jnp.asarray(cal)).reshape((2, sequences.data.size))
 
 
-def direct_mc(queries, targets, sequences, *, k, seed, group="full",
-              min_logerr=4.0, search_range=5, background=None):
+def _read_cached_bundle(cache, key, offsets):
+    from .cache import _cached_mmap_prepared_profile
+
+    with cache._lock:
+        entry = _cached_mmap_prepared_profile(cache, key)
+    if entry is None:
+        return None
+    _, bundle, normalization, offset, circular = entry
+    if normalization != EmpiricalLogTail() or not circular or offset != 0:
+        return None
+    if (not np.array_equal(bundle.forward.offsets, offsets)
+            or not np.array_equal(bundle.reverse.offsets, offsets)):
+        return None
+    return bundle
+
+
+def _cached_observed_profile(model, sequences, background, cache, context):
+    """Return a cache key and mmap-backed bundle, computing it only on a miss."""
+    from .cache import _prepared_profile_cache_key, _store_normalized_profile
+
+    normalization = EmpiricalLogTail()
+    key = _prepared_profile_cache_key(
+        model, sequences, background=background, normalization=normalization, circular=True,
+        sequence_fp=context[0], background_fp=context[1],
+    )
+    bundle = _read_cached_bundle(cache, key, sequences.offsets)
+    if bundle is None:
+        values = np.asarray(_profile(model, sequences, background), dtype=np.float32)
+        bundle = StrandPair(
+            RaggedArray(values[0], sequences.offsets),
+            RaggedArray(values[1], sequences.offsets),
+        )
+        _store_normalized_profile(cache, key, model.name, bundle, normalization, 0, True)
+        bundle = _read_cached_bundle(cache, key, sequences.offsets)
+        if bundle is None:
+            raise OSError("could not read the stored prepared profile from the cache.")
+    return key, bundle
+
+
+def _bundle_to_device(bundle):
+    return jnp.stack((jnp.asarray(bundle.forward.data), jnp.asarray(bundle.reverse.data)))
+
+
+@contextmanager
+def _target_sources(profiles, *, use_disk, cache, prefetch, offsets):
+    """Yield profiles in order; optionally prefetch a bounded number on the host."""
+    if not prefetch or (not use_disk and cache is None):
+        yield enumerate(profiles)
+        return
+
+    def load(saved):
+        if cache is not None:
+            bundle = _read_cached_bundle(cache, saved, offsets)
+            if bundle is None:
+                raise OSError("cached target profile became unavailable during Monte Carlo.")
+            return np.stack((bundle.forward.data, bundle.reverse.data))
+        return np.array(np.load(saved, mmap_mode="r", allow_pickle=False), copy=True)
+
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mimosa-prefetch")
+    pending = deque()
+    source = iter(enumerate(profiles))
+
+    def submit_next():
+        item = next(source, None)
+        if item is not None:
+            index, saved = item
+            pending.append((index, executor.submit(load, saved)))
+
+    try:
+        for _ in range(min(prefetch, len(profiles))):
+            submit_next()
+
+        def iterator():
+            while pending:
+                index, future = pending.popleft()
+                value = future.result()
+                submit_next()
+                yield index, value
+
+        yield iterator()
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+
+
+def direct_mc(query, targets, sequences, *, k, seed, group="full",
+              min_logerr=4.0, search_range=5, background=None,
+              batch_size=8, storage="auto", memory_limit=256 * 1024**2,
+              temp_dir=None, comparison_block_size=_COMPARISON_BLOCK_SIZE,
+              algorithm="sparse", prefetch=0, anchor_memory_limit=256 * 1024**2):
     """Return observed scores, exceedance counts and p-values for ordered pairs.
 
-    Rows correspond to queries and columns to targets. Each fixed query is
-    compared with independently randomized replicates of each target. Ties are
-    included, and p = (count + 1) / (k + 1).
+    Returns arrays of shape (1, number of targets). The query is randomized
+    once per replicate and each target stays fixed. The same replicates are
+    used for all targets. Ties are included: p = (count + 1) / (k + 1).
+
+    Query replicates are held on device in batches; target profiles are kept
+    on the host or in an isolated temporary directory. Auto storage uses disk
+    if their estimated size exceeds ``memory_limit`` bytes.
+    ``comparison_block_size`` bounds the vectorized comparison block.
+    The default ``algorithm="sparse"`` uses threshold anchors with dense
+    fallback; ``algorithm="dense"`` always uses the original dense kernel.
+    ``prefetch`` bounds host-side read-ahead for disk-backed targets (0 disables).
+    Target anchors exceeding ``anchor_memory_limit`` are rebuilt on demand.
 
     Only PWM, BaMM, Dimont and Slim are supported natively on device; any other
     MotifModel with ``score_sites`` is supported through the shared scan path
@@ -73,13 +192,19 @@ def direct_mc(queries, targets, sequences, *, k, seed, group="full",
     routine does not change the caller's global x64 setting.
     """
     with jax.enable_x64(True):
-        return _direct_mc(queries, targets, sequences, k=k, seed=seed, group=group,
+        return _direct_mc(query, targets, sequences, k=k, seed=seed, group=group,
                           min_logerr=min_logerr, search_range=search_range,
-                          background=background)
+                          background=background, batch_size=batch_size, storage=storage,
+                          memory_limit=memory_limit, temp_dir=temp_dir,
+                          comparison_block_size=comparison_block_size, algorithm=algorithm,
+                          prefetch=prefetch, anchor_memory_limit=anchor_memory_limit)
 
 
-def _direct_mc(queries, targets, sequences, *, k, seed, group,
-               min_logerr, search_range, background):
+def _direct_mc(query, targets, sequences, *, k, seed, group,
+               min_logerr, search_range, background, batch_size, storage,
+               memory_limit, temp_dir, comparison_block_size, algorithm, prefetch=0,
+               anchor_memory_limit=256 * 1024**2,
+               return_details=False, cache=None):
     k, seed = strict_integer(k, "k"), strict_integer(seed, "seed")
     search_range = strict_integer(search_range, "search_range")
     if k < 1 or seed < 0 or search_range < 0:
@@ -87,40 +212,161 @@ def _direct_mc(queries, targets, sequences, *, k, seed, group,
     threshold = parse_min_logerr(min_logerr)
     if group not in ("full", "gc"):
         raise ValueError("group must be 'full' or 'gc'.")
+    batch_size = strict_integer(batch_size, "batch_size")
+    comparison_block_size = strict_integer(comparison_block_size, "comparison_block_size")
+    memory_limit = strict_integer(memory_limit, "memory_limit")
+    prefetch = strict_integer(prefetch, "prefetch")
+    anchor_memory_limit = strict_integer(anchor_memory_limit, "anchor_memory_limit")
+    if batch_size < 1 or comparison_block_size < 1 or memory_limit < 0 or anchor_memory_limit < 0:
+        raise ValueError("batch_size and comparison_block_size must be positive "
+                         "and memory limits non-negative.")
+    if storage not in ("auto", "memory", "disk"):
+        raise ValueError("storage must be 'auto', 'memory' or 'disk'.")
+    if algorithm not in ("dense", "sparse"):
+        raise ValueError("algorithm must be 'dense' or 'sparse'.")
+    if not 0 <= prefetch <= 64:
+        raise ValueError("prefetch must be between 0 and 64.")
     if not isinstance(sequences, EncodedSequences):
         raise TypeError("sequences must be an EncodedSequences batch.")
     if background is not None and not isinstance(background, EncodedSequences):
         raise TypeError("background must be an EncodedSequences batch.")
-    queries, targets = list(queries), list(targets)
-    for model in queries + targets:
+    targets = list(targets)
+    for model in [query, *targets]:
         if not isinstance(model, MotifModel):
-            raise TypeError("direct Monte Carlo supports MotifModel inputs only.")
+            raise TypeError("direct Monte Carlo requires one query MotifModel and MotifModel targets.")
         if isinstance(model, SiteGA):
             raise MimosaError("SiteGA is temporarily disabled.")
         if not callable(getattr(model, "score_sites", None)):
             raise TypeError(
                 f"{type(model).__name__} must provide a callable score_sites method."
             )
-    shape = (len(queries), len(targets))
-    observed = np.empty(shape, dtype=np.float32)
-    counts = np.zeros(shape, dtype=np.int64)
-    query_profiles = [_profile(model, sequences, background) for model in queries]
-    for j, target in enumerate(targets):
-        target_profile = _profile(target, sequences, background)
-        obs = [compare_circular(q, target_profile, sequences.offsets,
-                                min_logerr=threshold, search_range=search_range)[0]
-               for q in query_profiles]
-        counter = [jnp.int64(0) for _ in query_profiles]
-        for replicate in range(k):
-            variant = relabel_model(
-                target, permutations=_permutations(target, seed, replicate, group),
-            )
-            random_profile = _profile(variant, sequences, background)
-            for i, query in enumerate(query_profiles):
-                score = compare_circular(query, random_profile, sequences.offsets,
-                                         min_logerr=threshold, search_range=search_range)[0]
-                counter[i] = counter[i] + (score >= obs[i])
-        if obs:
-            observed[:, j] = np.asarray(jnp.stack(obs))
-            counts[:, j] = np.asarray(jnp.stack(counter))
-    return observed, counts, (counts + 1) / (k + 1)
+    observed = np.empty((1, len(targets)), dtype=np.float32)
+    counts = np.zeros((1, len(targets)), dtype=np.int64)
+    details = []
+    if not targets:
+        result = (observed, counts, (counts + 1) / (k + 1))
+        return (*result, details) if return_details else result
+    if sequences.data.size > np.iinfo(np.int32).max:
+        raise ValueError("JAX comparison currently supports at most 2**31-1 positions.")
+    lengths = np.diff(sequences.offsets)
+    starts = jnp.asarray(np.repeat(sequences.offsets[:-1], lengths).astype(np.int32))
+    sizes = jnp.asarray(np.repeat(lengths, lengths).astype(np.int32))
+
+    def score(query_profile, target_profile):
+        if sequences.data.size == 0:
+            return jnp.float32(0), jnp.int32(0), jnp.int32(0), jnp.int64(0)
+        return _compare_circular(
+            query_profile, target_profile, starts, sizes, threshold, search_range=search_range,
+        )
+
+    estimate = len(targets) * (2 * sequences.data.size * 4 + 256)
+    use_disk = cache is None and (storage == "disk" or (storage == "auto" and estimate > memory_limit))
+    store = tempfile.TemporaryDirectory(prefix="mimosa-mc-", dir=temp_dir) if use_disk else nullcontext(None)
+    with store as root:
+        if use_disk and shutil.disk_usage(root).free < estimate:
+            raise OSError(f"Monte Carlo target profiles need approximately {estimate} bytes "
+                          f"of temporary space in {root}.")
+        target_profiles = []
+        target_anchors = []
+        target_anchor_bytes = 0
+        if cache is not None:
+            from .cache import _make_preparation_context
+
+            context = _make_preparation_context(sequences, background)
+            _, bundle = _cached_observed_profile(query, sequences, background, cache, context)
+            query_profile = _bundle_to_device(bundle)
+            del bundle
+        else:
+            query_profile = _profile(query, sequences, background)
+        for j, target in enumerate(targets):
+            if cache is not None:
+                key, bundle = _cached_observed_profile(target, sequences, background, cache, context)
+                target_profile = _bundle_to_device(bundle)
+            else:
+                target_profile = _profile(target, sequences, background)
+            observed_score, shift, orientation, sites = score(query_profile, target_profile)
+            observed[0, j] = np.asarray(observed_score)
+            if return_details:
+                details.append((int(shift), int(orientation), int(sites)))
+            anchors = make_anchors(target_profile, threshold) if algorithm == "sparse" else None
+            if anchors is None:
+                target_anchors.append(None)
+            else:
+                anchor_bytes = sum(item.nbytes for item in anchors)
+                if target_anchor_bytes + anchor_bytes <= anchor_memory_limit:
+                    target_anchors.append(tuple(np.asarray(item) for item in anchors))
+                    target_anchor_bytes += anchor_bytes
+                else:
+                    target_anchors.append(_REBUILD_ANCHORS)
+            if cache is not None:
+                target_profiles.append(key)
+                del bundle
+            elif use_disk:
+                host_profile = np.asarray(target_profile, dtype=np.float32)
+                path = os.path.join(root, f"{j}.npy")
+                np.save(path, host_profile, allow_pickle=False)
+                target_profiles.append(path)
+                del host_profile
+            else:
+                target_profiles.append(np.asarray(target_profile, dtype=np.float32))
+            del target_profile
+        del query_profile
+        for first in range(0, k, batch_size):
+            blocks = []
+            end = min(first + batch_size, k)
+            for block_start in range(first, end, comparison_block_size):
+                profiles = []
+                for replicate in range(block_start, min(block_start + comparison_block_size, end)):
+                    variant = relabel_model(
+                        query, permutations=_permutations(query, seed, replicate, group),
+                    )
+                    profiles.append(_profile(variant, sequences, background))
+                block = jnp.stack(profiles)
+                anchors = make_anchors(block, threshold) if algorithm == "sparse" else None
+                blocks.append((block, anchors))
+                del profiles
+            with _target_sources(target_profiles, use_disk=use_disk, cache=cache,
+                                 prefetch=prefetch, offsets=sequences.offsets) as sources:
+                for j, saved in sources:
+                    if cache is not None and not prefetch:
+                        bundle = _read_cached_bundle(cache, saved, sequences.offsets)
+                        if bundle is None:
+                            raise OSError("cached target profile became unavailable during Monte Carlo.")
+                        target_profile = _bundle_to_device(bundle)
+                        del bundle
+                    else:
+                        host_profile = np.load(saved, mmap_mode="r", allow_pickle=False) if (
+                            use_disk and not prefetch
+                        ) else saved
+                        target_profile = jnp.asarray(host_profile)
+                    target_anchor = target_anchors[j]
+                    if target_anchor is _REBUILD_ANCHORS:
+                        target_anchor = make_anchors(target_profile, threshold)
+                    counter = jnp.int64(0)
+                    for block, query_anchor in blocks:
+                        if sequences.data.size:
+                            if query_anchor is not None and target_anchor is not None:
+                                counter = counter + _count_sparse_exceedances(
+                                    block, target_profile, *query_anchor, *target_anchor,
+                                    starts, sizes, threshold, observed[0, j], search_range=search_range,
+                                )
+                            else:
+                                counter = counter + _count_exceedances(
+                                    block, target_profile, starts, sizes, threshold, observed[0, j],
+                                    search_range=search_range,
+                                )
+                        else:
+                            counter = counter + block.shape[0] * (jnp.float32(0) >= observed[0, j])
+                    counts[0, j] += int(counter)
+                    del target_profile
+                    if cache is None or prefetch:
+                        del host_profile
+            del blocks
+    result = (observed, counts, (counts + 1) / (k + 1))
+    return (*result, details) if return_details else result
+
+
+def _direct_mc_with_details(query, targets, sequences, **options):
+    """Internal CLI path sharing observed and randomized profile preparation."""
+    with jax.enable_x64(True):
+        return _direct_mc(query, targets, sequences, return_details=True, **options)

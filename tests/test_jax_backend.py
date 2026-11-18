@@ -157,10 +157,10 @@ b = EncodedSequences.from_strings(["TGCA" * 20])
 assert not jax.config.x64_enabled
 for group in ("full", "gc"):
     kw = dict(k=2, seed=19, group=group, min_logerr=1, search_range=1, background=b)
-    single = direct_mc([q], [t], s, **kw)
-    many = direct_mc([t, q], [q, t], s, **kw)
+    single = direct_mc(q, [t], s, **kw)
+    many = direct_mc(q, [q, t], s, **kw)
     for a, m in zip(single, many):
-        assert a[0, 0] == m[1, 1]
+        assert a[0, 0] == m[0, 1]
     assert single[2][0, 0] == (single[1][0, 0] + 1) / 3
 assert not jax.config.x64_enabled
 """
@@ -208,10 +208,10 @@ def test_direct_mc_pair_independent_of_collection(group):
     extra = read_model("examples/myog.ihbcp", order=0)
     sequences = EncodedSequences.from_strings(["ACGTNNAGTC" * 5, "", "GCTAT" * 11])
     options = dict(k=2, seed=42, group=group, min_logerr=1, search_range=1)
-    one = direct_mc([q], [t], sequences, **options)
-    many = direct_mc([extra, q], [extra, t], sequences, **options)
+    one = direct_mc(q, [t], sequences, **options)
+    many = direct_mc(q, [extra, t], sequences, **options)
     for first, matrix in zip(one, many):
-        assert first[0, 0] == matrix[1, 1]
+        assert first[0, 0] == matrix[0, 1]
 
 
 def test_direct_mc_counts_identity_ties(monkeypatch):
@@ -222,11 +222,101 @@ def test_direct_mc_counts_identity_ties(monkeypatch):
         lambda model, *args: np.tile(np.arange(4), (model.motif_length, 1)),
     )
     scores, counts, pvalues = direct_mc(
-        [model], [model], sequences, k=2, seed=9, min_logerr=0.01, search_range=1,
+        model, [model], sequences, k=2, seed=9, min_logerr=0.01, search_range=1,
     )
     assert scores[0, 0] == 1
     assert counts[0, 0] == 2
     assert pvalues[0, 0] == 1
+
+
+@pytest.mark.parametrize("search_range", [0, 2, 5])
+@pytest.mark.parametrize("size", [1, 3, 8])
+def test_batched_exceedances_match_scalar_scores(search_range, size):
+    import jax.numpy as jnp
+
+    from mimosa.monte_carlo import _count_exceedances
+
+    rng = np.random.default_rng(89)
+    offsets = np.array([0, 27, 27, 74, 101], dtype=np.int64)
+    lengths = np.diff(offsets)
+    starts = jnp.asarray(np.repeat(offsets[:-1], lengths).astype(np.int32))
+    sizes = jnp.asarray(np.repeat(lengths, lengths).astype(np.int32))
+    target = rng.uniform(0, 4, (2, offsets[-1])).astype(np.float32)
+    queries = rng.uniform(0, 4, (size, 2, offsets[-1])).astype(np.float32)
+    scores = np.array([
+        compare_circular(query, target, offsets, min_logerr=2, search_range=search_range)[0]
+        for query in queries
+    ])
+    # Using an actual score as the threshold also checks an exact tie.
+    observed = scores[0]
+    actual = _count_exceedances(jnp.asarray(queries), jnp.asarray(target), starts, sizes,
+                                np.float32(2), observed, search_range=search_range)
+    assert int(actual) == np.count_nonzero(scores >= observed)
+
+
+@pytest.mark.parametrize("search_range", [0, 2, 5])
+def test_sparse_exceedances_match_dense_near_decision_boundary(search_range):
+    import jax.numpy as jnp
+
+    from mimosa.profiles.sparse import count_exceedances, make_anchors
+
+    rng = np.random.default_rng(640)
+    offsets = np.array([0, 1, 1, 8, 39, 296], dtype=np.int64)
+    lengths = np.diff(offsets)
+    starts = jnp.asarray(np.repeat(offsets[:-1], lengths).astype(np.int32))
+    sizes = jnp.asarray(np.repeat(lengths, lengths).astype(np.int32))
+    queries = rng.uniform(0, 2.9, (8, 2, offsets[-1])).astype(np.float32)
+    target = rng.uniform(0, 2.9, (2, offsets[-1])).astype(np.float32)
+    for query in queries:
+        for strand in query:
+            strand[rng.choice(offsets[-1], 5, replace=False)] = rng.uniform(3, 6, 5)
+    for strand in target:
+        strand[rng.choice(offsets[-1], 5, replace=False)] = rng.uniform(3, 6, 5)
+    q = jnp.asarray(queries)
+    t = jnp.asarray(target)
+    qanchors = make_anchors(q, np.float32(3))
+    tanchors = make_anchors(t, np.float32(3))
+    assert qanchors is not None and tanchors is not None
+    dense = np.array([
+        compare_circular(query, target, offsets, min_logerr=3, search_range=search_range)[0]
+        for query in queries
+    ])
+    boundary = dense[0]
+    for observed in (np.float32(0), boundary,
+                     np.nextafter(boundary, np.float32(0)),
+                     np.nextafter(boundary, np.float32(1)), np.float32(1)):
+        actual = count_exceedances(
+            q, t, *qanchors, *tanchors, starts, sizes, np.float32(3), observed,
+            search_range=search_range,
+        )
+        assert int(actual) == np.count_nonzero(dense >= observed)
+
+
+def test_sparse_near_tie_runs_dense_fallback(monkeypatch):
+    import jax.numpy as jnp
+    from mimosa.profiles import sparse
+
+    def near_below(*args, **kwargs):
+        return jnp.nextafter(jnp.float32(0.5), jnp.float32(0))
+
+    def dense_tie(*args, **kwargs):
+        return jnp.float32(0.5), jnp.int32(0), jnp.int32(0), jnp.int64(0)
+
+    sparse.count_exceedances.clear_cache()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(sparse, "_sparse_score", near_below)
+            patch.setattr(sparse, "_compare_circular", dense_tie)
+            result = sparse.count_exceedances(
+                jnp.zeros((1, 2, 4)), jnp.zeros((2, 4)),
+                jnp.zeros((1, 2, 1), jnp.int32), jnp.ones((1, 2, 1), bool),
+                jnp.zeros((2, 1), jnp.int32), jnp.ones((2, 1), bool),
+                jnp.zeros(4, jnp.int32), jnp.full(4, 4, jnp.int32),
+                jnp.float32(1), jnp.float32(0.5), search_range=0,
+            )
+            assert int(result) == 1
+    finally:
+        sparse.count_exceedances.clear_cache()
 
 
 @pytest.mark.parametrize("path,order,group", [
@@ -236,14 +326,20 @@ def test_direct_mc_counts_identity_ties(monkeypatch):
     ("tests/fixtures/slim/example-model-1.xml", None, "gc"),
 ])
 def test_direct_mc_matches_cpu_reference(path, order, group):
-    from benchmarks.direct_mc_prototype import direct_mc as cpu_direct_mc
+    from mimosa.monte_carlo import _permutations
+    from mimosa.randomization import relabel_model
 
-    q = read_model("examples/gata4.meme")
-    t = read_model(path, order=order)
+    q = read_model(path, order=order)
+    t = read_model("examples/gata4.meme")
     rows = np.random.default_rng(19).integers(0, 5, (4, 80), dtype=np.uint8)
     sequences = EncodedSequences.from_rows(rows)
     options = dict(k=2, seed=12, group=group, min_logerr=0.5, search_range=1)
-    expected = cpu_direct_mc([q], [t], sequences, **options)
-    actual = direct_mc([q], [t], sequences, **options)
-    for a, b in zip(actual, expected):
-        np.testing.assert_array_equal(a, b)
+    observed = compare(q, t, sequences, min_logerr=0.5, search_range=1).score
+    null = [
+        compare(relabel_model(q, permutations=_permutations(q, 12, i, group)), t,
+                sequences, min_logerr=0.5, search_range=1).score
+        for i in range(2)
+    ]
+    actual = direct_mc(q, [t], sequences, **options)
+    assert actual[0][0, 0] == observed
+    assert actual[1][0, 0] == sum(x >= observed for x in null)

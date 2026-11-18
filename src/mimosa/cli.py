@@ -124,17 +124,34 @@ def _comparison_inputs(args):
     return query, targets, sequences, bg_sequences, cache
 
 
-def _annotate_comparison_results(results, args, sequences, background, models=None):
+def _report_mc_storage(args, sequences, targets):
+    estimate = len(targets) * (2 * sequences.data.size * 4 + 256)
+    if args.mc_storage == "disk" or (
+        args.mc_storage == "auto" and estimate > args.mc_memory_limit_mib * 1024**2
+    ):
+        print(f"Monte Carlo temporary target profiles: approximately {estimate} bytes "
+              f"in {args.mc_temp_dir or 'the default temporary directory'}.", file=sys.stderr)
+
+
+def _mc_options(args, background):
+    return dict(k=args.mc_replicates, seed=args.mc_seed, group=args.mc_group,
+                min_logerr=args.min_logerr, search_range=args.search_range, background=background,
+                batch_size=args.mc_batch_size, storage=args.mc_storage,
+                memory_limit=args.mc_memory_limit_mib * 1024**2, temp_dir=args.mc_temp_dir,
+                comparison_block_size=args.mc_comparison_block_size, algorithm=args.mc_algorithm,
+                prefetch=args.mc_prefetch, anchor_memory_limit=args.mc_anchor_memory_mib * 1024**2)
+
+
+def _annotate_comparison_results(results, args, sequences, background, models=None, mc_result=None):
     if not args.pvalue:
         return results
     from .monte_carlo import direct_mc
     from .statistics import AnnotatedResult, adjusted_pvalues, evalue
 
-    scores, counts, pvalues = direct_mc(
-        [models[0]], models[1:], sequences, k=args.mc_replicates, seed=args.mc_seed,
-        group=args.mc_group, min_logerr=args.min_logerr,
-        search_range=args.search_range, background=background,
-    )
+    if mc_result is None:
+        _report_mc_storage(args, sequences, models[1:])
+        mc_result = direct_mc(models[0], models[1:], sequences, **_mc_options(args, background))
+    scores, counts, pvalues = mc_result
     pvalues = pvalues[0]
     adjusted = adjusted_pvalues(pvalues)
     effective = (len(results) if args.effective_number_of_targets is None
@@ -147,14 +164,42 @@ def _annotate_comparison_results(results, args, sequences, background, models=No
             result, p_value=float(pvalues[index]), adj_p_value=float(adjusted[index]),
             e_value=evalue(pvalues[index], effective), mc_replicates=args.mc_replicates,
             mc_exceedances=int(counts[0, index]), mc_seed=args.mc_seed,
-            mc_group=args.mc_group,
+            mc_group=args.mc_group, mc_algorithm=args.mc_algorithm,
         ))
     return annotated
+
+
+def _compare_with_monte_carlo(query, targets, sequences, background, args, cache=None):
+    from .compare import ComparisonResult, _warn_if_few_positions_count
+    from .monte_carlo import _direct_mc_with_details
+    from .profiles.alignment import METRIC_NAME, ORIENTATION_PAIRS
+    from .profiles.anchors import parse_min_logerr
+
+    if cache is None:
+        _report_mc_storage(args, sequences, targets)
+    scores, counts, pvalues, details = _direct_mc_with_details(
+        query, targets, sequences, cache=cache, **_mc_options(args, background),
+    )
+    threshold = parse_min_logerr(args.min_logerr)
+    _warn_if_few_positions_count(query.name, sequences.data.size, threshold)
+    results = [
+        ComparisonResult(query.name, target.name, scores[0, i], shift,
+                         ORIENTATION_PAIRS[orientation][0], METRIC_NAME, sites,
+                         search_range=args.search_range, min_logerr=threshold)
+        for i, (target, (shift, orientation, sites)) in enumerate(zip(targets, details))
+    ]
+    return _annotate_comparison_results(
+        results, args, sequences, background, mc_result=(scores, counts, pvalues),
+    )
 
 
 def _run_compare(args):
     from .compare import compare
     query, targets, sequences, background, cache = _comparison_inputs(args)
+    if args.pvalue:
+        result = _compare_with_monte_carlo(query, targets, sequences, background, args, cache)[0]
+        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        return 0
     result = compare(
         query,
         targets[0],
@@ -178,6 +223,10 @@ def _run_compare(args):
 def _run_compare_many(args):
     from .compare import compare_many
     query, targets, sequences, background, cache = _comparison_inputs(args)
+    if args.pvalue:
+        results = _compare_with_monte_carlo(query, targets, sequences, background, args, cache)
+        print(json.dumps([result.to_dict() for result in results], indent=2, sort_keys=True))
+        return 0
     results = compare_many(
         query,
         targets,
@@ -254,6 +303,23 @@ def build_parser():
         p.add_argument("--mc-replicates", type=_bounded_positive_integer("mc-replicates", 1_000_000), default=1000)
         p.add_argument("--mc-seed", type=int, default=127)
         p.add_argument("--mc-group", choices=("full", "gc"), default="full")
+        p.add_argument("--mc-batch-size", type=_bounded_positive_integer("mc-batch-size", 1_000_000),
+                       default=8, help="random query profiles held on device at once")
+        p.add_argument("--mc-comparison-block-size",
+                       type=_bounded_positive_integer("mc-comparison-block-size", 1_000_000),
+                       default=8, help="query profiles compared in one vectorized block")
+        p.add_argument("--mc-algorithm", choices=("dense", "sparse"), default="sparse",
+                       help="comparison kernel; sparse uses threshold anchors with dense fallback")
+        p.add_argument("--mc-prefetch", type=int, default=0,
+                       help="number of disk-backed target profiles to prefetch on host (0-64)")
+        p.add_argument("--mc-anchor-memory-mib", type=int, default=256,
+                       help="host memory budget for target anchors (default 256 MiB; 0 rebuilds)")
+        p.add_argument("--mc-storage", choices=("auto", "memory", "disk"), default="auto",
+                       help="storage for temporary target profiles")
+        p.add_argument("--mc-memory-limit-mib",
+                       type=_bounded_positive_integer("mc-memory-limit-mib", 1_000_000),
+                       default=256, help="target-profile memory threshold for auto storage")
+        p.add_argument("--mc-temp-dir", help="parent directory for temporary Monte Carlo profiles")
 
     add_compare_arguments("compare", False)
     add_compare_arguments("compare-many", True)

@@ -31,6 +31,19 @@ Important options:
 - `--cache-dir PATH` enables prepared-profile disk/mmap caching.
 - `--pvalue` computes pair-specific Monte Carlo significance. `--mc-replicates`
   sets K, `--mc-seed` the seed, and `--mc-group` either `full` or `gc`.
+- `--mc-batch-size` bounds random query profiles held on the device (default 8).
+  `--mc-comparison-block-size` bounds the vectorized comparison block (default 8);
+  larger values may use substantially more device memory.
+  `--mc-algorithm` selects `sparse` (default, with dense fallback) or `dense`.
+  Sparse and dense reductions can differ numerically, so validate results for
+  your data and device when this distinction matters.
+  `--mc-prefetch N` enables bounded host read-ahead for disk-backed targets
+  (0–64; default 0). Queued profiles consume additional host memory.
+  `--mc-anchor-memory-mib` limits retained target-anchor arrays (default 256;
+  0 rebuilds them for each query batch). It is not a total RAM or VRAM limit.
+  `--mc-storage` selects `auto`, `memory` or `disk` for target profiles;
+  `--mc-memory-limit-mib` sets the auto threshold (default 256 MiB), and
+  `--mc-temp-dir` selects the parent directory for temporary disk storage.
 - `--effective-number-of-targets N` changes E-values without changing BH adjustment.
 - `--query-order N` and `--target-order N` select an available BaMM order when reading input; other types reject these options.
 
@@ -64,8 +77,11 @@ uv run mimosa compare-many QUERY TARGET [TARGET ...] \
 Targets are processed in one process; JAX manages device execution.
 Results are emitted as an ordered JSON array. `--pvalue` computes a separate
 Monte Carlo p-value for every target.
-`--cache-dir` is optional; without it no cache directory or mmap reuse is
-created.
+`--cache-dir` is optional and controls the persistent prepared-profile cache.
+Independently, `--pvalue` may use temporary disk storage for target profiles.
+Abrupt process termination can leave temporary files behind.
+When `--pvalue` and `--cache-dir` are both set, observed profiles are reused
+directly from the persistent cache, without a second temporary profile copy.
 
 
 ## `cache clear`

@@ -104,14 +104,13 @@ reverse-complements reverse-strand sites before counting.
 
 ## Pair-specific Monte Carlo
 
-Compare each ordered query–target pair against independently randomized
-replicates of that target:
+Compare each target against independently randomized replicates of the single query:
 
 ```python
 from mimosa import direct_mc
 
 scores, counts, pvalues = direct_mc(
-    [query], [target], sequences, min_logerr=2.0,
+    query, [target], sequences, min_logerr=2.0,
     k=2000, seed=127, group="full",
 )
 print(pvalues[0, 0])
