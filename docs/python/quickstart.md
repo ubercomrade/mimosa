@@ -2,17 +2,30 @@
 
 ## Install
 
-Mimosa supports Python 3.12 and 3.13.
+Mimosa supports Python 3.12 and 3.13. Run these commands from the repository root:
 
 ```bash
 uv sync --locked --group dev
 ```
 
-The package can also be installed into an existing environment:
+Run Python examples with `uv run python`, or activate `.venv` first. The
+`examples/` paths in this guide refer to the repository's fixtures.
+The current checkout can also be installed into an existing environment:
 
 ```bash
 python -m pip install .
 ```
+
+JAX is required, including for CPU execution; the project pins `jax==0.10.0`.
+The default installation does not install GPU plugins. For GPU use, follow the
+[JAX installation guide](https://docs.jax.dev/en/latest/installation.html) and
+choose plugins compatible with the pinned version. Check device availability:
+
+```bash
+uv run python -c "import jax; print(jax.devices())"
+```
+
+See [Migrating to JAX](migration.md) if updating an older installation.
 
 ## Read and Scan
 
@@ -30,6 +43,8 @@ scores = scan(model, sequences, strands="best")
 `strands` can be `"forward"`, `"reverse"`, `"best"`, or `"both"`.
 The first three policies return a `RaggedArray`; `"both"` returns a
 `StrandPair` containing forward and reverse tracks.
+`scan` uses the linear layout, omitting windows that extend beyond sequence
+ends. Comparison instead uses circular profiles.
 
 ## Compare Models
 
@@ -71,23 +86,11 @@ results = compare_many(prepared_query, targets, sequences)
 ```
 
 Comparison requires `circular=True`; the default linear layout is rejected.
+To reuse both sides, prepare each target with `circular=True` as well and call
+`compare_many(prepared_query, prepared_targets)` without sequences.
 
-For target-level parallelism, divide a total thread budget between joblib
-workers and Numba threads:
-
-```python
-results = compare_many(
-    prepared_query,
-    targets,
-    sequences,
-    total_threads=4,
-    inner_threads=1,
-)
-```
-
-The derived target worker count is `min(total_threads / inner_threads, number of targets)`. Numba
-threads are limited to 1 through 4, and the total budget must be divisible by
-the inner budget.
+Targets are processed in order in a single process. JAX manages device
+execution; the legacy thread-budget arguments do not control JAX.
 
 For precomputed score tracks, use `read_scores`:
 
@@ -116,32 +119,23 @@ print(len(sites), pfm.shape)
 Float32 scores. `reconstruct_pfm` excludes ambiguous `N` bases and
 reverse-complements reverse-strand sites before counting.
 
-## Null Distributions
+## Pair-specific Monte Carlo
 
-`build_null` currently shuffles PWM models and samples ordered profile pairs:
+Compare each target against independently randomized replicates of the single query:
 
 ```python
-from mimosa import build_null
+from mimosa import direct_mc
 
-models = [query, target, read_model("examples/gata4.meme")]
-distribution = build_null(
-    models,
-    sequences=sequences,
-    min_logerr=2.0,
-    n_samples=2000,
-    seed=127,
+scores, counts, pvalues = direct_mc(
+    query, [target], sequences, min_logerr=2.0,
+    k=99, seed=127, group="full",
 )
+print(pvalues[0, 0])
 ```
 
-Annotate comparison results with empirical p-values, Benjamini-Hochberg
-adjustment, and E-values:
-
-```python
-from mimosa import annotate_results
-
-annotated = annotate_results([result], distribution)
-print(annotated[0].to_dict())
-```
-
-Use `mimosa.io.write_null_bundle` and `mimosa.io.read_null_bundle` for the
-portable null-bundle format. See [Storage](storage.md) for details.
+All three arrays have shape `(1, number_of_targets)`. Targets remain fixed;
+the same query replicates are reused for every target, without depending on
+target order or batch size. Ties count as exceedances:
+`p = (count + 1) / (k + 1)`. Here `k=99` is a small demonstration, with a
+minimum possible p-value of `0.01`; use more replicates for finer resolution.
+The function returns raw p-values, not BH-adjusted values or E-values.

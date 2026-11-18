@@ -34,10 +34,15 @@ from .models import (
 from .profiles.alignment import ProfileConfig
 from .profiles.normalization import (
     EmpiricalLogTail,
-    HybridEmpiricalLogTail,
     normalization_fingerprint,
 )
 from .profiles.prepared import PreparedProfile, ScoreProfile, prepare_profile
+from .randomization import (
+    InputRelabeledModel,
+    WindowModel,
+    alphabet_permutations,
+    relabel_model,
+)
 from .scan import scan
 from .sites import (
     BestPerSequence,
@@ -53,13 +58,11 @@ from .sites import (
 )
 from .statistics import (
     AnnotatedResult,
-    NullDistribution,
     adjusted_pvalues,
-    annotate_results,
-    build_null,
     empirical_upper_tail_pvalue,
     evalue,
 )
+from .monte_carlo import direct_mc
 from .io import read_fasta, read_model, read_scores, write_model
 
 __version__ = version("mimosa-tool")
@@ -74,6 +77,7 @@ __all__ = [
     "ComparisonResult",
     "compare",
     "compare_many",
+    "direct_mc",
     "InvariantError",
     "MimosaError",
     "ModelDimensionError",
@@ -92,11 +96,14 @@ __all__ = [
     "window_size",
     "ProfileConfig",
     "EmpiricalLogTail",
-    "HybridEmpiricalLogTail",
     "normalization_fingerprint",
     "PreparedProfile",
     "ScoreProfile",
     "prepare_profile",
+    "InputRelabeledModel",
+    "WindowModel",
+    "alphabet_permutations",
+    "relabel_model",
     "scan",
     "BestPerSequence",
     "SiteCollection",
@@ -109,10 +116,7 @@ __all__ = [
     "select_sites",
     "site_strings",
     "AnnotatedResult",
-    "NullDistribution",
     "adjusted_pvalues",
-    "annotate_results",
-    "build_null",
     "empirical_upper_tail_pvalue",
     "evalue",
     "read_model",

@@ -6,9 +6,14 @@ import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+import jax
+import jax.numpy as jnp
 import numpy as np
 
-from .errors import ModelDimensionError, ModelFormatError, ModelInterfaceError
+from .arrays import EncodedSequences, RaggedArray, StrandPair
+from .errors import (
+    InvariantError, MimosaError, ModelDimensionError, ModelFormatError, ModelInterfaceError,
+)
 
 NUCLEOTIDE_CARDINALITY = 4
 PSEUDOCOUNT_PWM = 1e-4
@@ -16,6 +21,16 @@ MAX_CONTEXT_ORDER = 10
 MAX_CONTEXT_REPRESENTATION_ELEMENTS = 100_000_000
 MAX_DIMONT_SLIM_ORDER = 6
 MAX_DIMONT_SLIM_LENGTH = 30
+_SITEGA_ENABLED = False  # Keep the implementation for future validation and restoration.
+
+STRAND_POLICIES = ("forward", "reverse", "best", "both")
+DEFAULT_WINDOW_BATCH_SIZE = 8192
+_MAX_WINDOW_ELEMENTS = 1_048_576
+
+
+def _require_sitega_enabled():
+    if not _SITEGA_ENABLED:
+        raise MimosaError("SiteGA is temporarily disabled pending further development.")
 
 
 def _validate_model_name(name, model_type):
@@ -146,24 +161,147 @@ def _as_float32_readonly(arr):
     return arr
 
 
+def _reverse_complement_windows(windows):
+    reversed_windows = windows[:, ::-1]
+    return jnp.where(reversed_windows < 4, 3 - reversed_windows, 4)
+
+
 class MotifModel(ABC):
-    """Minimal custom-model contract: name, motif_length, scan_into."""
+    """Model geometry and identity shared by built-in and custom models."""
 
     name: str
     motif_length: int
     left_context: int = 0
     right_context: int = 0
-
-    @abstractmethod
-    def scan_into(self, sequence, forward, reverse, /):
-        """Fill both strand score tracks for one validated sequence."""
+    # Built-in models keep sequence-level JAX kernels as a fast path; generic
+    # scorers are window-based and receive explicitly circularized sequences.
+    sequence_scanner = False
 
     def fingerprint(self):
         return None
 
+    @abstractmethod
+    def score_sites(self, windows, /):
+        """Score forward-oriented windows: one real JAX score per window.
+
+        ``windows`` is a JAX array of shape ``(n, window_size(self))`` with
+        A/C/G/T/N encoded 0..4. The function must be traceable by ``jax.jit``
+        and return a finite real score for every window; the reverse strand is
+        scored by the same method on reverse-complemented windows.
+        """
+
+    def scan(self, sequences, *, strands, circular=False):
+        """Return ragged score tracks for a validated sequence batch."""
+        _validate_model_contract(self)
+        if strands not in STRAND_POLICIES:
+            raise ValueError(
+                f"unsupported strand policy: {strands!r}; expected one of {STRAND_POLICIES}."
+            )
+        if not isinstance(sequences, EncodedSequences):
+            raise TypeError("sequences must be an EncodedSequences batch.")
+        sequence_offsets = sequences.offsets
+        if circular and not self.sequence_scanner:
+            sequences = self._circularize(sequences)
+        forward, reverse, offsets = self._scan_tracks(sequences, strands, circular)
+        if (
+            circular and not self.sequence_scanner
+            and not np.array_equal(offsets, sequence_offsets)
+        ):
+            raise InvariantError("circular scan must yield one score per sequence base.")
+        offsets.setflags(write=False)
+        needs_forward = strands in ("forward", "best", "both")
+        needs_reverse = strands in ("reverse", "best", "both")
+        if (needs_forward and forward is None) or (needs_reverse and reverse is None):
+            raise InvariantError("scan implementation must provide the requested strand tracks.")
+        if needs_forward:
+            forward = np.asarray(forward, dtype=np.float32)
+            if not np.all(np.isfinite(forward)):
+                raise ModelFormatError(
+                    "", f"{type(self).__name__} scan produced non-finite Float32 scores."
+                )
+        if needs_reverse:
+            reverse = np.asarray(reverse, dtype=np.float32)
+            if not np.all(np.isfinite(reverse)):
+                raise ModelFormatError(
+                    "", f"{type(self).__name__} scan produced non-finite Float32 scores."
+                )
+        if strands == "forward":
+            return RaggedArray(forward, offsets)
+        if strands == "reverse":
+            return RaggedArray(reverse, offsets)
+        if strands == "best":
+            # A materialized JAX track is read-only; build the maximum afresh.
+            return RaggedArray(np.maximum(forward, reverse), offsets)
+        return StrandPair(RaggedArray(forward, offsets), RaggedArray(reverse, offsets))
+
+    def _circularize(self, sequences):
+        """Wrap each sequence so scan index ``i`` is the site starting at base ``i``."""
+        left = site_start_offset(self)
+        right = window_size(self) - left - 1
+        rows = [
+            row[np.arange(-left, len(row) + right) % len(row)] if len(row) else row
+            for row in (sequences[i] for i in range(len(sequences)))
+        ]
+        return EncodedSequences.from_rows(rows)
+
+    def _scan_offsets(self, sequences):
+        offsets = np.empty(len(sequences) + 1, dtype=np.int64)
+        offsets[0] = 0
+        for i in range(len(sequences)):
+            offsets[i + 1] = offsets[i] + n_positions(self, len(sequences[i]))
+        return offsets
+
+    def _scan_tracks(self, sequences, strands, circular):
+        """Return ``(forward, reverse, offsets)``; unrequested strands are None."""
+        if self.sequence_scanner:
+            from .backend import scan_circular, scan_linear
+
+            if circular:
+                return *scan_circular(self, sequences), sequences.offsets
+            tracks, offsets = scan_linear(self, sequences)
+            return tracks[0], tracks[1], offsets
+
+        width = window_size(self)
+        batch_size = min(
+            getattr(self, "batch_size", DEFAULT_WINDOW_BATCH_SIZE),
+            max(1, _MAX_WINDOW_ELEMENTS // width),
+        )
+        offsets = self._scan_offsets(sequences)
+        count = int(offsets[-1])
+        data = jnp.asarray(sequences.data)
+        forward = np.empty(count, np.float32) if strands != "reverse" else None
+        reverse = np.empty(count, np.float32) if strands != "forward" else None
+        score = jax.jit(self.score_sites)
+
+        def evaluate(windows):
+            try:
+                raw = jnp.asarray(score(windows))
+                if raw.shape != (len(windows),) or raw.dtype.kind not in "biuf":
+                    raise ValueError("invalid output shape or dtype")
+                return np.asarray(raw, dtype=np.float32)
+            except Exception as exc:
+                raise ModelInterfaceError(
+                    "scan", type(self).__name__,
+                    "score_sites must be JAX-traceable and return one real score per window.",
+                ) from exc
+
+        for start in range(0, count, batch_size):
+            stop = min(start + batch_size, count)
+            positions = np.arange(start, stop, dtype=np.int64)
+            rows = np.searchsorted(offsets, positions, side="right") - 1
+            starts = sequences.offsets[rows] + positions - offsets[rows]
+            windows = data[jnp.asarray(starts[:, None] + np.arange(width)[None, :])]
+            if forward is not None:
+                forward[start:stop] = evaluate(windows)
+            if reverse is not None:
+                reverse[start:stop] = evaluate(_reverse_complement_windows(windows))
+        return forward, reverse, offsets
+
 
 def _validate_model_contract(model, capability="scan"):
     """Validate the public model contract before any geometry is computed."""
+    if isinstance(model, SiteGA):
+        _require_sitega_enabled()
     if not isinstance(model, MotifModel):
         raise ModelInterfaceError(
             capability, type(model).__name__, "model must be a MotifModel."
@@ -174,7 +312,6 @@ def _validate_model_contract(model, capability="scan"):
         motif_length = model.motif_length
         left_context = model.left_context
         right_context = model.right_context
-        scanner = model.scan_into
     except AttributeError as exc:
         raise ModelInterfaceError(
             capability, model_type, f"model is missing a required attribute: {exc}."
@@ -200,9 +337,9 @@ def _validate_model_contract(model, capability="scan"):
             raise ModelInterfaceError(
                 capability, model_type, f"{field} must be {requirement}."
             )
-    if not callable(scanner):
+    if not callable(getattr(model, "score_sites", None)):
         raise ModelInterfaceError(
-            capability, model_type, "scan_into must be callable."
+            capability, model_type, "score_sites must be callable."
         )
 
 
@@ -211,6 +348,7 @@ class PWM(MotifModel):
     name: str
     weights: np.ndarray
     background: tuple
+    sequence_scanner = True
 
     def __post_init__(self):
         _validate_model_name(self.name, "PWM")
@@ -224,13 +362,10 @@ class PWM(MotifModel):
     def motif_length(self):
         return self.weights.shape[1]
 
-    def scan_into(self, sequence, forward, reverse, /):
-        from ._kernels import pwm_scan_forward, pwm_scan_reverse
+    def score_sites(self, windows, /):
+        from .backend import window_site_scores
 
-        n_pos = forward.shape[0]
-        pwm_scan_forward(self.weights, sequence, n_pos, self.motif_length, forward)
-        pwm_scan_reverse(self.weights, sequence, n_pos, self.motif_length, reverse)
-
+        return window_site_scores(self, windows)
 
 @dataclass(frozen=True, slots=True)
 class _ContextModel(MotifModel):
@@ -238,6 +373,7 @@ class _ContextModel(MotifModel):
     weights: np.ndarray
     order: int
     motif_length: int
+    sequence_scanner = True
 
     def __post_init__(self):
         _validate_model_name(self.name, type(self).__name__)
@@ -257,13 +393,10 @@ class _ContextModel(MotifModel):
     def right_context(self):
         return self.order
 
-    def scan_into(self, sequence, forward, reverse, /):
-        from ._kernels import rolling_scan_forward, rolling_scan_reverse
+    def score_sites(self, windows, /):
+        from .backend import window_site_scores
 
-        n_pos = forward.shape[0]
-        kmer = self.order + 1
-        rolling_scan_forward(self.weights, sequence, kmer, self.motif_length, n_pos, forward)
-        rolling_scan_reverse(self.weights, sequence, kmer, self.motif_length, n_pos, reverse)
+        return window_site_scores(self, windows)
 
 
 class BaMM(_ContextModel):
@@ -285,20 +418,21 @@ class SiteGA(MotifModel):
     motif_length: int
 
     def __post_init__(self):
+        _require_sitega_enabled()
         _validate_model_name(self.name, "SiteGA")
         weights = _as_float32_readonly(self.weights)
         motif_length = _validate_sitega(weights, self.motif_length)
         object.__setattr__(self, "weights", weights)
         object.__setattr__(self, "motif_length", motif_length)
 
-    def scan_into(self, sequence, forward, reverse, /):
-        from ._kernels import rolling_scan_forward, rolling_scan_reverse
-
-        n_pos = forward.shape[0]
-        rolling_scan_forward(self.weights, sequence, 2, self.motif_length - 1, n_pos, forward)
-        rolling_scan_reverse(self.weights, sequence, 2, self.motif_length - 1, n_pos, reverse)
-
-
+    def score_sites(self, windows, /):
+        """Dinucleotide scoring; equivalent to the dormant legacy reference."""
+        weights = jnp.asarray(self.weights)
+        total = jnp.zeros(windows.shape[0], dtype=jnp.float32)
+        for term in range(self.motif_length - 1):
+            code = 5 * windows[:, term].astype(jnp.int32) + windows[:, term + 1].astype(jnp.int32)
+            total = total + weights[code, term]
+        return total
 
 # ── Geometry ─────────────────────────────────────────────────────────────────
 

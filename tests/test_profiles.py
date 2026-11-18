@@ -17,7 +17,6 @@ from mimosa import (
 from mimosa.profiles.anchors import collect_anchor_csr, collect_both_anchors
 from mimosa.profiles.normalization import (
     EmpiricalLogTail,
-    HybridEmpiricalLogTail,
     fit,
     normalization_fingerprint,
     transform_scores,
@@ -30,7 +29,7 @@ from mimosa.models import pwm_from_pfm
 
 
 def _lookup_score(table, score):
-    from mimosa.profiles.normalization import LogTailTable, HybridLogTailTable
+    from mimosa.profiles.normalization import LogTailTable
 
     if isinstance(table, LogTailTable):
         idx = min(
@@ -41,14 +40,6 @@ def _lookup_score(table, score):
             table.scores.size - 1,
         )
         return table.log_tail[idx]
-    if isinstance(table, HybridLogTailTable):
-        if table.exact_tail.scores.size and score >= table.exact_tail.scores[-1]:
-            return _lookup_score(table.exact_tail, score)
-        if table.log_tail.size == 0:
-            return np.float32(0.0)
-        index = 0 if table.bin_width == 0 else int((float(score) - float(table.minimum)) / table.bin_width)
-        index = min(max(index, 0), table.log_tail.size - 1)
-        return table.log_tail[index]
     raise ValueError(f"unknown table type: {type(table)!r}")
 
 
@@ -126,32 +117,14 @@ class TestNormalization:
 
     def test_empirical_uses_upper_tail_from_separate_calibration(self):
         from mimosa import RaggedArray, StrandPair
-        from mimosa.profiles.normalization import _fit_normalize
+        from mimosa.profiles.normalization import normalize_bundle
 
         foreground = RaggedArray.from_rows([[2.5]])
         calibration = RaggedArray.from_rows([[1.0, 2.0, 3.0]])
-        _, normalized = _fit_normalize(
-            EmpiricalLogTail(),
-            StrandPair(foreground, foreground),
-            calibration=StrandPair(calibration, calibration),
-        )
+        table = fit(EmpiricalLogTail(), calibration.data)
+        normalized = normalize_bundle(table, StrandPair(foreground, foreground))
 
         assert normalized.forward[0][0] == pytest.approx(-np.log10(1 / 3))
-
-    def test_hybrid_exact_tail_uses_upper_tail_lookup(self):
-        from mimosa import RaggedArray
-        from mimosa.profiles.normalization import HybridLogTailTable, LogTailTable
-
-        exact = LogTailTable(
-            np.array([3.0, 2.0, 1.0], dtype=np.float32),
-            np.array([-np.log10(1 / 3), -np.log10(2 / 3), 0.0], dtype=np.float32),
-        )
-        table = HybridLogTailTable(
-            0.0, 1.0, np.zeros(4, dtype=np.float32), exact
-        )
-
-        normalized = transform_scores(table, RaggedArray.from_rows([[2.5]]))
-        assert normalized[0][0] == pytest.approx(-np.log10(1 / 3))
 
     def test_empty_scores(self):
         table = fit(EmpiricalLogTail(), np.array([], dtype=np.float32))
@@ -160,24 +133,6 @@ class TestNormalization:
     def test_nonfinite_rejected(self):
         with pytest.raises(ValueError):
             fit(EmpiricalLogTail(), np.array([1.0, np.nan], dtype=np.float32))
-
-    def test_hybrid_constant_scores(self):
-        table = fit(HybridEmpiricalLogTail(), np.full(100, 5.0, dtype=np.float32))
-        assert table.bin_width == 1.0
-        assert _lookup_score(table, np.float32(5.0)) == 0.0
-
-    def test_hybrid_histogram_shape(self):
-        rng = np.random.default_rng(1)
-        scores = rng.normal(size=1000).astype(np.float32)
-        table = fit(HybridEmpiricalLogTail(256), scores)
-        assert table.log_tail.size == 256
-
-    def test_hybrid_exact_tail(self):
-        rng = np.random.default_rng(2)
-        scores = rng.normal(size=10000).astype(np.float32)
-        table = fit(HybridEmpiricalLogTail(), scores, tail_logerr=1.0)
-        # top ~10% should be exact
-        assert table.exact_tail.scores.size > 500
 
     def test_transform_scores(self):
         from mimosa import RaggedArray
@@ -189,20 +144,6 @@ class TestNormalization:
             np.testing.assert_allclose(
                 out[i], [_lookup_score(table, s) for s in scores[i]], rtol=1e-6
             )
-
-    def test_hybrid_transform_matches_lookup(self):
-        from mimosa import RaggedArray
-
-        rng = np.random.default_rng(3)
-        values = rng.normal(size=2000).astype(np.float32)
-        scores = RaggedArray.from_rows([values[:1000], values[1000:]])
-        table = fit(HybridEmpiricalLogTail(256), scores.data, tail_logerr=1.0)
-        expected = np.array(
-            [_lookup_score(table, value) for value in scores.data], dtype=np.float32
-        )
-
-        serial = transform_scores(table, scores)
-        np.testing.assert_array_equal(serial.data, expected)
 
     def test_sparse_anchor_positions_do_not_allocate_full_candidate_buffer(
         self, monkeypatch
@@ -241,11 +182,7 @@ class TestNormalization:
         assert anchors.positions.tolist() == [offset]
 
     def test_fingerprint(self):
-        assert normalization_fingerprint(EmpiricalLogTail()) == "empirical-log-tail-v1"
-        assert (
-            normalization_fingerprint(HybridEmpiricalLogTail(1024))
-            == "hybrid-log-tail-v3;bins=1024"
-        )
+        assert normalization_fingerprint(EmpiricalLogTail()) == "empirical-log-tail-v2"
 
     def test_prepared_normalized_scores_are_threshold_independent(
         self, pwm_pair, batch
@@ -261,16 +198,22 @@ class TestNormalization:
         )
         assert lower.anchors[0].positions.size > higher.anchors[0].positions.size
 
+    def test_preparation_defaults_to_exact_empirical_normalization(self, pwm_pair, batch):
+        default = prepare_profile(pwm_pair[0], batch, min_logerr=2)
+        explicit = prepare_profile(pwm_pair[0], batch, min_logerr=2, normalization=EmpiricalLogTail())
+        assert default.normalization == EmpiricalLogTail()
+        np.testing.assert_array_equal(default.bundle.forward.data, explicit.bundle.forward.data)
+        np.testing.assert_array_equal(default.bundle.reverse.data, explicit.bundle.reverse.data)
+
     def test_prepared_exact_scores_use_separate_background(self, pwm_pair, batch):
         from mimosa import scan
-        from mimosa.profiles.normalization import _fit_normalize
+        from mimosa.profiles.normalization import normalize_bundle
 
         background = read_fasta("examples/background.fa")[0]
         raw = scan(pwm_pair[0], batch, strands="both")
         calibration = scan(pwm_pair[0], background, strands="both")
-        _, expected = _fit_normalize(
-            EmpiricalLogTail(), raw, calibration=calibration
-        )
+        scores = np.concatenate((calibration.forward.data, calibration.reverse.data))
+        expected = normalize_bundle(fit(EmpiricalLogTail(), scores), raw)
 
         actual = prepare_profile(
             pwm_pair[0], batch, background=background, min_logerr=2.0
@@ -334,57 +277,6 @@ class TestJaccard:
         assert score == pytest.approx(best, abs=1e-12)
         assert float(result.score) == pytest.approx(score, abs=1e-6)
         assert result.n_sites == n_sites
-
-    def test_kernel_matches_dense_reference_for_every_shift(self):
-        from mimosa._kernels import _jaccard_orientation
-
-        rng = np.random.default_rng(12)
-        lengths = [30, 2, 0, 9, 64]
-        search_range = 12
-        q = ready_profile("q", random_logerr_rows(rng, lengths))
-        t = ready_profile("t", random_logerr_rows(rng, lengths))
-        scores = np.empty(2 * search_range + 1, dtype=np.float64)
-        sites = np.empty(2 * search_range + 1, dtype=np.int64)
-        _jaccard_orientation(
-            q.bundle.forward.data, t.bundle.forward.data, q.bundle.forward.offsets,
-            q.anchors[0].positions, q.anchors[0].offsets,
-            t.anchors[0].positions, t.anchors[0].offsets,
-            search_range, np.float32(TAU0), scores, sites,
-        )
-        q_rows = [q.bundle.forward[row] for row in range(len(lengths))]
-        t_rows = [t.bundle.forward[row] for row in range(len(lengths))]
-        for index, shift in enumerate(range(-search_range, search_range + 1)):
-            score, n_sites = dense_jaccard(q_rows, t_rows, shift, TAU0)
-            assert scores[index] == pytest.approx(score, abs=1e-12)
-            assert sites[index] == n_sites
-
-    def test_serial_and_parallel_kernels_are_bitwise_identical(self):
-        from mimosa._kernels import _jaccard_orientation, _jaccard_orientation_parallel
-
-        rng = np.random.default_rng(13)
-        lengths = rng.integers(0, 90, size=300).tolist()
-        search_range = 5
-        n_shifts = 2 * search_range + 1
-        q = ready_profile("q", random_logerr_rows(rng, lengths), tau0=1.0)
-        t = ready_profile("t", random_logerr_rows(rng, lengths), tau0=1.0)
-        args = (
-            q.bundle.forward.data, t.bundle.forward.data, q.bundle.forward.offsets,
-            q.anchors[0].positions, q.anchors[0].offsets,
-            t.anchors[0].positions, t.anchors[0].offsets,
-            search_range, np.float32(1.0),
-        )
-        serial = (np.empty(n_shifts), np.empty(n_shifts, dtype=np.int64))
-        parallel = (np.empty(n_shifts), np.empty(n_shifts, dtype=np.int64))
-        _jaccard_orientation(*args, *serial)
-        _jaccard_orientation_parallel(
-            *args,
-            np.empty((len(lengths), n_shifts)),
-            np.empty((len(lengths), n_shifts)),
-            np.empty((len(lengths), n_shifts), dtype=np.int64),
-            *parallel,
-        )
-        assert serial[0].tobytes() == parallel[0].tobytes()
-        np.testing.assert_array_equal(serial[1], parallel[1])
 
     def test_empty_union_scores_zero(self):
         low = np.full(25, 0.5, dtype=np.float32)
@@ -602,18 +494,23 @@ class TestCompare:
 
     @pytest.mark.parametrize("columns", (1, 3, 5))
     def test_shifted_model_recovers_the_column_shift(self, pwm_pair, batch, columns):
-        from mimosa.profiles.alignment import _score_orientation_pair
-
         m1, _ = pwm_pair
         padding = np.zeros((5, columns), dtype=np.float32)
         shifted = PWM("shifted", np.hstack([padding, m1.weights]), m1.background)
         query = circular_profile(m1, batch)
         target = circular_profile(shifted, batch)
 
-        score, shift, _ = _score_orientation_pair(
-            query.bundle, target.bundle, query.anchors, target.anchors, 0, 0, 5, TAU0
-        )
-        assert (score, shift) == (1.0, -columns)
+        # Isolate the forward tracks through the public prepared-profile API.
+        forward_profiles = [
+            PreparedProfile(
+                profile.name, StrandPair(profile.bundle.forward, profile.bundle.forward),
+                (profile.anchors[0], profile.anchors[0]), profile.min_logerr,
+                profile.normalization, circular=True,
+            )
+            for profile in (query, target)
+        ]
+        forward = compare(*forward_profiles)
+        assert (forward.score, forward.offset) == (1.0, -columns)
         # Site starts coincide on the reverse strand, which ties at shift 0.
         result = compare(query, target)
         assert float(result.score) == 1.0
@@ -669,39 +566,20 @@ class TestCompare:
             inner_threads=inner_threads,
         ) == expected
 
-    def test_joblib_worker_disables_inner_numba_threads(self, pwm_pair, batch, monkeypatch):
-        import importlib
-        import numba
-
-        compare_module = importlib.import_module("mimosa.compare")
-        calls = []
-        query = circular_profile(pwm_pair[0], batch)
-        target = circular_profile(pwm_pair[1], batch)
-        monkeypatch.setattr(numba, "set_num_threads", calls.append)
-        compare_module._prepare_and_compare_with_threads(
-            query, target, batch, None, query.min_logerr, query.normalization,
-            ProfileConfig(min_logerr=TAU0), None, None, 1,
-        )
-        assert calls[0] == 1
-        assert calls[1] >= 1
-
     def test_compare_many_applies_thread_budget_to_query_and_serial_target(
         self, pwm_pair, batch, monkeypatch
     ):
         import importlib
-        import numba
-
         compare_module = importlib.import_module("mimosa.compare")
-        observed_threads = []
+        observed = []
         original = compare_module._prepare_profile
 
-        def observed(*args, **kwargs):
-            observed_threads.append(numba.get_num_threads())
+        def observed_preparation(*args, **kwargs):
+            observed.append(True)
             assert kwargs["circular"] is True
             return original(*args, **kwargs)
 
-        previous_threads = numba.get_num_threads()
-        monkeypatch.setattr(compare_module, "_prepare_profile", observed)
+        monkeypatch.setattr(compare_module, "_prepare_profile", observed_preparation)
         compare_many(
             pwm_pair[0],
             [pwm_pair[1]],
@@ -711,8 +589,7 @@ class TestCompare:
             inner_threads=2,
         )
 
-        assert observed_threads == [2, 2]
-        assert numba.get_num_threads() == previous_threads
+        assert observed == [True, True]
 
     @pytest.mark.parametrize("threshold", (1.0, TAU0))
     def test_compare_many_joblib_matches_serial(
@@ -759,7 +636,7 @@ class TestCompare:
         with pytest.raises(ValueError, match="divisible"):
             compare_many(pwm_pair[0], [pwm_pair[1]], batch, total_threads=3, inner_threads=2)
 
-    def test_compare_many_rejects_raw_custom_model_in_joblib_path(
+    def test_compare_many_accepts_raw_custom_model_with_legacy_budget(
         self, pwm_pair, batch
     ):
         from mimosa import MotifModel
@@ -768,18 +645,15 @@ class TestCompare:
             name = "custom"
             motif_length = 1
 
-            def scan_into(self, sequence, forward, reverse, /):
-                forward.fill(0)
-                reverse.fill(0)
+            def score_sites(self, windows):
+                return windows[:, 0] * 0
 
-        with pytest.raises(TypeError, match="custom models"):
-            compare_many(
-                pwm_pair[0],
-                [CustomModel(), CustomModel()],
-                batch,
-                total_threads=2,
-                inner_threads=1,
-            )
+        results = compare_many(
+            pwm_pair[0], [CustomModel(), CustomModel()], batch,
+            min_logerr=TAU0, total_threads=2, inner_threads=1,
+        )
+        assert len(results) == 2
+        assert results[0] == results[1]
 
     def test_compare_many_reprepares_duplicate_raw_targets_without_cache(
         self, pwm_pair, batch, monkeypatch
@@ -857,19 +731,10 @@ class TestCompare:
     def test_alignment_row_parallel_matches_serial(
         self, pwm_pair, batch, monkeypatch, threshold
     ):
-        import importlib
-
-        alignment_module = importlib.import_module("mimosa.profiles.alignment")
         query = circular_profile(pwm_pair[0], batch, min_logerr=threshold)
         target = circular_profile(pwm_pair[1], batch, min_logerr=threshold)
-        monkeypatch.setattr(
-            alignment_module, "use_alignment_parallel", lambda *args, **kwargs: False
-        )
         serial = compare(query, target)
-        monkeypatch.setattr(
-            alignment_module, "use_alignment_parallel", lambda *args, **kwargs: True
-        )
-        parallel = compare(query, target)
+        parallel = compare_many(query, [target], total_threads=2)[0]
         assert parallel == serial
 
     def test_prepared_profile_picklable(self, pwm_pair, batch):
@@ -911,7 +776,7 @@ class TestCompare:
         target = circular_profile(pwm_pair[1], batch)
 
         with pytest.raises(ValueError, match="requested normalization"):
-            compare(query, target, normalization=EmpiricalLogTail())
+            compare(query, target, normalization=object())
 
     def test_result_dict_includes_metric_and_zero_contributing_sites(self):
         result = ComparisonResult("query", "target", np.float32(0.0), 0, "++")
@@ -962,6 +827,15 @@ class TestScoreProfile:
 
 class TestPreparedImmutabilityAndConsistency:
     ROW = [np.linspace(0, 6, 60, dtype=np.float32)]
+
+    @pytest.mark.parametrize("offset", [True, 1.5, "1", -1])
+    def test_site_start_offset_requires_non_negative_integer(self, offset):
+        profile = ready_profile("q", self.ROW)
+        with pytest.raises(ValueError, match="non-negative integer"):
+            PreparedProfile(
+                profile.name, profile.bundle, profile.anchors,
+                profile.min_logerr, site_start_offset=offset,
+            )
 
     def test_prepared_profile_is_immutable(self):
         prepared = ready_profile("q", self.ROW)

@@ -1,6 +1,6 @@
 [project]
 name = "mimosa-tool"
-version = "2.0.0"
+version = "2.0.1"
 description = "Model-independent motif similarity assessment tool"
 readme = "README.md"
 license = "MIT"
@@ -9,8 +9,7 @@ authors = [
 ]
 requires-python = ">=3.12,<3.14"
 dependencies = [
-    "joblib>=1.5.3",
-    "numba>=0.66.0",
+    "jax==0.10.0",
     "numpy>=2.4.6",
 ]
 
@@ -36,6 +35,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
 
 [dependency-groups]
 dev = [

@@ -1,7 +1,8 @@
 # Python Documentation
 
 Mimosa is a Python library and CLI for comparing DNA motif models through the
-score profiles they produce on the same sequences.
+score profiles they produce on the same sequences. These pages describe the
+current source tree: Python 3.12–3.13 with a required JAX backend.
 
 ## Guides
 
@@ -9,10 +10,11 @@ score profiles they produce on the same sequences.
 - [API](api.md) - public objects, functions, and result types.
 - [CLI](cli.md) - commands, options, output, and exit behavior.
 - [Models and formats](models.md) - built-in models and readers.
-- [Method and statistics](method.md) - normalization, circular alignment, weighted Jaccard similarity, and nulls.
+- [Method and statistics](method.md) - normalization, circular alignment, weighted Jaccard similarity, and Monte Carlo.
 - [Custom models](extending.md) - integrate a model through `MotifModel`.
 - [Storage and cache](storage.md) - portable bundles and prepared-profile cache.
 - [Data layout](data_layout.md) - encoding, ragged arrays, geometry, and coordinates.
+- [Migrating to JAX](migration.md) - removed APIs and changes from the earlier Numba implementation.
 
 The root package exports the stable workflow API. Examples in these documents
 use public imports unless a lower-level I/O utility is explicitly documented.

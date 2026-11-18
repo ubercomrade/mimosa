@@ -6,17 +6,15 @@ from mimosa import (
     MotifModel,
     PWM,
     EncodedSequences,
-    SiteGA,
     pwm_from_pfm,
     reverse_complement,
     scan,
     site_start_offset,
     window_size,
 )
-from mimosa._kernels import ho_kmer_codes
 from mimosa.errors import ModelFormatError, ModelInterfaceError
 from mimosa.io.models import read_meme
-from mimosa.scan import _scan_batch_into
+from mimosa.scan import _scan_batch
 
 
 def _seq(*bases):
@@ -40,24 +38,15 @@ def batch():
 
 
 class TestScan:
-    def test_max_supported_context_uses_int32_rolling_codes(self):
-        sequence = np.full(11, 4, dtype=np.uint8)
-        codes = np.empty(1, dtype=np.int32)
-
-        ho_kmer_codes(sequence, 11, 0, 1, False, codes)
-
-        assert codes.dtype == np.dtype(np.int32)
-        assert int(codes[0]) == 5**11 - 1
-
-    def test_custom_model_must_fill_both_finite_output_tracks(self, batch):
+    def test_custom_model_must_return_one_score_per_window(self, batch):
         class IncompleteModel(MotifModel):
             name = "incomplete"
             motif_length = 1
 
-            def scan_into(self, sequence, forward, reverse, /):
-                forward.fill(0.0)
+            def score_sites(self, windows):
+                return windows
 
-        with pytest.raises(ModelInterfaceError, match="fill both output tracks"):
+        with pytest.raises(ModelInterfaceError, match="one real score per window"):
             scan(IncompleteModel(), batch, strands="both")
 
     def test_builtin_scan_rejects_float32_overflow(self):
@@ -153,7 +142,8 @@ class TestCircularScan:
         return [
             PWM("pwm", rng.normal(size=(5, 7)).astype(np.float32), (0.25,) * 4),
             BaMM("bamm", rng.normal(size=(125, 6)).astype(np.float32), 2, 6),
-            SiteGA("sitega", rng.normal(size=(25, 6)).astype(np.float32), 6),
+            # SiteGA("sitega", rng.normal(size=(25, 6)).astype(np.float32), 6),
+            None,  # Retain the disabled case for future restoration.
         ]
 
     @staticmethod
@@ -163,7 +153,9 @@ class TestCircularScan:
         rows = [rng.integers(0, 5, size=n, dtype=np.uint8) for n in (40, 3, 0, 1, 17)]
         return EncodedSequences.from_rows(rows)
 
-    @pytest.mark.parametrize("index", range(3))
+    @pytest.mark.parametrize("index", [
+        0, 1, pytest.param(2, marks=pytest.mark.skip(reason="SiteGA is disabled")),
+    ])
     def test_matches_linear_scan_of_manually_wrapped_rows(self, index):
         model = self._models()[index]
         sequences = self._sequences()
@@ -176,7 +168,7 @@ class TestCircularScan:
             ]
         )
 
-        circular = _scan_batch_into(model, sequences, "both", circular=True)
+        circular = _scan_batch(model, sequences, "both", circular=True)
         linear = scan(model, wrapped, strands="both")
 
         for strand, reference in (
@@ -190,7 +182,7 @@ class TestCircularScan:
     def test_pwm_index_is_the_site_start_on_both_strands(self):
         model = self._models()[0]
         sequences = self._sequences()
-        circular = _scan_batch_into(model, sequences, "both", circular=True)
+        circular = _scan_batch(model, sequences, "both", circular=True)
         width = model.motif_length
         for row in range(len(sequences)):
             sequence = sequences[row]
@@ -205,6 +197,18 @@ class TestCircularScan:
                 assert circular.forward[row][start] == pytest.approx(forward, abs=1e-4)
                 assert circular.reverse[row][start] == pytest.approx(reverse, abs=1e-4)
 
+    @pytest.mark.parametrize("index", [0, 1])
+    @pytest.mark.parametrize("circular", [False, True])
+    def test_window_path_matches_sequence_scanner_bitwise(self, index, circular, monkeypatch):
+        """The unified score_sites path equals the fast sequence kernels."""
+        model = self._models()[index]
+        sequences = self._sequences()
+        fast = _scan_batch(model, sequences, "both", circular=circular)
+        monkeypatch.setattr(type(model), "sequence_scanner", False)
+        window_path = _scan_batch(model, sequences, "both", circular=circular)
+        for a, b in ((fast.forward, window_path.forward), (fast.reverse, window_path.reverse)):
+            np.testing.assert_array_equal(a.data, b.data)
+            np.testing.assert_array_equal(a.offsets, b.offsets)
     def test_context_model_reads_left_context_from_the_ring(self):
         rng = np.random.default_rng(23)
         pwm_weights = rng.normal(size=(5, 4)).astype(np.float32)
@@ -215,8 +219,8 @@ class TestCircularScan:
         bamm = BaMM("bamm", bamm_weights, 1, 4)
         sequences = self._sequences()
 
-        from_pwm = _scan_batch_into(pwm, sequences, "both", circular=True)
-        from_bamm = _scan_batch_into(bamm, sequences, "both", circular=True)
+        from_pwm = _scan_batch(pwm, sequences, "both", circular=True)
+        from_bamm = _scan_batch(bamm, sequences, "both", circular=True)
         np.testing.assert_allclose(from_bamm.forward.data, from_pwm.forward.data, atol=1e-5)
         np.testing.assert_allclose(from_bamm.reverse.data, from_pwm.reverse.data, atol=1e-5)
 
@@ -226,15 +230,13 @@ class TestCircularScan:
             motif_length = 2
             left_context = 1
 
-            def scan_into(self, sequence, forward, reverse, /):
-                for pos in range(forward.shape[0]):
-                    forward[pos] = sequence[pos + 1]
-                    reverse[pos] = sequence[pos]
+            def score_sites(self, windows):
+                return windows[:, 1]
 
         sequences = EncodedSequences.from_rows([_seq(0, 1, 2, 3), _seq(2)])
-        circular = _scan_batch_into(FirstBase(), sequences, "both", circular=True)
+        circular = _scan_batch(FirstBase(), sequences, "both", circular=True)
         np.testing.assert_array_equal(circular.forward.data, [0, 1, 2, 3, 2])
-        np.testing.assert_array_equal(circular.reverse.data, [3, 0, 1, 2, 2])
+        np.testing.assert_array_equal(circular.reverse.data, [3, 2, 1, 0, 1])
 
     def test_public_scan_stays_linear(self, pwm, batch):
         linear = scan(pwm, batch, strands="both")

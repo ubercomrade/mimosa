@@ -4,11 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from .._kernels import (
-    collect_threshold_anchors_csr,
-    count_threshold_anchors_csr,
-)
-
 DEFAULT_MIN_LOGERR = 4.0
 
 
@@ -68,16 +63,18 @@ def collect_anchor_csr(scores, threshold, *, position_offset=0):
         np.int32 if max_position <= np.iinfo(np.int32).max else np.int64
     )
     threshold = parse_min_logerr(threshold)
-    offsets = np.empty(n + 1, dtype=np.int64)
-    count = count_threshold_anchors_csr(
-        scores.data, scores.offsets, threshold, offsets
-    )
-    positions = np.empty(count, dtype=position_dtype)
-    collect_threshold_anchors_csr(
-        scores.data, scores.offsets, threshold, positions, offsets
-    )
-    if position_offset:
-        positions += position_offset
+    import jax
+    import jax.numpy as jnp
+
+    # Compaction has a data-dependent output size; synchronize the count before
+    # requesting a statically sized nonzero result from JAX.
+    with jax.enable_x64(True):
+        mask = jnp.asarray(scores.data) >= threshold
+        count = int(jnp.sum(mask, dtype=jnp.int64))
+        indices = np.asarray(jnp.nonzero(mask, size=count)[0], dtype=np.int64)
+    offsets = np.searchsorted(indices, scores.offsets, side="left").astype(np.int64)
+    rows = np.searchsorted(scores.offsets, indices, side="right") - 1
+    positions = (indices - scores.offsets[rows] + position_offset).astype(position_dtype)
     return AnchorCSR(positions, offsets)
 
 

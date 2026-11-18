@@ -294,6 +294,22 @@ class TestPreparedProfileCache:
         assert "min_logerr" not in metadata
         assert not any("anchor" in name for name in metadata)
 
+    def test_legacy_prepared_cache_is_a_miss(self, pwm, batch, tmp_path):
+        from mimosa.cache import _decode_mmap_prepared_profile
+
+        cache, key = _cache_profile(tmp_path, pwm, batch)
+        path = tmp_path / key
+        with open(path / "meta.toml", "rb") as f:
+            metadata = tomllib.load(f)
+        assert metadata["prepared_profile_format_version"] == 8
+        assert metadata["normalization"] == "empirical-log-tail-v2"
+        for old_tag in ("hybrid-log-tail-v3;bins=65536", "empirical-log-tail-v1"):
+            old = dict(metadata, normalization=old_tag)
+            assert _decode_mmap_prepared_profile(path / "data.bin", old) is None
+        assert _decode_mmap_prepared_profile(
+            path / "data.bin", dict(metadata, prepared_profile_format_version=7)
+        ) is None
+
     def test_prepared_cache_exposes_write_and_hit_phase_timings(
         self, pwm, batch, tmp_path
     ):

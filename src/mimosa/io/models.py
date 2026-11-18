@@ -18,6 +18,7 @@ from ..models import (
     Dimont,
     SiteGA,
     Slim,
+    _require_sitega_enabled,
     strict_integer,
 )
 
@@ -331,6 +332,7 @@ def read_bamm(path, order=None):
 # ── SiteGA ───────────────────────────────────────────────────────────────────
 
 def read_sitega(path):
+    _require_sitega_enabled()
     with open(path, "r", encoding="ascii", errors="replace") as f:
         try:
             name = next(f).strip()

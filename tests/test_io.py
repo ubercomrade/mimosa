@@ -1,6 +1,5 @@
 import math
 import os
-from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -12,9 +11,7 @@ from mimosa.io.bundles import (
     content_fingerprint_float64,
     model_fingerprint,
     read_model_bundle,
-    read_null_bundle,
     write_model,
-    write_null_bundle,
 )
 from mimosa.io import fasta
 from mimosa.io.fasta import read_fasta, read_scores
@@ -28,7 +25,6 @@ from mimosa.io.models import (
     read_slim,
 )
 from mimosa.models import pwm_from_pfm
-from mimosa.statistics import NullDistribution, build_null
 
 
 class TestFasta:
@@ -87,6 +83,13 @@ class TestScores:
         assert len(s) == 2
         assert s.scores[0].tolist() == [1.0, 2.0, 3.0]
         assert s.scores[1].tolist() == [4.0]
+
+    def test_read_scores_name_from_nested_path(self, tmp_path):
+        directory = tmp_path / "profiles.with.dots"
+        directory.mkdir()
+        path = directory / "sample.v1.fasta"
+        path.write_text(">a\n1.0\n")
+        assert read_scores(path).name == "sample.v1"
 
     def test_read_scores_missing_header(self, tmp_path):
         p = tmp_path / "s.fasta"
@@ -195,6 +198,7 @@ class TestBammReader:
             read_bamm(p)
 
 
+@pytest.mark.skip(reason="SiteGA is disabled")
 class TestSitega:
     def test_read(self):
         m = read_sitega("examples/sitega_stat6.mat")
@@ -401,6 +405,7 @@ class TestModelBundle:
         assert m2.order == m.order
         np.testing.assert_array_equal(m2.weights, m.weights)
 
+    @pytest.mark.skip(reason="SiteGA is disabled")
     def test_roundtrip_sitega(self, tmp_path):
         m = read_sitega("examples/sitega_stat6.mat")
         path = str(tmp_path / "s")
@@ -491,89 +496,6 @@ class TestModelBundle:
         manifest.write_text(manifest.read_text().replace("format_version = 2", "format_version = 1"))
         with pytest.raises(ModelFormatError):
             read_model_bundle(path)
-
-
-class TestNullBundle:
-    @pytest.fixture
-    def dist(self):
-        models = []
-        for f in ["foxa2.meme", "gata2.meme", "gata4.meme"]:
-            name, pfm = read_meme(f"examples/{f}")
-            models.append(pwm_from_pfm(pfm, name=name))
-        batch, _ = read_fasta("examples/foreground.fa")
-        return build_null(models, sequences=batch, n_samples=20, seed=7, min_logerr=2.0)
-
-    def test_roundtrip(self, tmp_path, dist):
-        path = str(tmp_path / "null")
-        write_null_bundle(path, dist)
-        d = read_null_bundle(path)
-        assert d["n_null"] == 20
-        assert d["metric"] == "jaccard"
-        assert d["contract"]["search_range"] == 5
-        assert d["contract"]["alignment_version"] == "circular-jaccard-v1"
-        assert set(d["contract"]) == set(dist.contract)
-        np.testing.assert_array_equal(d["raw_scores"], dist.raw_scores)
-        assert d["pairs"][0][0] == dist.pairs[0][0]
-        assert d["contract"]["raw_scores_fingerprint"] == dist.contract["raw_scores_fingerprint"]
-
-    def test_rejects_previous_format_version(self, tmp_path, dist):
-        path = str(tmp_path / "null")
-        write_null_bundle(path, dist)
-        manifest = tmp_path / "null" / "manifest.toml"
-        manifest.write_text(manifest.read_text().replace("format_version = 11", "format_version = 10"))
-        with pytest.raises(ModelFormatError):
-            read_null_bundle(path)
-
-    def test_rejects_removed_metric(self, tmp_path, dist):
-        path = str(tmp_path / "null")
-        write_null_bundle(path, dist)
-        manifest = tmp_path / "null" / "manifest.toml"
-        manifest.write_text(manifest.read_text().replace('metric = "jaccard"', 'metric = "co"'))
-        with pytest.raises(ModelFormatError):
-            read_null_bundle(path)
-
-    def test_raw_fingerprint_validated(self, tmp_path, dist):
-        path = str(tmp_path / "null")
-        write_null_bundle(path, dist)
-        scores_path = os.path.join(path, "data", "raw_null_scores.npy")
-        # corrupt a payload byte -> checksum mismatch
-        with open(scores_path, "r+b") as f:
-            f.seek(-8, 2)
-            b = f.read(1)
-            f.seek(-1, 1)
-            f.write(bytes([b[0] ^ 0xFF]))
-        with pytest.raises(ModelFormatError):
-            read_null_bundle(path)
-
-    def test_rejects_empty_null_distribution(self, tmp_path, dist):
-        path = str(tmp_path / "null")
-        write_null_bundle(path, dist)
-        manifest = tmp_path / "null" / "manifest.toml"
-        manifest.write_text(manifest.read_text().replace("n_null = 20", "n_null = 0"))
-        with pytest.raises(ModelFormatError, match="n_null"):
-            read_null_bundle(path)
-
-    def test_rejects_non_finite(self, tmp_path, dist):
-        with pytest.raises(ValueError, match="raw_scores must be finite"):
-            NullDistribution(
-                strategy=dist.strategy,
-                metric=dist.metric,
-                raw_scores=np.array([1.0, np.nan]),
-                pairs=dist.pairs[:2],
-                n_null=2,
-                n_models=dist.n_models,
-                shuffle=dist.shuffle,
-                seed=dist.seed,
-                sampling_version=dist.sampling_version,
-                model_collection_fingerprint=dist.model_collection_fingerprint,
-                sequence_fingerprint=dist.sequence_fingerprint,
-                background_fingerprint=dist.background_fingerprint,
-                contract=dict(dist.contract),
-            )
-
-    def test_rejects_stale_raw_fingerprint(self, tmp_path, dist):
-        with pytest.raises(ValueError, match="fingerprint"):
-            replace(dist, contract={**dist.contract, "raw_scores_fingerprint": "0" * 64})
 
 
 def test_model_bundle_roundtrips_non_bmp_name(tmp_path):

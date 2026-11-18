@@ -1,6 +1,7 @@
 """A third-party custom MotifModel using only public imports (DoD requirement)."""
 
 import numpy as np
+import jax.numpy as jnp
 import pytest
 
 from mimosa import (
@@ -38,24 +39,9 @@ class ShiftedPWM(MotifModel):
     def right_context(self):
         return 0
 
-    def scan_into(self, sequence, forward, reverse, /):
-        w = self._weights
-        n_pos = forward.shape[0]
-        for pos in range(n_pos):
-            total = 0.0
-            for term in range(self.motif_length):
-                total += float(w[sequence[pos + 1 + term], term])
-            forward[pos] = total
-        for pos in range(n_pos):
-            total = 0.0
-            for term in range(self.motif_length):
-                base = sequence[pos + 1 + self.motif_length - 1 - term]
-                if base == 4:
-                    base = 4
-                else:
-                    base = 3 - base
-                total += float(w[base, term])
-            reverse[pos] = total
+    def score_sites(self, windows):
+        weights = jnp.asarray(self._weights)
+        return jnp.sum(weights[windows[:, 1:], jnp.arange(self.motif_length)], axis=1)
 
 
 @pytest.fixture
@@ -90,16 +76,17 @@ class TestCustomModel:
                 # padded[q..q+10] == batch[q-1..q+9]; custom[p] == batch[p+1..p+11]
                 # -> q = p + 2
                 np.testing.assert_allclose(cus_fwd[i], ref_fwd[i][2 : 2 + n_cus], atol=1e-4)
-                np.testing.assert_allclose(cus_rev[i], ref_rev[i][2 : 2 + n_cus], atol=1e-4)
+                np.testing.assert_allclose(cus_rev[i], ref_rev[i][1 : 1 + n_cus], atol=1e-4)
 
     def test_compare_custom_vs_builtin(self, pwm, batch):
         custom = ShiftedPWM(pwm)
         result = compare(custom, pwm, batch, min_logerr=2.0)
         assert result.query == "shifted-" + pwm.name
         assert result.target == pwm.name
-        # Circular profiles are indexed by site start, so the shift is zero.
+        # Asymmetric context is reversed on the minus strand, so its perfect
+        # alignment is one position left of the plus-strand alignment.
         assert float(result.score) == pytest.approx(1.0, abs=1e-3)
-        assert result.offset == 0
+        assert (result.orientation, result.offset) in (("++", 0), ("--", -1))
 
     def test_sites_via_custom(self, pwm, batch):
         custom = ShiftedPWM(pwm)

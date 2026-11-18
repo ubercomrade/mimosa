@@ -6,7 +6,7 @@ import numpy as np
 
 from ..arrays import RaggedArray, StrandPair
 from ..errors import ModelFormatError
-from ..models import MotifModel, site_start_offset
+from ..models import MotifModel, site_start_offset, strict_integer
 from .anchors import (
     DEFAULT_MIN_LOGERR,
     AnchorCSR,
@@ -14,9 +14,7 @@ from .anchors import (
     parse_min_logerr,
 )
 from .normalization import (
-    HybridEmpiricalLogTail,
-    _fit_exact,
-    normalize_bundle,
+    EmpiricalLogTail,
     normalization_fingerprint,
 )
 
@@ -36,6 +34,30 @@ def _all_finite(values, chunk_size=1 << 20):
         np.all(np.isfinite(values[start : start + chunk_size]))
         for start in range(0, values.size, chunk_size)
     )
+
+
+def _normalize_with_jax(raw, calibration=None):
+    """Normalize a strand bundle without changing global JAX precision."""
+    import jax
+    import jax.numpy as jnp
+
+    from ..backend import normalize_exact
+
+    def values(bundle):
+        forward, reverse = bundle.forward.data, bundle.reverse.data
+        return forward if bundle.forward is bundle.reverse else np.concatenate((forward, reverse))
+
+    raw_values = values(raw)
+    calibration_values = raw_values if calibration is None else values(calibration)
+    with jax.enable_x64(True):
+        normalized = np.array(
+            normalize_exact(jnp.asarray(raw_values), jnp.asarray(calibration_values)),
+            dtype=np.float32, copy=True,
+        )
+    fwd_size = raw.forward.data.size
+    fwd = RaggedArray(normalized[:fwd_size], raw.forward.offsets)
+    rev = fwd if raw.forward is raw.reverse else RaggedArray(normalized[fwd_size:], raw.reverse.offsets)
+    return StrandPair(fwd, rev)
 
 
 class ScoreProfile:
@@ -119,11 +141,11 @@ class PreparedProfile:
             or not all(isinstance(anchor_set, AnchorCSR) for anchor_set in anchors)
         ):
             raise TypeError("prepared profile anchors must be a pair of AnchorCSR values.")
-        if (
-            isinstance(site_start_offset, bool)
-            or not isinstance(site_start_offset, (int, np.integer))
-            or site_start_offset < 0
-        ):
+        try:
+            site_start_offset = strict_integer(site_start_offset, "site_start_offset")
+        except TypeError as exc:
+            raise ValueError("site_start_offset must be a non-negative integer.") from exc
+        if site_start_offset < 0:
             raise ValueError("site_start_offset must be a non-negative integer.")
         if not isinstance(circular, (bool, np.bool_)):
             raise TypeError("circular must be a boolean.")
@@ -156,7 +178,7 @@ class PreparedProfile:
         self.bundle = bundle
         self.anchors = anchors
         self.min_logerr = threshold
-        self.normalization = normalization if normalization is not None else HybridEmpiricalLogTail()
+        self.normalization = normalization if normalization is not None else EmpiricalLogTail()
         try:
             normalization_fingerprint(self.normalization)
         except ValueError as exc:
@@ -188,6 +210,7 @@ def prepare_profile(model_or_scores, sequences=None, *, background=None, min_log
     ``compare_many`` require; the default linear layout serves other tools.
     The returned ``PreparedProfile`` is immutable: to change ``min_logerr``,
     prepare the profile again.
+    Normalization uses a threshold-independent exact empirical table.
     """
     return _prepare_profile(
         model_or_scores,
@@ -223,7 +246,7 @@ def _prepare_profile(
     circular = bool(circular)
     threshold = parse_min_logerr(min_logerr)
     if normalization is None:
-        normalization = HybridEmpiricalLogTail()
+        normalization = EmpiricalLogTail()
 
     if cache is not None:
         from ..cache import _cached_prepared_profile
@@ -253,16 +276,16 @@ def _prepare_profile(
     elif isinstance(model_or_scores, MotifModel):
         if sequences is None:
             raise ValueError("motif prepared profiles require comparison sequences.")
-        from ..scan import _scan_batch_into
+        from ..scan import _scan_batch
 
-        raw = _scan_batch_into(model_or_scores, sequences, "both", circular)
+        raw = _scan_batch(model_or_scores, sequences, "both", circular)
         name = model_or_scores.name
         profile_site_start_offset = (
             0 if circular else site_start_offset(model_or_scores)
         )
         bg = sequences if background is None else background
         if bg is not sequences:
-            bg_raw = _scan_batch_into(model_or_scores, bg, "both", circular)
+            bg_raw = _scan_batch(model_or_scores, bg, "both", circular)
             calibration = bg_raw
             del bg_raw
     else:
@@ -270,14 +293,9 @@ def _prepare_profile(
             "model_or_scores must be a ScoreProfile or a MotifModel."
         )
 
-    table = _fit_exact(normalization, raw if calibration is None else calibration)
-    del calibration
-    norm_bundle = normalize_bundle(
-        table,
-        raw,
-        in_place=isinstance(model_or_scores, MotifModel),
-    )
-    del raw, table
+    normalization_fingerprint(normalization)
+    norm_bundle = _normalize_with_jax(raw, calibration)
+    del raw, calibration
     if cache is not None:
         from ..cache import _store_normalized_profile
 

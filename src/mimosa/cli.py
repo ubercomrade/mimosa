@@ -14,16 +14,15 @@ from . import __version__
 from .arrays import EncodedSequences
 from .cache import Cache, clearcache
 from .errors import MimosaError
-from .io.bundles import write_null_bundle
 from .io.fasta import MAX_FASTA_TOTAL_BASES, read_fasta, read_scores
 from .io.readers import read_model
-from .models import PWM, BaMM, Dimont, SiteGA, Slim
+from .models import PWM, BaMM, Dimont, Slim
 from .profiles.prepared import ScoreProfile
 
 MODEL_TYPE_MAP = {
     "pwm": PWM,
     "bamm": BaMM,
-    "sitega": SiteGA,
+    # "sitega": SiteGA,  # Temporarily unavailable.
     "dimont": Dimont,
     "slim": Slim,
 }
@@ -66,12 +65,18 @@ def _validate_generated_dimensions(num_sequences, seq_length):
         )
 
 
-def _read_typed_model(path, model_type, background=0.25):
+def _read_typed_model(path, model_type, background=0.25, order=None):
+    if order is not None and model_type != "bamm":
+        raise MimosaError("an explicit order is supported only for BaMM input.")
     if model_type == "scores":
         return read_scores(path)
     if model_type not in MODEL_TYPE_MAP:
         raise MimosaError(f"unknown model type: {model_type}")
     kwargs = {"background": background}
+    if order is not None:
+        if order < 0:
+            raise MimosaError("BaMM order must be non-negative.")
+        kwargs["order"] = order
     if model_type != "pwm" and not Path(path).is_dir():
         kwargs["format"] = model_type
     model = read_model(path, **kwargs)
@@ -80,6 +85,8 @@ def _read_typed_model(path, model_type, background=0.25):
         raise MimosaError(
             f"model at '{path}' is {type(model).__name__}, not the requested {model_type} type."
         )
+    if order is not None and model.order != order:
+        raise MimosaError(f"model at '{path}' does not provide the requested BaMM order {order}.")
     return model
 
 
@@ -98,10 +105,10 @@ def _resolve_sequences(fasta_path, num_sequences, seq_length, seed):
 def _comparison_inputs(args):
     query_type = args.query_type
     target_type = args.target_type
-    query = _read_typed_model(args.query, query_type, args.background_freq)
+    query = _read_typed_model(args.query, query_type, args.background_freq, args.query_order)
     target_paths = args.targets if isinstance(args.targets, list) else [args.targets]
     targets = [
-        _read_typed_model(path, target_type, args.background_freq)
+        _read_typed_model(path, target_type, args.background_freq, args.target_order)
         for path in target_paths
     ]
     cache = Cache(args.cache_dir) if args.cache_dir else None
@@ -117,39 +124,84 @@ def _comparison_inputs(args):
     return query, targets, sequences, bg_sequences, cache
 
 
-def _annotate_comparison_results(results, args, sequences, background):
+def _report_mc_storage(args, sequences, targets):
+    from .monte_carlo import _target_storage_estimate
+
+    estimate = _target_storage_estimate(sequences, targets)
+    if args.mc_storage == "disk" or (
+        args.mc_storage == "auto" and estimate > args.mc_memory_limit_mib * 1024**2
+    ):
+        print(f"Monte Carlo temporary target profiles: approximately {estimate} bytes "
+              f"in {args.mc_temp_dir or 'the default temporary directory'}.", file=sys.stderr)
+
+
+def _mc_options(args, background):
+    return dict(k=args.mc_replicates, seed=args.mc_seed, group=args.mc_group,
+                min_logerr=args.min_logerr, search_range=args.search_range, background=background,
+                batch_size=args.mc_batch_size, storage=args.mc_storage,
+                memory_limit=args.mc_memory_limit_mib * 1024**2, temp_dir=args.mc_temp_dir,
+                comparison_block_size=args.mc_comparison_block_size, algorithm=args.mc_algorithm,
+                prefetch=args.mc_prefetch, anchor_memory_limit=args.mc_anchor_memory_mib * 1024**2)
+
+
+def _annotate_comparison_results(results, args, sequences, background, models=None, mc_result=None):
     if not args.pvalue:
         return results
-    if not args.null_distribution:
-        raise MimosaError("--pvalue requires an explicit --null-distribution bundle.")
-    from .io.bundles import read_null_bundle
-    from .statistics import NullDistribution, annotate_results, check_null_compatibility
+    from .monte_carlo import direct_mc
+    from .statistics import AnnotatedResult, adjusted_pvalues, evalue
 
-    dist = NullDistribution(**read_null_bundle(args.null_distribution))
-    from .profiles.normalization import HybridEmpiricalLogTail, normalization_fingerprint
+    if mc_result is None:
+        _report_mc_storage(args, sequences, models[1:])
+        mc_result = direct_mc(models[0], models[1:], sequences, **_mc_options(args, background))
+    scores, counts, pvalues = mc_result
+    pvalues = pvalues[0]
+    adjusted = adjusted_pvalues(pvalues)
+    effective = (len(results) if args.effective_number_of_targets is None
+                 else args.effective_number_of_targets)
+    annotated = []
+    for index, result in enumerate(results):
+        if result.score != scores[0, index]:
+            raise MimosaError("Monte Carlo observed score differs from comparison score.")
+        annotated.append(AnnotatedResult(
+            result, p_value=float(pvalues[index]), adj_p_value=float(adjusted[index]),
+            e_value=evalue(pvalues[index], effective), mc_replicates=args.mc_replicates,
+            mc_exceedances=int(counts[0, index]), mc_seed=args.mc_seed,
+            mc_group=args.mc_group, mc_algorithm=args.mc_algorithm,
+        ))
+    return annotated
 
-    if dist.contract["normalization_version"] != normalization_fingerprint(
-        HybridEmpiricalLogTail()
-    ):
-        raise MimosaError("null distribution normalization is incompatible with this comparison.")
-    check_null_compatibility(
-        dist,
-        sequences=sequences,
-        background=background,
-        search_range=args.search_range,
-        min_logerr=args.min_logerr,
+
+def _compare_with_monte_carlo(query, targets, sequences, background, args, cache=None):
+    from .compare import ComparisonResult, _warn_if_few_positions_count
+    from .monte_carlo import _direct_mc_with_details
+    from .profiles.alignment import METRIC_NAME, ORIENTATION_PAIRS
+    from .profiles.anchors import parse_min_logerr
+
+    if cache is None:
+        _report_mc_storage(args, sequences, targets)
+    scores, counts, pvalues, details = _direct_mc_with_details(
+        query, targets, sequences, cache=cache, **_mc_options(args, background),
     )
-    return annotate_results(
-        results, dist, effective_number_of_targets=args.effective_number_of_targets
+    threshold = parse_min_logerr(args.min_logerr)
+    _warn_if_few_positions_count(query.name, sequences.data.size, threshold)
+    results = [
+        ComparisonResult(query.name, target.name, scores[0, i], shift,
+                         ORIENTATION_PAIRS[orientation][0], METRIC_NAME, sites,
+                         search_range=args.search_range, min_logerr=threshold)
+        for i, (target, (shift, orientation, sites)) in enumerate(zip(targets, details))
+    ]
+    return _annotate_comparison_results(
+        results, args, sequences, background, mc_result=(scores, counts, pvalues),
     )
 
 
 def _run_compare(args):
     from .compare import compare
-    from numba import set_num_threads
-
-    set_num_threads(args.numba_threads)
     query, targets, sequences, background, cache = _comparison_inputs(args)
+    if args.pvalue:
+        result = _compare_with_monte_carlo(query, targets, sequences, background, args, cache)[0]
+        print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+        return 0
     result = compare(
         query,
         targets[0],
@@ -164,6 +216,7 @@ def _run_compare(args):
         args,
         sequences,
         background,
+        models=[query, *targets],
     )[0]
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     return 0
@@ -171,10 +224,11 @@ def _run_compare(args):
 
 def _run_compare_many(args):
     from .compare import compare_many
-    from numba import set_num_threads
-
-    set_num_threads(args.numba_threads)
     query, targets, sequences, background, cache = _comparison_inputs(args)
+    if args.pvalue:
+        results = _compare_with_monte_carlo(query, targets, sequences, background, args, cache)
+        print(json.dumps([result.to_dict() for result in results], indent=2, sort_keys=True))
+        return 0
     results = compare_many(
         query,
         targets,
@@ -183,56 +237,15 @@ def _run_compare_many(args):
         min_logerr=args.min_logerr,
         background=background,
         cache=cache,
-        total_threads=args.total_threads,
-        inner_threads=args.numba_threads,
     )
     results = _annotate_comparison_results(
         results,
         args,
         sequences,
         background,
+        models=[query, *targets],
     )
     print(json.dumps([result.to_dict() for result in results], indent=2, sort_keys=True))
-    return 0
-
-
-def _run_build_null(args):
-    from .statistics import build_null
-
-    if not os.path.isdir(args.motifs):
-        raise MimosaError("motif collection path must be a directory.")
-    files = sorted(
-        filename for filename in os.listdir(args.motifs) if filename.lower().endswith(".meme")
-    )
-    if not files:
-        raise MimosaError(f"no pwm files found in {args.motifs}.")
-    models = [_read_typed_model(os.path.join(args.motifs, filename), "pwm") for filename in files]
-    cache = Cache(args.cache_dir) if args.cache_dir else None
-    sequences = _resolve_sequences(args.fasta, args.num_sequences, args.seq_length, args.seed)
-    background = read_fasta(args.background)[0] if args.background else None
-    dist = build_null(
-        models,
-        sequences=sequences,
-        background=background,
-        n_samples=args.num_samples,
-        seed=args.seed,
-        search_range=args.search_range,
-        min_logerr=args.min_logerr,
-        cache=cache,
-    )
-    write_null_bundle(args.output, dist)
-    summary = {
-        "output": args.output,
-        "n_models": len(models),
-        "n_null": dist.n_null,
-        "shuffle": True,
-        "seed": dist.seed,
-        "metric": dist.metric,
-        "strategy": dist.strategy,
-        "estimator": "empirical_upper_tail",
-        "normalization": dist.contract["normalization_version"],
-    }
-    print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
 
 
@@ -265,15 +278,21 @@ def build_parser():
         )
         p.add_argument("--query-type", required=True, choices=PROFILE_MODEL_TYPES)
         p.add_argument("--target-type", required=True, choices=PROFILE_MODEL_TYPES)
-        if many:
-            p.add_argument("--total-threads", type=int, default=1)
-        p.add_argument(
-            "--numba-threads", type=int, choices=range(1, 5), default=1
-        )
+        p.add_argument("--query-order", type=int, help="BaMM order used to read the query")
+        p.add_argument("--target-order", type=int, help="BaMM order used to read the targets")
         p.add_argument("--search-range", type=int, default=5)
         p.add_argument("--min-logerr", type=float, default=4.0)
-        p.add_argument("--fasta")
-        p.add_argument("--background")
+        p.add_argument(
+            "--fasta",
+            help="FASTA sequences scanned by both query and target models for comparison "
+                 "(treated as circular); if omitted, generate uniform random DNA using "
+                 "--num-sequences, --seq-length and --seed",
+        )
+        p.add_argument(
+            "--background",
+            help="FASTA sequences used only to calibrate raw scores to empirical logERR; "
+                 "if omitted, calibrate on the comparison sequences from --fasta or generated DNA",
+        )
         p.add_argument(
             "--num-sequences",
             type=_bounded_positive_integer("num-sequences", MAX_GENERATED_SEQUENCES),
@@ -285,46 +304,52 @@ def build_parser():
             default=100,
         )
         p.add_argument("--seed", type=int, default=127)
-        p.add_argument("--background-freq", type=float, default=0.25)
-        p.add_argument("--cache-dir")
-        p.add_argument("--null-distribution")
+        p.add_argument(
+            "--background-freq", type=float, default=0.25,
+            help="uniform per-base background frequency for PFM-to-PWM conversion "
+                 "(default: 0.25; only a uniform background is supported); "
+                 "does not control --background sequences or generated DNA",
+        )
+        p.add_argument(
+            "--cache-dir",
+            help="directory for persistent prepared-profile disk caching across runs "
+                 "(disabled if omitted); with --pvalue, reuse observed profiles, not randomized replicates",
+        )
         p.add_argument(
             "--effective-number-of-targets",
             type=_bounded_positive_integer("effective-number-of-targets", MAX_GENERATED_SEQUENCES),
         )
         p.add_argument("--pvalue", action="store_true")
+        p.add_argument("--mc-replicates", type=_bounded_positive_integer("mc-replicates", 1_000_000), default=1000)
+        p.add_argument("--mc-seed", type=int, default=127)
+        p.add_argument("--mc-group", choices=("full", "gc"), default="full")
+        p.add_argument("--mc-batch-size", type=_bounded_positive_integer("mc-batch-size", 1_000_000),
+                       default=8, help="random query profiles held on device at once")
+        p.add_argument("--mc-comparison-block-size",
+                       type=_bounded_positive_integer("mc-comparison-block-size", 1_000_000),
+                       default=8, help="query profiles compared in one vectorized block")
+        p.add_argument("--mc-algorithm", choices=("dense", "sparse"), default="sparse",
+                       help="comparison kernel; sparse uses threshold anchors with dense fallback")
+        p.add_argument("--mc-prefetch", type=int, default=0,
+                       help="number of disk-backed target profiles to prefetch on host (0-64)")
+        p.add_argument("--mc-anchor-memory-mib", type=int, default=256,
+                       help="host memory budget for target anchors (default 256 MiB; 0 rebuilds)")
+        p.add_argument("--mc-storage", choices=("auto", "memory", "disk"), default="auto",
+                       help="storage for temporary target profiles")
+        p.add_argument("--mc-memory-limit-mib",
+                       type=_bounded_positive_integer("mc-memory-limit-mib", 1_000_000),
+                       default=256, help="target-profile memory threshold for auto storage")
+        p.add_argument("--mc-temp-dir", help="parent directory for temporary Monte Carlo profiles")
 
     add_compare_arguments("compare", False)
     add_compare_arguments("compare-many", True)
 
-    p = sub.add_parser("build-null", help="build a null distribution from motif comparisons")
-    p.add_argument("motifs", help="motif collection path")
-    p.add_argument("--output", required=True)
-    p.add_argument("--fasta")
-    p.add_argument("--background")
-    p.add_argument(
-        "--num-sequences",
-        type=_bounded_positive_integer("num-sequences", MAX_GENERATED_SEQUENCES),
-        default=10_000,
-    )
-    p.add_argument(
-        "--seq-length",
-        type=_bounded_positive_integer("seq-length", MAX_GENERATED_SEQUENCE_LENGTH),
-        default=100,
-    )
-    p.add_argument("--seed", type=int, default=127)
-    p.add_argument(
-        "--num-samples",
-        type=_bounded_positive_integer("num-samples", 1_000_000),
-        default=2000,
-    )
-    p.add_argument("--search-range", type=int, default=5)
-    p.add_argument("--min-logerr", type=float, default=4.0)
-    p.add_argument("--cache-dir")
-
     p = sub.add_parser("cache", help="manage the disk cache")
     p.add_argument("operation", choices=("clear",), help="cache operation (clear)")
-    p.add_argument("--cache-dir", default=".mimosa-cache")
+    p.add_argument(
+        "--cache-dir", default=".mimosa-cache",
+        help="directory containing the prepared-profile cache to clear (default: .mimosa-cache)",
+    )
     return parser
 
 
@@ -334,10 +359,12 @@ def _validate_cli_arguments(args):
     scores_only = args.query_type == args.target_type == "scores"
     if scores_only and (args.fasta is not None or args.background is not None):
         raise MimosaError("--fasta and --background are not used for scores-only comparison.")
-    if not args.pvalue and args.null_distribution is not None:
-        raise MimosaError("--null-distribution requires --pvalue.")
     if not args.pvalue and args.effective_number_of_targets is not None:
         raise MimosaError("--effective-number-of-targets requires --pvalue.")
+    if args.pvalue and (args.query_type == "scores" or args.target_type == "scores"):
+        raise MimosaError("--pvalue requires motif models, not score profiles.")
+    if args.mc_seed < 0:
+        raise MimosaError("--mc-seed must be non-negative.")
 
 
 def main(argv=None):
@@ -347,13 +374,7 @@ def main(argv=None):
         if args.command == "compare":
             return _run_compare(args)
         if args.command == "compare-many":
-            if args.total_threads < 1:
-                raise ValueError("total_threads must be a positive integer.")
-            if args.total_threads % args.numba_threads:
-                raise ValueError("total_threads must be divisible by numba-threads.")
             return _run_compare_many(args)
-        if args.command == "build-null":
-            return _run_build_null(args)
         if args.command == "cache":
             return _run_cache(args)
         raise MimosaError(f"unknown command: {args.command}")

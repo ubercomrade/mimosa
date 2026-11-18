@@ -44,10 +44,12 @@ The scan index is the start of the complete scoring window. Forward and reverse
 scores at one scan index refer to the same physical interval. Only score
 orientation and returned reverse-strand bases differ.
 
-Comparison uses a circular layout instead. Each non-empty sequence is wrapped
-with `left_context` bases on the left and `window_size - left_context - 1`
-bases on the right before scanning, so a sequence of length `L` yields exactly
-`L` values per strand and the profile index is the site start:
+Comparison uses a circular layout instead. Built-in sequence kernels wrap
+indices on the ring. Generic window scorers receive each non-empty sequence
+wrapped with `left_context` bases on the left and
+`window_size - left_context - 1` bases on the right. In either case a sequence
+of length `L` yields exactly `L` values per strand, and the profile index is
+the site start:
 
 ```text
 n_positions(sequence_length) = sequence_length
@@ -59,7 +61,6 @@ For built-in models:
 | Model | Left context | Right context |
 |---|---:|---:|
 | PWM | 0 | 0 |
-| SiteGA | 0 | 0 |
 | BaMM | `order` | `order` |
 | Dimont | `order` | `order` |
 | Slim | `order` | `order` |
@@ -71,8 +72,8 @@ complete model scoring window; anchor positions and comparison offsets address
 the physical motif start, excluding left context. Thus equivalent PWM and
 higher-order models align with offset `0` even when their scoring windows have
 different context. A comparison offset `s` pairs query site start `i` with
-target site start `(i + s) mod L`, so a positive offset moves the target site
-right relative to the query. Site extraction returns a zero-based, half-open
+target site start `(i + s) mod L`, so a positive offset selects a target site
+to the right of the query site, with wraparound. Site extraction returns a zero-based, half-open
 physical motif interval.
 
 `SiteCollection.strands` uses `0` for forward and `1` for reverse. Reverse
@@ -81,7 +82,13 @@ sites are reverse-complemented before PFM reconstruction.
 ## Numeric types
 
 - Encoded bases use `uint8`.
-- Offsets and indices use `int64` in memory.
+- Ragged offsets and site-collection indices use `int64`; anchor positions
+  use `int32` when the row geometry fits and `int64` otherwise.
 - Scan and normalized profile values use `float32`.
 - Weighted Jaccard sums accumulate in `float64` before the result score is stored as `float32`.
 - Model bundles store raw little-endian Float32 arrays.
+
+The built-in JAX sequence scan and dense comparison kernels currently support
+at most `2**31 - 1` flattened positions. High-level operations enable required
+Float64 calculations in a local JAX x64 context without changing the global
+setting.

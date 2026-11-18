@@ -27,7 +27,6 @@ from .io.bundles import (
 from .profiles.anchors import collect_both_anchors
 from .profiles.normalization import (
     EmpiricalLogTail,
-    HybridEmpiricalLogTail,
     normalization_fingerprint,
 )
 from .arrays import RaggedArray, StrandPair
@@ -38,8 +37,8 @@ _CACHE_DATA_NAME = "data.bin"
 _CACHE_META_NAME = "meta.toml"
 _CACHE_LOCK_NAME = ".mimosa-cache.lock"
 
-PREPARED_PROFILE_CACHE_FORMAT_VERSION = 7
-PREPARED_PROFILE_ALGORITHM_VERSION = 7
+PREPARED_PROFILE_CACHE_FORMAT_VERSION = 8
+PREPARED_PROFILE_ALGORITHM_VERSION = 9
 _PREPARED_PROFILE_BINARY_MAGIC = b"MIMOSA-PREP-MMAP-1\0"
 _PREPARED_PROFILE_SECTION_NAMES = (
     "forward_scores",
@@ -47,6 +46,8 @@ _PREPARED_PROFILE_SECTION_NAMES = (
     "forward_score_offsets",
     "reverse_score_offsets",
 )
+
+
 class Cache:
     def __init__(self, directory, *, timings=None):
         self.directory = str(directory)
@@ -165,7 +166,7 @@ def _prepared_profile_cache_key(
     else:
         background_part = f"background={sequence_fingerprint(effective_background)}"
     if normalization is None:
-        normalization = HybridEmpiricalLogTail()
+        normalization = EmpiricalLogTail()
     parts = (
         f"source={source_fingerprint}",
         sequence_part,
@@ -304,20 +305,9 @@ def _verify_cache_data(cache, key, path, meta):
 
 
 def _normalization_from_fingerprint(value):
-    if value == "empirical-log-tail-v1":
+    if value == "empirical-log-tail-v2":
         return EmpiricalLogTail()
-    if not value.startswith("hybrid-log-tail-v3;"):
-        return None
-    fields = {}
-    for part in value.split(";")[1:]:
-        if "=" not in part:
-            return None
-        name, item = part.split("=", 1)
-        fields[name] = item
-    try:
-        return HybridEmpiricalLogTail(int(fields["bins"]))
-    except (KeyError, TypeError, ValueError):
-        return None
+    return None
 
 
 def _mapped_profile_section(path, meta, name, expected_dtype, file_size):

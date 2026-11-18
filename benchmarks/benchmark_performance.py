@@ -1,7 +1,7 @@
 """Measure the production compare_many pipeline.
 
-Run from the repository root. The JSON output is machine-readable and reports
-the total budget, per-worker Numba budget, and derived joblib worker count.
+Run from the repository root. Legacy thread-budget arguments are recorded for
+compatibility but do not control JAX execution or target parallelism.
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ def _arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sequence-count", type=int, default=10_000)
     parser.add_argument("--target-counts", default="1,64,128,256")
-    parser.add_argument("--total-threads", default="1,2,4,8")
-    parser.add_argument("--numba-threads", default="1,2,4")
+    parser.add_argument("--total-threads", default="1", help="legacy compatibility argument; does not control JAX")
+    parser.add_argument("--numba-threads", default="1", help="legacy compatibility argument; does not control JAX")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--prepared-only", action="store_true")
     parser.add_argument(
@@ -48,7 +48,7 @@ def _arguments():
     parser.add_argument(
         "--coverage",
         action="store_true",
-        help="include BaMM and SiteGA targets and use a larger background batch",
+        help="include BaMM targets and use a larger background batch",
     )
     parser.add_argument(
         "--skewed-rows",
@@ -118,7 +118,7 @@ def _models(*, coverage=False):
         models.extend(
             (
                 read_model(ROOT / "examples" / "myog.ihbcp"),
-                read_model(ROOT / "examples" / "sitega_stat6.mat"),
+                # read_model(ROOT / "examples" / "sitega_stat6.mat"),  # Disabled.
             )
         )
     return models
@@ -137,7 +137,7 @@ def _targets(models, count, *, coverage=False):
     ]
     if not coverage:
         return pwm_targets
-    return ([models[-2], models[-1]] + pwm_targets)[:count]
+    return ([models[-1]] + pwm_targets)[:count]
 
 
 def _skew_batch(batch, count):
@@ -220,9 +220,6 @@ def _compare_many(models, targets, sequences, background, cache, total_threads, 
 
 
 def _warmup(models, sequences, background, total_threads, inner_threads, threshold):
-    from numba import set_num_threads
-
-    set_num_threads(inner_threads)
     warm_sequences = _repeat_batch(sequences, min(64, len(sequences)))
     _compare_many(
         models,
@@ -246,10 +243,8 @@ def _measure_cache_miss_hot_jit(
     inner_threads,
     threshold,
 ):
-    from numba import set_num_threads
     from mimosa.cache import Cache, clearcache
 
-    set_num_threads(inner_threads)
     shutil.rmtree(cache_path, ignore_errors=True)
     cache_path.mkdir(parents=True)
     cold_cache = Cache(cache_path)
@@ -287,10 +282,8 @@ def _measure_cache_hit_hot_filesystem(
     inner_threads,
     threshold,
 ):
-    from numba import set_num_threads
     from mimosa.cache import Cache, clearcache
 
-    set_num_threads(inner_threads)
     shutil.rmtree(cache_path, ignore_errors=True)
     cache_path.mkdir(parents=True)
     _compare_many(
@@ -328,10 +321,8 @@ def _measure_cache_hit_hot_filesystem(
 
 
 def _measure_prepared(models, targets, sequences, background, total_threads, inner_threads, threshold):
-    from numba import set_num_threads
     from mimosa import compare_many, prepare_profile
 
-    set_num_threads(inner_threads)
     query = prepare_profile(
         models[0], sequences, background=background, min_logerr=threshold, circular=True
     )
@@ -371,10 +362,8 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
     from mimosa.cache import Cache, _cached_mmap_prepared_profile, _store_normalized_profile, prepared_profile_cache_key
     from mimosa.io.bundles import model_fingerprint, sequence_fingerprint
     from mimosa.profiles.anchors import collect_both_anchors
-    from mimosa.profiles.normalization import HybridEmpiricalLogTail, _fit_exact, normalize_bundle
-    from mimosa.parallel import alignment_scratch_bytes
-    from mimosa.profiles.alignment import ProfileConfig
-    from mimosa.scan import _scan_batch_into
+    from mimosa.profiles.prepared import _normalize_with_jax
+    from mimosa.scan import _scan_batch
 
     timings = {}
 
@@ -387,12 +376,11 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
     )
 
     started = time.perf_counter()
-    raw = _scan_batch_into(models[0], sequences, "both", circular=True)
+    raw = _scan_batch(models[0], sequences, "both", circular=True)
     timings["scan"] = time.perf_counter() - started
 
     started = time.perf_counter()
-    table = _fit_exact(HybridEmpiricalLogTail(), raw)
-    normalized = normalize_bundle(table, raw)
+    normalized = _normalize_with_jax(raw)
     timings["normalize"] = time.perf_counter() - started
 
     started = time.perf_counter()
@@ -434,9 +422,6 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
         )
         for target in targets
     ]
-    timings["alignment_parallel_scratch_bytes"] = alignment_scratch_bytes(
-        len(prepared_query.bundle.forward), 2 * ProfileConfig().search_range + 1
-    )
     started = time.perf_counter()
     results = compare_many(
         prepared_query,
@@ -454,11 +439,9 @@ def _phase_timings(models, targets, sequences, background, total_threads, inner_
 
 
 def _measure_cold_jit_cli(total_threads, inner_threads, threshold, root):
-    """Measure the executable in a clean Python process and Numba cache."""
+    """Measure the executable in a clean Python process."""
     cache_path = root / "cache"
     environment = dict(os.environ)
-    environment["NUMBA_CACHE_DIR"] = str(root / "numba")
-    environment["NUMBA_NUM_THREADS"] = str(inner_threads)
     command = [
         sys.executable,
         "-m",
@@ -474,8 +457,6 @@ def _measure_cold_jit_cli(total_threads, inner_threads, threshold, root):
         "examples/foreground.fa",
         "--min-logerr",
         str(threshold),
-        "--numba-threads",
-        str(inner_threads),
         "--cache-dir",
         str(cache_path),
     ]
@@ -513,18 +494,10 @@ def _configurations(args):
     return target_counts, configurations
 
 
-def _configure_numba_environment(configurations):
-    os.environ.setdefault(
-        "NUMBA_CACHE_DIR", str(Path(tempfile.gettempdir()) / "mimosa-numba-cache")
-    )
-    os.environ["NUMBA_NUM_THREADS"] = str(max(inner for _, inner in configurations))
-
-
 def _worker_sample(args):
     target_counts, configurations = _configurations(args)
     if len(target_counts) != 1 or len(configurations) != 1:
         raise SystemExit("worker mode requires exactly one target and thread configuration")
-    _configure_numba_environment(configurations)
 
     if args.worker_mode == "cold_jit_cli":
         total, inner = configurations[0]
@@ -750,7 +723,8 @@ def main():
                 summary = {
                     "total_threads": total,
                     "numba_threads": inner,
-                    "joblib_workers": min(total // inner, target_count),
+                    "joblib_workers": 1,
+                    "thread_budget_controls_execution": False,
                     "target_count": target_count,
                     "min_logerr": threshold,
                     "input_suite": "heterogeneous" if args.coverage else "pwm",
@@ -790,23 +764,6 @@ def main():
                 results.append(summary)
                 _write_benchmark_output(args.output, results)
 
-    serial = {
-        (result["target_count"], result["min_logerr"], mode): result[f"{mode}_wall_s_median"]
-        for result in results
-        if result["total_threads"] == 1 and result["numba_threads"] == 1
-        for mode in modes
-        if mode != "cold_jit_cli"
-        if f"{mode}_wall_s_median" in result
-    }
-    for result in results:
-        for mode in modes:
-            if mode == "cold_jit_cli":
-                continue
-            if f"{mode}_wall_s_median" not in result:
-                continue
-            baseline = serial.get((result["target_count"], result["min_logerr"], mode))
-            if baseline is not None:
-                result[f"{mode}_speedup_vs_serial"] = baseline / result[f"{mode}_wall_s_median"]
     payload = json.dumps(_benchmark_payload(results), indent=2)
     _write_benchmark_output(args.output, results)
     print(payload)

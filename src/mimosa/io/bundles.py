@@ -1,7 +1,7 @@
-"""Portable bundle storage: TOML manifest + raw Float32 blobs (models) and NPY (nulls).
+"""Portable model bundle storage: TOML manifest and raw Float32 blobs.
 
-Reproduces the Julia v2 model bundle layout and the Mimosa v9 null bundle layout
-byte-for-byte, including the `bitstring` fingerprint canonicalization.
+Reproduces the Julia v2 model bundle layout, including the `bitstring`
+fingerprint canonicalization.
 """
 
 from __future__ import annotations
@@ -26,12 +26,10 @@ from ..models import (
     PWM,
     SiteGA,
     Slim,
+    _require_sitega_enabled,
 )
-from ..profiles.alignment import METRIC_NAME
-from ..profiles.anchors import parse_min_logerr
 
 MODEL_FORMAT_VERSION = 2
-NULL_FORMAT_VERSION = 11
 BUNDLE_MANIFEST_NAME = "manifest.toml"
 BUNDLE_DATA_DIR = "data"
 
@@ -72,15 +70,6 @@ def _required_manifest_table(table, key, path, context):
     return value
 
 
-def _required_manifest_bool(table, key, path, context):
-    if key not in table:
-        raise _bundle_error(path, f"{context} is missing '{key}'.")
-    value = table[key]
-    if not isinstance(value, bool):
-        raise _bundle_error(path, f"{context} '{key}' must be a boolean.")
-    return value
-
-
 def _required_manifest_int(table, key, path, context, minimum=-(2**63), maximum=2**63 - 1):
     if key not in table:
         raise _bundle_error(path, f"{context} is missing '{key}'.")
@@ -92,18 +81,6 @@ def _required_manifest_int(table, key, path, context, minimum=-(2**63), maximum=
     if value > maximum:
         raise _bundle_error(path, f"{context} '{key}' must be <= {maximum}.")
     return value
-
-
-def _required_manifest_float(table, key, path, context):
-    if key not in table:
-        raise _bundle_error(path, f"{context} is missing '{key}'.")
-    value = table[key]
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise _bundle_error(path, f"{context} '{key}' must be numeric.")
-    converted = float(value)
-    if not np.isfinite(converted):
-        raise _bundle_error(path, f"{context} '{key}' must be finite.")
-    return converted
 
 
 def _required_manifest_floats(table, key, path, context, expected_length=None):
@@ -301,21 +278,6 @@ def _read_raw_f32_2d(path, expected_shape, expected_bytes, expected_checksum=Non
     return data
 
 
-def _read_npy(path, expected_dtype, expected_shape):
-    try:
-        arr = np.load(path, allow_pickle=False)
-    except Exception as e:
-        raise _bundle_error(path, f"NPY read failed: {e}.")
-    if not arr.flags["C_CONTIGUOUS"]:
-        raise _bundle_error(path, "NPY fortran_order does not match the row-major bundle contract.")
-    dtype = "<f8" if arr.dtype == np.float64 else ("<u4" if arr.dtype == np.uint32 else str(arr.dtype))
-    if dtype != expected_dtype:
-        raise _bundle_error(path, f"NPY dtype '{dtype}' does not match '{expected_dtype}'.")
-    if list(arr.shape) != list(expected_shape):
-        raise _bundle_error(path, "NPY shape does not match the manifest.")
-    return arr
-
-
 _TOML_ESCAPES = {'"': '\\"', "\\": "\\\\", "\b": "\\b", "\t": "\\t", "\n": "\\n", "\f": "\\f", "\r": "\\r"}
 
 
@@ -456,6 +418,7 @@ def model_fingerprint(model):
             f"BaMM{{Float32, Matrix{{Float32}}}}|{model.name}|{body}"
         )
     if isinstance(model, SiteGA):
+        _require_sitega_enabled()
         body = content_fingerprint_float32(model.weights) + f"|ml={model.motif_length}"
         return content_fingerprint_string(
             f"SiteGA{{Float32, Matrix{{Float32}}}}|{model.name}|{body}"
@@ -521,6 +484,7 @@ def _bundle_spec(model):
             (("order", model.order), ("motif_length", model.motif_length)),
         )
     if isinstance(model, SiteGA):
+        _require_sitega_enabled()
         return "sitega", "representation", model.weights, (("motif_length", model.motif_length),)
     if isinstance(model, Dimont):
         return (
@@ -637,6 +601,7 @@ def _read_bamm_bundle(path, manifest, name):
 
 
 def _read_sitega_bundle(path, manifest, name):
+    _require_sitega_enabled()
     motif_length = _required_manifest_int(manifest, "motif_length", path, "SiteGA manifest", minimum=1, maximum=10_000)
     _validate_declared_model_shape(path, manifest, 25, motif_length, "SiteGA")
     representation = _read_model_array(path, manifest, "representation")
@@ -674,216 +639,3 @@ def read_model_bundle(path):
     if kind == "slim":
         return _read_slim_bundle(path, manifest, name)
     raise _bundle_error(path, f"unknown model kind '{kind}'.")
-
-
-# ── Null bundle write/read ───────────────────────────────────────────────────
-
-def write_null_bundle(path, dist):
-    if dist.n_null <= 0:
-        raise InvariantError("null distribution n_null must be positive.")
-    if dist.n_null != len(dist.raw_scores):
-        raise InvariantError("null distribution n_null does not match raw_scores length.")
-    if len(dist.pairs) != dist.n_null:
-        raise InvariantError("null distribution pairs do not match n_null.")
-    if dist.n_models < 2:
-        raise InvariantError("null distribution requires at least two source models.")
-    if dist.seed < 0:
-        raise InvariantError("null distribution seed must be non-negative.")
-    if not dist.sampling_version:
-        raise InvariantError("null distribution sampling_version must not be empty.")
-    if not dist.strategy or not dist.metric:
-        raise InvariantError("null distribution strategy/metric must not be empty.")
-    if dist.strategy != "profile":
-        raise InvariantError("only profile null distributions are supported.")
-    if dist.metric != METRIC_NAME:
-        raise InvariantError(f"unsupported profile metric '{dist.metric}'.")
-    if not np.all(np.isfinite(dist.raw_scores)):
-        raise InvariantError("null distribution raw_scores contain non-finite values.")
-    actual_raw_scores_fingerprint = content_fingerprint_float64(dist.raw_scores)
-    if dist.contract.get("raw_scores_fingerprint") != actual_raw_scores_fingerprint:
-        raise InvariantError("null distribution raw_scores fingerprint does not match the payload.")
-    for index, pair in enumerate(dist.pairs):
-        if not isinstance(pair, (tuple, list)) or len(pair) < 2:
-            raise InvariantError(f"null distribution pair {index} must contain two labels.")
-        if not all(isinstance(label, str) and label for label in pair[:2]):
-            raise InvariantError(f"null distribution pair {index} labels must be non-empty strings.")
-    _bundle_shape_payload_bytes([len(dist.raw_scores)], "<f8", str(path), "raw_null_scores array")
-
-    def writer(stage):
-        npy_path = os.path.join(stage, BUNDLE_DATA_DIR, "raw_null_scores.npy")
-        np.save(npy_path, np.ascontiguousarray(dist.raw_scores, dtype=np.float64))
-        checksum = _file_sha256(npy_path)
-        labels = list(dict.fromkeys(label for pair in dist.pairs for label in pair[:2]))
-        label_indices = {label: index + 1 for index, label in enumerate(labels)}
-        pair_indices = np.empty((dist.n_null, 2), dtype=np.uint32)
-        for index, pair in enumerate(dist.pairs):
-            pair_indices[index, 0] = label_indices[pair[0]]
-            pair_indices[index, 1] = label_indices[pair[1]]
-        pairs_path = os.path.join(stage, BUNDLE_DATA_DIR, "pair_indices.npy")
-        np.save(pairs_path, np.ascontiguousarray(pair_indices))
-        pairs_checksum = _file_sha256(pairs_path)
-        manifest = {
-            "format": "mimosa",
-            "format_version": NULL_FORMAT_VERSION,
-            "kind": "null_distribution",
-            "strategy": dist.strategy,
-            "metric": dist.metric,
-            "estimator": "empirical_upper_tail",
-            "n_null": dist.n_null,
-            "n_models": dist.n_models,
-            "shuffle": dist.shuffle,
-            "seed": dist.seed,
-            "sampling_version": dist.sampling_version,
-            "pair_labels": labels,
-            "compatibility": {
-                "format_version": NULL_FORMAT_VERSION,
-                "strategy": dist.strategy,
-                "metric": dist.metric,
-                "sequence_fingerprint": dist.sequence_fingerprint,
-                "background_fingerprint": dist.background_fingerprint,
-                "model_collection_fingerprint": dist.model_collection_fingerprint or "none",
-                    "shuffle": dist.shuffle,
-                "sampling_version": dist.sampling_version,
-                "search_range": dist.contract["search_range"],
-                "min_logerr": float(dist.contract["min_logerr"]),
-                "normalization_version": dist.contract["normalization_version"],
-                "alignment_version": dist.contract["alignment_version"],
-                "raw_scores_fingerprint": dist.contract["raw_scores_fingerprint"],
-            },
-            "arrays": {
-                "raw_null_scores": {
-                    "file": "data/raw_null_scores.npy",
-                    "dtype": "<f8",
-                    "shape": [len(dist.raw_scores)],
-                    "checksum": f"sha256:{checksum}",
-                },
-                "pair_indices": {
-                    "file": "data/pair_indices.npy",
-                    "dtype": "<u4",
-                    "shape": [dist.n_null, 2],
-                    "checksum": f"sha256:{pairs_checksum}",
-                },
-            },
-        }
-        _write_bundle_manifest(os.path.join(stage, BUNDLE_MANIFEST_NAME), manifest)
-
-    _with_bundle_write(path, writer)
-
-
-def read_null_bundle(path):
-    manifest = _read_bundle_manifest(path, NULL_FORMAT_VERSION, expected_kind="null_distribution")
-    strategy = _required_manifest_string(manifest, "strategy", path, "null manifest")
-    if strategy != "profile":
-        raise _bundle_error(path, f"unsupported null strategy '{strategy}'.")
-    metric = _required_manifest_string(manifest, "metric", path, "null manifest")
-    if metric != METRIC_NAME:
-        raise _bundle_error(path, f"unsupported profile metric '{metric}'.")
-    n_null = _required_manifest_int(manifest, "n_null", path, "null manifest", minimum=1, maximum=MAX_BUNDLE_DIMENSION)
-    n_models = _required_manifest_int(manifest, "n_models", path, "null manifest", minimum=2, maximum=MAX_BUNDLE_DIMENSION)
-    shuffle = _required_manifest_bool(manifest, "shuffle", path, "null manifest")
-    seed = _required_manifest_int(manifest, "seed", path, "null manifest", minimum=0)
-    sampling_version = _required_manifest_string(manifest, "sampling_version", path, "null manifest")
-    estimator = _required_manifest_string(manifest, "estimator", path, "null manifest")
-    if estimator != "empirical_upper_tail":
-        raise _bundle_error(path, f"unsupported null estimator '{estimator}'.")
-
-    arrays = _required_manifest_table(manifest, "arrays", path, "null manifest")
-    file, dtype, shape, checksum = _parse_bundle_array(path, arrays, "raw_null_scores", path)
-    if dtype != "<f8":
-        raise _bundle_error(path, "raw_null_scores must use dtype '<f8'.")
-    if shape != [n_null]:
-        raise _bundle_error(path, "raw_null_scores shape does not match n_null.")
-    npy_path = _resolve_bundle_array_file(path, (file, dtype, shape, checksum), path)
-    if _file_sha256(npy_path) != checksum[7:]:
-        raise _bundle_error(path, f"checksum mismatch for '{file}'.")
-    raw_scores = _read_npy(npy_path, "<f8", [n_null]).astype(np.float64).ravel()
-    if not np.all(np.isfinite(raw_scores)):
-        raise _bundle_error(path, "raw_null_scores contains non-finite values.")
-
-    labels_raw = manifest.get("pair_labels")
-    if not isinstance(labels_raw, list):
-        raise _bundle_error(path, "null manifest 'pair_labels' must be an array.")
-    labels = []
-    for index, label in enumerate(labels_raw):
-        if not isinstance(label, str) or not label:
-            raise _bundle_error(path, f"pair label {index} must be a non-empty string.")
-        labels.append(label)
-    if not labels:
-        raise _bundle_error(path, "null manifest 'pair_labels' must not be empty.")
-    if len(set(labels)) != len(labels):
-        raise _bundle_error(path, "null manifest 'pair_labels' must be unique.")
-
-    file, dtype, shape, checksum = _parse_bundle_array(path, arrays, "pair_indices", path)
-    if dtype != "<u4":
-        raise _bundle_error(path, "pair_indices must use dtype '<u4'.")
-    if shape != [n_null, 2]:
-        raise _bundle_error(path, "pair_indices shape does not match n_null.")
-    indices_path = _resolve_bundle_array_file(path, (file, dtype, shape, checksum), path)
-    if _file_sha256(indices_path) != checksum[7:]:
-        raise _bundle_error(path, f"checksum mismatch for '{file}'.")
-    indices = _read_npy(indices_path, "<u4", [n_null, 2]).astype(np.int64)
-    pairs = []
-    for index in range(n_null):
-        query_index = int(indices[index, 0]) - 1
-        target_index = int(indices[index, 1]) - 1
-        if not (0 <= query_index < len(labels)) or not (0 <= target_index < len(labels)):
-            raise _bundle_error(path, f"pair index {index} is out of range.")
-        pairs.append((labels[query_index], labels[target_index], float(raw_scores[index])))
-
-    compat = _required_manifest_table(manifest, "compatibility", path, "null manifest")
-    _required_manifest_int(compat, "format_version", path, "compatibility metadata", minimum=NULL_FORMAT_VERSION, maximum=NULL_FORMAT_VERSION)
-    compat_strategy = _required_manifest_string(compat, "strategy", path, "compatibility metadata")
-    compat_metric = _required_manifest_string(compat, "metric", path, "compatibility metadata")
-    if compat_strategy != strategy:
-        raise _bundle_error(path, "compatibility strategy disagrees with null manifest.")
-    if compat_metric != metric:
-        raise _bundle_error(path, "compatibility metric disagrees with null manifest.")
-    seq_fp = _required_manifest_string(compat, "sequence_fingerprint", path, "compatibility metadata")
-    bg_fp = _required_manifest_string(compat, "background_fingerprint", path, "compatibility metadata")
-    mcf = _required_manifest_string(compat, "model_collection_fingerprint", path, "compatibility metadata")
-    compat_shuffle = _required_manifest_bool(compat, "shuffle", path, "compatibility metadata")
-    if compat_shuffle != shuffle:
-        raise _bundle_error(path, "compatibility shuffle flag disagrees with null manifest.")
-    compat_sampling = _required_manifest_string(compat, "sampling_version", path, "compatibility metadata")
-    if compat_sampling != sampling_version:
-        raise _bundle_error(path, "compatibility sampling version disagrees with null manifest.")
-    search_range = _required_manifest_int(compat, "search_range", path, "compatibility metadata", minimum=0)
-    min_logerr = _required_manifest_float(compat, "min_logerr", path, "compatibility metadata")
-    try:
-        min_logerr32 = parse_min_logerr(min_logerr)
-    except ValueError:
-        raise _bundle_error(
-            path, "compatibility min_logerr must be a finite, positive Float32 value."
-        ) from None
-    normalization_version = _required_manifest_string(compat, "normalization_version", path, "compatibility metadata")
-    alignment_version = _required_manifest_string(compat, "alignment_version", path, "compatibility metadata")
-    raw_scores_fingerprint = _required_manifest_string(compat, "raw_scores_fingerprint", path, "compatibility metadata")
-    actual_fp = content_fingerprint_float64(raw_scores)
-    if raw_scores_fingerprint != actual_fp:
-        raise _bundle_error(path, "raw score fingerprint does not match payload.")
-
-    contract = {
-        "metric": metric,
-        "search_range": search_range,
-        "min_logerr": min_logerr32,
-        "normalization_version": normalization_version,
-        "alignment_version": alignment_version,
-        "sequence_fingerprint": seq_fp,
-        "background_fingerprint": bg_fp,
-        "raw_scores_fingerprint": raw_scores_fingerprint,
-    }
-    return {
-        "strategy": strategy,
-        "metric": metric,
-        "raw_scores": raw_scores,
-        "pairs": pairs,
-        "n_null": n_null,
-        "n_models": n_models,
-        "shuffle": shuffle,
-        "seed": seed,
-        "sampling_version": sampling_version,
-        "model_collection_fingerprint": mcf if mcf != "none" else None,
-        "sequence_fingerprint": seq_fp,
-        "background_fingerprint": bg_fp,
-        "contract": contract,
-    }
