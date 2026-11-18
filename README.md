@@ -1,8 +1,7 @@
 # Mimosa
 
-Mimosa is a Python 3.12–3.13 package and command-line tool for DNA motif comparison.
+Mimosa is a Python package and command-line tool for DNA motif comparison.
 It supports PWM/PFM, BaMM, Dimont, Slim, and precomputed score profiles.
-SiteGA is temporarily disabled pending further development.
 Mimosa compares heterogeneous motif models through their behavior on the same
 DNA sequences rather than by forcing their internal representations into a
 common matrix.
@@ -18,8 +17,8 @@ facto standard motif model, assuming independence between positions and
 additive nucleotide contributions. However, numerous studies have demonstrated
 the presence of dependencies between positions within TFBSs. To account for
 such dependencies, alternative models have been proposed, including
-Markov-based approaches (BaMM, InMoDe, Dimont, Slim, MODER2), discriminative
-methods (SiteGA), and deep learning models (DeepBind, DeepGRN, BERT-TFBS).
+Markov-based approaches (BaMM, InMoDe, Dimont, Slim, MODER2) and deep learning
+models (DeepBind, DeepGRN, BERT-TFBS).
 However, a mature ecosystem of databases and tools has been developed primarily
 for PWMs, including motif comparison methods that are critical for result
 interpretation. Comparison of alternative motif models usually requires their
@@ -31,23 +30,12 @@ the scores models assign to DNA sequences rather than their internal parameters.
 
 Mimosa uses the following profile comparison pipeline:
 
-1. Scan sequences by motifs to obtain score profiles.
-2. Convert raw scores to exact empirical `-log10(ERR)` values, where ERR is the
-   expectation recognition rate, optionally using a separate background sequence
-   set for calibration. These values do not depend on `min_logerr`.
-3. Keep the positions where either model reaches `-log10(ERR) >= min_logerr`
-   (default `4.0`).
-4. Score the weighted Jaccard similarity, `sum(min) / sum(max)` over those
-   positions, for circular shifts and the four strand orientations.
-5. Return the highest-scoring alignment, its offset, orientation, and number of
-   contributing sites.
-
-Sequences are treated as circular, so every model yields one value per base
-and strand in a shared coordinate system. The default threshold is tuned for
-about `10^6` positions per strand, which is what the CLI generates when no
-FASTA is given (10 000 uniform random sequences of 100 bp). Mimosa warns when
-a batch is too small for the threshold; lower `min_logerr` in that case, as the
-examples below do for the small bundled FASTA.
+1. Scan the same DNA sequences with each model to obtain score profiles.
+2. Normalize the scores to make different models comparable.
+3. Identify positions with high scores in either profile.
+4. Calculate weighted Jaccard similarity across profile alignments and strand
+   orientations.
+5. Return the best alignment and its similarity score.
 
 See [Method and Statistics](docs/python/method.md) for the metric definition,
 statistical significance, and references.
@@ -62,30 +50,38 @@ statistical significance, and references.
 | Slim | Jstacs XML, model bundle | `slim` |
 | Score profile | FASTA-like numeric rows | `scores` |
 
-The SiteGA implementation and formats are retained for future work, but model
-construction, reading, and CLI use are currently unavailable.
-
 ## Installation
 
-Mimosa supports Python 3.12 and 3.13. It is published on
+Mimosa supports Python 3.12 and 3.13. The package is published on
 [PyPI](https://pypi.org/project/mimosa-tool/) as `mimosa-tool`.
 
 ```bash
 python -m pip install mimosa-tool
 ```
 
-For development from a source checkout:
+To install from source with uv, run from the repository root:
 
 ```bash
 uv sync --locked --group dev
+uv run mimosa --version
 ```
 
-Built-in scanning and prepared-profile normalization use JAX. The default
-installation supports CPU execution; GPU execution requires a compatible JAX
+Alternatively, install this checkout with `python -m pip install .`.
+Paths under `examples/` below refer to files in the repository, not files
+installed beside the CLI. With the uv environment, prefix CLI commands with
+`uv run`.
+
+Mimosa uses JAX for computation. The default installation supports CPU
+execution; GPU execution requires a compatible JAX
 CUDA or ROCm plugin and driver as described in the
 [JAX installation guide](https://docs.jax.dev/en/latest/installation.html).
-The pooled-null interface has been removed; p-values use direct pair-specific
-Monte Carlo.
+The project currently requires `jax==0.10.0`; any GPU plugin must be compatible
+with that version. JAX selects the compute device automatically. Inspect the
+selected backend and its available devices with:
+
+```bash
+uv run python -c "import jax; print(jax.default_backend(), jax.devices())"
+```
 
 ## CLI
 
@@ -104,19 +100,16 @@ mimosa compare examples/foxa2.meme examples/gata2.meme \
   --fasta examples/foreground.fa --min-logerr 2
 ```
 
-For a direct pair-specific Monte Carlo p-value, add for example
-`--pvalue --mc-replicates 1000 --mc-seed 127 --mc-group full`. The query is
-fixed and the target is independently relabeled in each replicate; `gc`
-restricts permutations to preserve A/T and C/G groups. The result includes
-the replicate count, exceedance count, seed, and permutation group. This
-requires motif models, not precomputed score profiles.
-
 Compare precomputed score profiles:
 
 ```bash
 mimosa compare examples/scores_1.fasta examples/scores_2.fasta \
   --query-type scores --target-type scores --min-logerr 2
+```
 
+Compare one query against multiple targets:
+
+```bash
 mimosa compare-many examples/foxa2.meme examples/gata2.meme examples/gata4.meme \
   --query-type pwm --target-type pwm --fasta examples/foreground.fa \
   --min-logerr 2
@@ -132,10 +125,9 @@ mimosa compare examples/foxa2.meme examples/gata2.meme \
   --pvalue --mc-replicates 2000 --mc-seed 127
 ```
 
-Each replicate independently relabels the target, using either full alphabet
-permutations or the GC-preserving group. See
-[Method and statistics](docs/python/method.md) for assumptions and
-[custom window functions](docs/python/extending.md) for CNN integration.
+Monte Carlo randomizes the query while keeping targets fixed. This option
+requires motif models, not precomputed score profiles. See
+[Method and statistics](docs/python/method.md) for assumptions and settings.
 
 Manage the optional prepared-profile cache:
 
@@ -145,8 +137,18 @@ mimosa cache clear --cache-dir .mimosa-cache
 
 Successful `compare` results are one JSON object; `compare-many` results are an
 ordered JSON array on `stdout`. Diagnostics and errors are
-written to `stderr`. Every result includes `n_sites`, including zero-site
-comparisons. Run `mimosa --help` for the complete CLI reference.
+written to `stderr`. Run `mimosa --help` to list commands.
+
+Command-specific options are listed by `mimosa compare --help`,
+`mimosa compare-many --help`, and `mimosa cache --help`. In particular:
+
+- `--fasta` supplies the shared comparison sequences.
+- `--background` supplies separate sequences for score calibration; without it,
+  calibration uses the comparison sequences.
+- `--background-freq` is the per-base frequency used for PFM-to-PWM conversion
+  (uniform `0.25`), not a sequence-generation or calibration-file option.
+- `--cache-dir` enables persistent normalized-profile caching across runs;
+  caching is disabled if omitted.
 
 ## Python API
 
@@ -161,28 +163,18 @@ result = compare(query, target, sequences, min_logerr=2.0)
 print(result.to_dict())
 ```
 
-For repeated comparisons, prepare the query once:
+Compare one query against multiple targets:
 
 ```python
-from mimosa import compare_many, prepare_profile
+from mimosa import compare_many
 
-prepared = prepare_profile(query, sequences, min_logerr=2.0, circular=True)
-results = compare_many(prepared, [target], sequences)
+targets = [target, read_model("examples/gata4.meme")]
+results = compare_many(query, targets, sequences, min_logerr=2.0)
 ```
 
-Comparison only accepts profiles prepared with `circular=True`; the default
-`circular=False` keeps the linear scan layout for other uses of
-`prepare_profile`.
-
-`compare_many` processes targets in order in a single process, using JAX's
-device execution. The legacy `total_threads` and `inner_threads` arguments
-are validated but do not control JAX threads or parallelize targets.
-`inner_threads` must be from 1 through 4, and `total_threads` divisible by it.
-
-The public API also includes `scan`, `read_scores`, `select_sites`,
-`reconstruct_pfm`, `direct_mc`, and `write_model`.
-`WindowModel`, `alphabet_permutations`, `InputRelabeledModel`, and
-`relabel_model` expose the fixed-window randomization interface.
+The [quickstart](docs/python/quickstart.md) and [API reference](docs/python/api.md)
+cover profile reuse, site selection, PFM reconstruction, and Monte Carlo.
+See [custom models](docs/python/extending.md) to integrate another scorer.
 
 ## Documentation
 
@@ -195,49 +187,36 @@ The public API also includes `scan`, `read_scores`, `select_sites`,
 - [Custom Models and Readers](docs/python/extending.md)
 - [Storage and Cache](docs/python/storage.md)
 - [Data Layout and Coordinates](docs/python/data_layout.md)
+- [Migrating to JAX](docs/python/migration.md)
 
 ## Development
 
-Run the test suite with:
+Run the code checks, tests, and example commands:
 
 ```bash
-uv run pytest -q
+uv run ruff check .
+uv run pytest -q tests
+uv run bash examples/run.sh
 ```
 
 Run the production-path performance benchmark with:
 
 ```bash
-uv run python benchmarks/benchmark_performance.py
+uv run python benchmarks/benchmark_performance.py --output /tmp/mimosa-performance.json
 ```
 
-The report measures full-pipeline `cache_miss_hot_jit` and
-`cache_hit_hot_filesystem` modes. Use comma-separated `--total-threads` and
-`--numba-threads` values; only divisible pairs are run. These legacy budget
-values do not control JAX or target parallelism. Use `--phase-timings`
-to add isolated scan, normalization, anchor, fingerprint, cache, alignment,
-and JSON serialization timings. On Linux the report includes aggregate peak RSS
-for the process tree; other platforms retain the parent-process
-lifetime maximum as a fallback.
-`--cold-jit-cli` adds a separately labelled clean-process command-line startup
-sample; it is emitted only for one-target workloads and is not used for speedup
-comparisons.
-When projected temporary cache storage is unavailable, the report records that
-configuration as `resource_limited` and continues; pass
-`--allow-resource-overcommit` only when the host has enough reserved capacity.
-Use `--coverage --skewed-rows --thresholds 1,2,4` for the optional
-heterogeneous suite (PWM, BaMM, a larger background, ragged rows, and
-anchor-density regimes).
-
-For a separate warmed-JIT, single-process input-relabel benchmark:
+The default run uses 10 000 sequences, 1/64/128/256 targets and three repeats;
+it can require substantial memory and temporary disk space. For a smaller check:
 
 ```bash
-uv run python benchmarks/benchmark_input_relabel.py examples/myog.ihbcp \
-  --orders 0,4 --repeats 3 --output /tmp/mimosa-relabel-benchmark.json
+uv run python benchmarks/benchmark_performance.py \
+  --sequence-count 100 --target-counts 1 --repeats 1 --min-logerr 2 \
+  --output /tmp/mimosa-performance-small.json
 ```
 
-It records construction, two-strand scanning, preparation without a disk cache,
-and warm profile loading. This measures one scoring function at a time, not
-the complete pairwise null construction, and does not predict CNN/GPU speed.
+Run the benchmark with `--help` for detailed options. Report the selected JAX
+device and distinguish compilation time from warmed execution when sharing
+performance measurements.
 
 ## License
 

@@ -6,6 +6,7 @@ The stable workflow API is exported from `mimosa`:
 from mimosa import (
     compare,
     compare_many,
+    direct_mc,
     prepare_profile,
     read_fasta,
     read_model,
@@ -21,7 +22,7 @@ from mimosa import (
 
 ```python
 read_model(path, *, format="auto", index=0, background=0.25, order=None)
-read_fasta(path) -> tuple[EncodedSequences, tuple[str, ...]]
+read_fasta(path, max_sequences=1_000_000) -> tuple[EncodedSequences, tuple[str, ...]]
 read_scores(path) -> ScoreProfile
 write_model(path, model) -> None
 ```
@@ -34,6 +35,11 @@ disabled; existing files are not modified.
 and compare, but their arbitrary internal parameters are not a portable model
 bundle.
 
+`index` selects a zero-based motif from a MEME file. The scalar
+`read_model(..., background=0.25)` is used for PFM-to-PWM conversion, not for
+sequence calibration; only a uniform scalar background is supported by that
+conversion. A model bundle retains its stored parameters.
+
 ## Scanning
 
 ```python
@@ -45,7 +51,8 @@ The public scan boundary validates the model contract and sequence encoding.
 Built-in scan values are Float32. For `strands="both"`, the forward and
 reverse tracks have the same ragged row layout. The module function is a thin
 wrapper; the model's own `scan` method also supports the circular layout, used
-by comparison, and any strand policy.
+by comparison, and the same four strand policies: `forward`, `reverse`,
+`best`, and `both`. The module-level `scan` uses the linear layout.
 
 ## Profiles and comparison
 
@@ -77,6 +84,11 @@ compare(
 `query` and `target` may be motif models, `ScoreProfile` values, or prepared
 profiles. Prepared profiles used together must have compatible thresholds and
 normalization strategies.
+Raw motif models require an `EncodedSequences` batch. Two raw `ScoreProfile`
+inputs consume no sequences. Mixing a raw motif model with a raw `ScoreProfile`
+is rejected; prepare both sides first with compatible circular row layouts.
+The caller must ensure that corresponding positions represent the same
+comparison data; equal row lengths alone cannot establish this.
 
 Comparison is the weighted Jaccard similarity of circular profiles.
 `min_logerr=None` uses the threshold of a prepared input, or `4.0` otherwise;
@@ -87,19 +99,32 @@ above the threshold.
 `prepare_profile(..., circular=False)` keeps the linear scan layout: rows hold
 `n_positions` values and `site_start_offset` is the model's left context. With
 `circular=True` every sequence is scanned as a ring, each row holds one value
-per base indexed by site start, and `site_start_offset` is `0`. `compare`,
+per base indexed by site start, and `site_start_offset` is `0`. `compare`
 and `compare_many` prepare motif models and score profiles
 circularly and reject prepared profiles with `circular=False`. Score-profile
 rows are used as given and are only marked circular. `PreparedProfile.circular`
 reports the mode. `PreparedProfile` is immutable: to change `min_logerr`,
 prepare the profile again.
 
-`compare_many(query, targets, sequences=None, total_threads=1,
-inner_threads=1, **options)` keeps target order stable and reuses a prepared
-query. Targets run sequentially in one process using JAX. The legacy thread
+```python
+compare_many(
+    query, targets, sequences=None, *,
+    background=None, search_range=5, min_logerr=None,
+    normalization=None, cache=None, total_threads=1, inner_threads=1,
+) -> list[ComparisonResult]
+```
+
+`compare_many` accepts one query, keeps target order stable and reuses the
+prepared query. Targets run sequentially in one process using JAX. The legacy thread
 arguments are validated but do not control JAX or target parallelism:
 `inner_threads` is limited to 1 through 4 and `total_threads` must be divisible
 by it. Raw custom models are scanned serially.
+
+`normalization=None` selects `EmpiricalLogTail`, the only supported strategy.
+The high-level preparation, comparison and Monte Carlo paths enable the
+Float64 operations they require locally, without changing the caller's global
+JAX x64 setting. Public score tracks and result arrays are NumPy-backed;
+custom scorers receive JAX arrays.
 
 `ComparisonResult` is immutable and exposes `query`, `target`, `score`,
 `offset`, `orientation`, `metric`, and `n_sites`, plus the `search_range` and
@@ -124,6 +149,12 @@ direct_mc(query, targets, sequences, *, k, seed, group="full",
 
 Available selectors are `BestPerSequence`, `ThresholdHits`, and
 `TopFractionHits`. `SiteCollection.to_dict()` returns JSON-compatible lists.
+Site selection uses raw scores from linear scans, not normalized comparison
+profiles. `ThresholdHits` accepts any finite Float32 threshold, including
+negative values; it does not use the positive `min_logerr` threshold.
+`TopFractionHits(fraction, base=None)` keeps the highest-scoring fraction of
+the base selector's hits, defaulting to `BestPerSequence`; the fraction must be
+in `(0, 1]`.
 
 `direct_mc` returns matrices of observed scores, exceedance counts and
 p-values, each with shape `(1, number_of_targets)`. It randomizes the single
@@ -132,6 +163,11 @@ PWM, BaMM, Dimont and Slim models on the device-level pipeline and any other
 `MotifModel` with `score_sites` through the shared scan path (SiteGA is
 temporarily disabled). `group` is `full` or `gc`; ties are included. Score
 profiles are not supported by this Monte Carlo path.
+`k` must be a positive integer and `seed` a non-negative integer. Counts
+include `random_score == observed_score`, with `p = (count + 1) / (k + 1)`.
+Custom models also need a stable `fingerprint()` to define the random stream.
+The public function has no `cache` argument; persistent caching of observed
+Monte Carlo profiles is exposed by the CLI's `--cache-dir`.
 
 Random query profiles are held on the device in batches. Target profiles are
 stored on the host or in isolated temporary files: `storage` is `memory`,
@@ -156,6 +192,21 @@ it; values up to 64). It can improve throughput on large disk-backed workloads
 at the cost of approximately one full profile per queued target, plus the
 profile currently being processed. It has no effect on in-memory storage.
 
+The root API also exports:
+
+```python
+adjusted_pvalues(pvalues) -> numpy.ndarray
+evalue(pvalue, effective_n) -> float
+empirical_upper_tail_pvalue(scores, score) -> float
+```
+
+Use a one-dimensional vector with `adjusted_pvalues`, for example
+`adjusted_pvalues(pvalues[0])`, to apply Benjamini–Hochberg adjustment across
+the target family. `evalue` multiplies a p-value by a finite non-negative
+effective number of targets. `direct_mc` does not apply these annotations
+automatically; the CLI does. `AnnotatedResult` wraps a `ComparisonResult` for
+serialization of optional statistical fields.
+
 ## Fixed-window functions and input relabeling
 
 ```python
@@ -175,12 +226,18 @@ to one finite real score per window. It must be deterministic and batch-independ
 uses an exactly equivalent native table permutation for built-in types and
 the generic wrapper otherwise. Explicit permutations permit paired projections
 and replay; context flanks and N are unchanged. See [custom models](extending.md).
+`calibration_group` is optional metadata on `WindowModel`, included in its
+fingerprint. Direct Monte Carlo does not require it or pool models into groups.
 
 ## Errors
 
-Public input and model failures use `MimosaError` subclasses:
+Model-specific failures use `MimosaError` subclasses:
 
 - `ModelFormatError` for malformed source files and bundles.
 - `ModelDimensionError` for invalid model shapes or geometry.
 - `ModelInterfaceError` for invalid custom model contracts.
 - `InvariantError` for impossible or unsupported internal operations.
+
+Invalid arguments may also raise ordinary `TypeError` or `ValueError`; file
+operations can raise `OSError`. See [migration notes](migration.md) for removed
+APIs.

@@ -23,6 +23,35 @@ def run_cli(*args, **kwargs):
     return result
 
 
+class TestHelp:
+    @pytest.mark.parametrize("command", ["compare", "compare-many"])
+    def test_explains_sequences_background_and_cache(self, command):
+        result = run_cli(command, "--help")
+        assert result.returncode == 0, result.stderr
+        assert not result.stderr
+        help_text = " ".join(result.stdout.split())
+        for description in (
+            "--fasta FASTA FASTA sequences scanned by both query and target models",
+            "if omitted, generate uniform random DNA",
+            "--background BACKGROUND FASTA sequences used only to calibrate raw scores",
+            "if omitted, calibrate on the comparison sequences",
+            "--background-freq BACKGROUND_FREQ uniform per-base background frequency for PFM-to-PWM conversion",
+            "default: 0.25; only a uniform background is supported",
+            "does not control --background sequences or generated DNA",
+            "--cache-dir CACHE_DIR directory for persistent prepared-profile disk caching",
+            "disabled if omitted",
+            "reuse observed profiles, not randomized replicates",
+        ):
+            assert description in help_text
+
+    def test_cache_help_explains_directory_and_default(self):
+        result = run_cli("cache", "--help")
+        assert result.returncode == 0, result.stderr
+        help_text = " ".join(result.stdout.split())
+        assert "prepared-profile cache to clear" in help_text
+        assert "default: .mimosa-cache" in help_text
+
+
 class TestCompareCommand:
     def test_score_profiles(self):
         r = run_cli(

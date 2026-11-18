@@ -282,8 +282,17 @@ def build_parser():
         p.add_argument("--target-order", type=int, help="BaMM order used to read the targets")
         p.add_argument("--search-range", type=int, default=5)
         p.add_argument("--min-logerr", type=float, default=4.0)
-        p.add_argument("--fasta")
-        p.add_argument("--background")
+        p.add_argument(
+            "--fasta",
+            help="FASTA sequences scanned by both query and target models for comparison "
+                 "(treated as circular); if omitted, generate uniform random DNA using "
+                 "--num-sequences, --seq-length and --seed",
+        )
+        p.add_argument(
+            "--background",
+            help="FASTA sequences used only to calibrate raw scores to empirical logERR; "
+                 "if omitted, calibrate on the comparison sequences from --fasta or generated DNA",
+        )
         p.add_argument(
             "--num-sequences",
             type=_bounded_positive_integer("num-sequences", MAX_GENERATED_SEQUENCES),
@@ -295,8 +304,17 @@ def build_parser():
             default=100,
         )
         p.add_argument("--seed", type=int, default=127)
-        p.add_argument("--background-freq", type=float, default=0.25)
-        p.add_argument("--cache-dir")
+        p.add_argument(
+            "--background-freq", type=float, default=0.25,
+            help="uniform per-base background frequency for PFM-to-PWM conversion "
+                 "(default: 0.25; only a uniform background is supported); "
+                 "does not control --background sequences or generated DNA",
+        )
+        p.add_argument(
+            "--cache-dir",
+            help="directory for persistent prepared-profile disk caching across runs "
+                 "(disabled if omitted); with --pvalue, reuse observed profiles, not randomized replicates",
+        )
         p.add_argument(
             "--effective-number-of-targets",
             type=_bounded_positive_integer("effective-number-of-targets", MAX_GENERATED_SEQUENCES),
@@ -328,7 +346,10 @@ def build_parser():
 
     p = sub.add_parser("cache", help="manage the disk cache")
     p.add_argument("operation", choices=("clear",), help="cache operation (clear)")
-    p.add_argument("--cache-dir", default=".mimosa-cache")
+    p.add_argument(
+        "--cache-dir", default=".mimosa-cache",
+        help="directory containing the prepared-profile cache to clear (default: .mimosa-cache)",
+    )
     return parser
 
 

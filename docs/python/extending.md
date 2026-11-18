@@ -10,6 +10,7 @@ a JAX-traceable `score_sites` method. Context models may also provide `left_cont
 `right_context`.
 
 ```python
+import hashlib
 import jax.numpy as jnp
 
 from mimosa import MotifModel
@@ -24,6 +25,13 @@ class ConsensusModel(MotifModel):
 
     def score_sites(self, windows):
         return jnp.sum(windows == self.pattern, axis=1)
+
+    def fingerprint(self):
+        payload = b"consensus-model-v1|" + bytes(self.pattern.tolist())
+        return hashlib.sha256(payload).hexdigest()
+
+
+model = ConsensusModel([0, 1, 2, 3])
 ```
 
 The method receives a JAX array of oriented windows and returns one real score
@@ -35,10 +43,12 @@ The custom model participates in `scan`, `prepare_profile`, `compare`,
 `direct_mc`, `select_sites`, and `reconstruct_pfm`. Comparison scans circular
 sequences by passing wrapped windows with `left_context` bases on the left
 and `window_size - left_context - 1` bases on the right, so no circular logic
-is needed in the model. A stable SHA-256 `fingerprint()` is
-needed for the prepared-profile cache. Arbitrary custom models are
-not accepted by `write_model` because `score_sites` does not define how to
-serialize model parameters.
+is needed in the model. A stable `fingerprint()` identifying the scoring code,
+geometry and learned parameters is needed for the prepared-profile cache and
+for `direct_mc` random streams. SHA-256 is a suitable choice. Without a
+fingerprint, scanning and uncached comparison still work. Arbitrary custom
+models are not accepted by `write_model` because `score_sites` does not define
+how to serialize model parameters.
 
 ## Batched fixed-window functions, including CNNs
 
@@ -46,13 +56,20 @@ serialize model parameters.
 scores complete oriented input windows:
 
 ```python
+import jax.numpy as jnp
+
 from mimosa import WindowModel, relabel_model
 
+
+def my_scorer(windows):
+    # Runnable toy example: count A bases in the motif, ignoring context flanks.
+    return jnp.sum(windows[:, 10:30] == 0, axis=1)
+
+
 model = WindowModel(
-    "assayed-tf", motif_length=20, score_sites=my_scorer,
+    "adenine-count", motif_length=20, score_sites=my_scorer,
     left_context=10, right_context=10,
-    fingerprint="stable-hash-of-scoring-code-and-learned-parameters",
-    calibration_group="my-cnn-architecture-and-context-v1",
+    fingerprint="adenine-count-motif20-context10-v1",
 )
 random_model = relabel_model(model, seed=112)
 ```
@@ -66,6 +83,11 @@ Neural models must be in deterministic inference mode;
 dropout, training-mode batch normalization and updates between calls violate
 the function contract. Outputs must be independent of batch size and other
 windows in the batch.
+
+Replace the toy function with a compatible inference callback for a neural
+model. Update the supplied fingerprint whenever the scoring function, geometry
+or learned parameters change. The optional `calibration_group` label is not
+required by direct Monte Carlo and does not enable pooled-null calibration.
 
 Rows are batched together without mixing their windows. `batch_size` caps
 the number of windows and a separate internal element limit bounds temporary
@@ -85,8 +107,8 @@ without its input wrapper.
 
 For custom `MotifModel` implementations, input relabeling uses `score_sites`
 and canonical reverse-complement semantics. Direct Monte Carlo accepts any
-`MotifModel` with `score_sites`; built-in models run on the device-level JAX
-pipeline, others through the shared scan path.
+`MotifModel` with `score_sites` and a fingerprint; built-in models run on the
+device-level JAX pipeline, others through the shared scan path.
 
 Native PWM/BaMM/Dimont/Slim surrogates compile the same input recoding
 into tables. Only the generic fallback needs explicit window enumeration.
@@ -103,9 +125,12 @@ external = ScoreProfile(
     "external",
     RaggedArray.from_rows([[1.0, 2.0], [3.0]]),
 )
-prepared = prepare_profile(external)
+prepared = prepare_profile(external, min_logerr=1.0, circular=True)
 ```
 
 `ScoreProfile` supports preparation and comparison, but not raw-sequence
 scanning or motif-site extraction. A precomputed profile alone cannot support
 input relabeling: the original function must be evaluable on recoded windows.
+`circular=True` marks the supplied rows as circular without reconstructing or
+rescanning their boundaries. Comparisons require the same row layout on both
+sides; the default `circular=False` is not accepted by `compare`.
