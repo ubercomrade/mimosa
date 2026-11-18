@@ -20,8 +20,9 @@ def test_direct_monte_carlo_public_observed_and_order():
     assert scores.shape == counts.shape == pvalues.shape == (1, 2)
     np.testing.assert_array_equal(pvalues, (counts + 1) / 3)
     for i, model in enumerate((target, query)):
-        result = compare(query, model, sequences, min_logerr=1, search_range=1,
-                         background=background)
+        with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+            result = compare(query, model, sequences, min_logerr=1, search_range=1,
+                             background=background)
         assert scores[0, i] == result.score
 
 
@@ -133,7 +134,8 @@ def test_custom_model_monte_carlo():
     options = dict(k=3, seed=11, min_logerr=1, search_range=2)
     for query, target in ((custom, pwm), (pwm, custom), (custom, custom)):
         observed, counts, pvalues = direct_mc(query, [target], sequences, **options)
-        result = compare(query, target, sequences, min_logerr=1, search_range=2)
+        with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+            result = compare(query, target, sequences, min_logerr=1, search_range=2)
         assert observed[0, 0] == result.score
         np.testing.assert_array_equal(pvalues, (counts + 1) / 4)
         assert counts[0, 0] <= 3
@@ -296,11 +298,13 @@ def test_cli_mc_reuses_observed_profiles(tmp_path, monkeypatch, capsys):
     args = ["compare-many", "examples/foxa2.meme", "examples/gata2.meme",
             "examples/gata4.meme", "--query-type", "pwm", "--target-type", "pwm",
             "--fasta", str(path), "--min-logerr", "1", "--search-range", "1"]
-    assert main([*args, "--pvalue", "--mc-replicates", "3", "--mc-batch-size", "2"]) == 0
+    with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+        assert main([*args, "--pvalue", "--mc-replicates", "3", "--mc-batch-size", "2"]) == 0
     annotated = json.loads(capsys.readouterr().out)
     assert len(calls) == 1 + 2 + 3
     calls.clear()
-    assert main(args) == 0
+    with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+        assert main(args) == 0
     baseline = json.loads(capsys.readouterr().out)
     for observed, result in zip(annotated, baseline):
         for key, value in result.items():
@@ -326,7 +330,8 @@ def test_cli_mc_reuses_persistent_cache(tmp_path, monkeypatch, capsys, with_back
             "--mc-storage", "disk", "--mc-temp-dir", str(temporary), "--mc-prefetch", "2"]
     if with_background:
         args += ["--background", str(background)]
-    assert main(args) == 0
+    with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+        assert main(args) == 0
     expected = json.loads(capsys.readouterr().out)
     real_profile = mc._profile
     calls = []
@@ -336,12 +341,14 @@ def test_cli_mc_reuses_persistent_cache(tmp_path, monkeypatch, capsys, with_back
         return real_profile(model, sequences, bg)
 
     monkeypatch.setattr(mc, "_profile", counted)
-    assert main([*args, "--cache-dir", str(cache)]) == 0
+    with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+        assert main([*args, "--cache-dir", str(cache)]) == 0
     cold = json.loads(capsys.readouterr().out)
     assert len(calls) == 1 + 2 + 3
     assert cold == expected
     calls.clear()
-    assert main([*args, "--cache-dir", str(cache)]) == 0
+    with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+        assert main([*args, "--cache-dir", str(cache)]) == 0
     warm = json.loads(capsys.readouterr().out)
     assert len(calls) == 3
     assert warm == cold
@@ -376,9 +383,11 @@ def test_cli_cache_compare_equals_compare_many_and_recovers_corruption(tmp_path,
             "--target-type", "pwm", "--fasta", str(sequences_path), "--min-logerr", "1",
             "--search-range", "1", "--pvalue", "--mc-replicates", "2",
             "--cache-dir", str(cache)]
-    assert main(["compare", *args]) == 0
+    with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+        assert main(["compare", *args]) == 0
     single = json.loads(capsys.readouterr().out)
-    assert main(["compare-many", *args]) == 0
+    with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+        assert main(["compare-many", *args]) == 0
     many = json.loads(capsys.readouterr().out)
     assert many == [single]
     sequences, _ = read_fasta(sequences_path)
@@ -397,7 +406,8 @@ def test_cli_cache_compare_equals_compare_many_and_recovers_corruption(tmp_path,
         return real(*args)
 
     monkeypatch.setattr(mc, "_profile", counted)
-    assert main(["compare", *args]) == 0
+    with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+        assert main(["compare", *args]) == 0
     restored = json.loads(capsys.readouterr().out)
     assert restored == single
     assert len(calls) == 3  # One corrupted observed profile plus two random replicates.

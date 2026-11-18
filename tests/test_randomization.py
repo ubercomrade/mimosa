@@ -1,5 +1,6 @@
 """Independent f(pi(x)) checks and end-to-end calibrated-null contracts."""
 import hashlib
+from contextlib import nullcontext
 
 import numpy as np
 import pytest
@@ -144,7 +145,12 @@ def _invalid_window_callback(kind):
     ("large", ModelFormatError), ("complex", ModelInterfaceError),
 ])
 def test_invalid_window_outputs_are_rejected(kind, expected):
-    with pytest.raises(expected, match="scan"):
+    # The large callback deliberately exceeds Float32 range during JAX tracing.
+    warning = (
+        pytest.warns(RuntimeWarning, match="overflow encountered in cast")
+        if kind == "large" else nullcontext()
+    )
+    with warning, pytest.raises(expected, match="scan"):
         scan(
             WindowModel("invalid", 2, _invalid_window_callback(kind)),
             EncodedSequences.from_strings(["ACGT"]),

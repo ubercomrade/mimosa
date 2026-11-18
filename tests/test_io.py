@@ -1,5 +1,6 @@
 import math
 import os
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -241,9 +242,9 @@ class TestXmlReaders:
         assert m.weights.shape == (15625, 15)
 
     def test_slim_length_limit(self, tmp_path):
-        source = "tests/fixtures/slim/example-model-1.xml"
+        source = Path("tests/fixtures/slim/example-model-1.xml")
         p = tmp_path / "slim.xml"
-        p.write_text(open(source, encoding="utf-8").read().replace(
+        p.write_text(source.read_text(encoding="utf-8").replace(
             "<length><className>java.lang.Integer</className>15</length>",
             "<length><className>java.lang.Integer</className>31</length>",
             1,
@@ -252,9 +253,9 @@ class TestXmlReaders:
             read_slim(p)
 
     def test_slim_rejects_fractional_xml_length(self, tmp_path):
-        source = "tests/fixtures/slim/example-model-1.xml"
+        source = Path("tests/fixtures/slim/example-model-1.xml")
         p = tmp_path / "slim.xml"
-        p.write_text(open(source, encoding="utf-8").read().replace(
+        p.write_text(source.read_text(encoding="utf-8").replace(
             "<length><className>java.lang.Integer</className>15</length>",
             "<length><className>java.lang.Integer</className>15.9</length>",
             1,

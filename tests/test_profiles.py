@@ -1,3 +1,5 @@
+from contextlib import nullcontext
+
 import numpy as np
 import pytest
 
@@ -228,18 +230,18 @@ class TestNormalization:
 
 
 # These hand-built profiles are far smaller than a real comparison.
-@pytest.mark.filterwarnings("ignore:only about")
 class TestJaccard:
     @pytest.mark.parametrize(
         "tau0, expected, n_sites",
         ((4.0, 8.6 / 18.7, 4), (2.0, 8.7 / 20.9, 5)),
     )
     def test_worked_example(self, tau0, expected, n_sites):
-        result = compare(
-            ready_profile("u", [EXAMPLE_U], tau0=tau0),
-            ready_profile("v", [EXAMPLE_V], tau0=tau0),
-            search_range=0,
-        )
+        with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+            result = compare(
+                ready_profile("u", [EXAMPLE_U], tau0=tau0),
+                ready_profile("v", [EXAMPLE_V], tau0=tau0),
+                search_range=0,
+            )
         assert float(result.score) == pytest.approx(expected, abs=1e-6)
         assert round(float(result.score), 4) == (0.4599 if tau0 == 4.0 else 0.4163)
         assert result.n_sites == n_sites
@@ -248,9 +250,10 @@ class TestJaccard:
 
     def test_shift_is_circular(self):
         u = np.array(EXAMPLE_U, dtype=np.float32)
-        result = compare(
-            ready_profile("u", [u]), ready_profile("v", [np.roll(u, 3)]), search_range=4
-        )
+        with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+            result = compare(
+                ready_profile("u", [u]), ready_profile("v", [np.roll(u, 3)]), search_range=4
+            )
         assert float(result.score) == 1.0
         assert result.offset == 3
 
@@ -261,11 +264,17 @@ class TestJaccard:
         search_range = 5
         q = [random_logerr_rows(rng, lengths) for _ in range(2)]
         t = [random_logerr_rows(rng, lengths) for _ in range(2)]
-        result = compare(
-            ready_profile("q", q[0], q[1], tau0=tau0),
-            ready_profile("t", t[0], t[1], tau0=tau0),
-            search_range=search_range,
+        # At tau0=0.5 the batch exceeds the warning's expected-position limit.
+        warning = (
+            pytest.warns(UserWarning, match="the jaccard score is noisy")
+            if tau0 >= 2 else nullcontext()
         )
+        with warning:
+            result = compare(
+                ready_profile("q", q[0], q[1], tau0=tau0),
+                ready_profile("t", t[0], t[1], tau0=tau0),
+                search_range=search_range,
+            )
 
         dense = {
             (label, shift): dense_jaccard(q[a], t[b], shift, tau0)
@@ -280,21 +289,24 @@ class TestJaccard:
 
     def test_empty_union_scores_zero(self):
         low = np.full(25, 0.5, dtype=np.float32)
-        result = compare(ready_profile("q", [low]), ready_profile("t", [low]))
+        with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+            result = compare(ready_profile("q", [low]), ready_profile("t", [low]))
         assert result.score == 0.0
         assert result.n_sites == 0
 
     def test_rejects_different_row_counts(self):
         query = ready_profile("query", [[1.0, 2.0], [3.0, 4.0]])
         target = ready_profile("target", [[1.0, 2.0]])
-        with pytest.raises(ValueError, match="same number of rows"):
-            compare(query, target)
+        with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+            with pytest.raises(ValueError, match="same number of rows"):
+                compare(query, target)
 
     def test_rejects_different_row_lengths(self):
         query = ready_profile("query", [[1.0, 2.0], [3.0]])
         target = ready_profile("target", [[1.0], [2.0, 3.0]])
-        with pytest.raises(ValueError, match="identical row lengths"):
-            compare(query, target)
+        with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+            with pytest.raises(ValueError, match="identical row lengths"):
+                compare(query, target)
 
 
 class TestCompare:
@@ -847,7 +859,8 @@ class TestPreparedImmutabilityAndConsistency:
 
     def test_compare_records_parameters(self):
         q, t = ready_profile("q", self.ROW), ready_profile("t", self.ROW)
-        result = compare(q, t, search_range=2)
+        with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+            result = compare(q, t, search_range=2)
         assert result.search_range == 2
         assert result.min_logerr == q.min_logerr
         assert "search_range" not in result.to_dict()
@@ -865,7 +878,9 @@ class TestPreparedImmutabilityAndConsistency:
         tau = np.float32(2.5)
         target = ready_profile("t", self.ROW, tau0=tau)
         query = ScoreProfile("q", RaggedArray.from_rows(self.ROW))
-        single = compare(query, target)
-        (many,) = compare_many(query, [target])
+        with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+            single = compare(query, target)
+        with pytest.warns(UserWarning, match="the jaccard score is noisy"):
+            (many,) = compare_many(query, [target])
         assert many.score == single.score
         assert many.min_logerr == tau
