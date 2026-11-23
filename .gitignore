@@ -18,6 +18,7 @@ coverage.xml
 .mimosa-cache/
 .env
 AGENTS.md
+PLAN*
 PLAN.md
 PLAN_Fi-NeMo.md
 PLAN_jaccard.md
