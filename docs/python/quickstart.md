@@ -21,7 +21,8 @@ The default installation does not install GPU plugins. For NVIDIA CUDA, choose
 one of the `cuda12` or `cuda13` extras. For example, use
 `uv sync --locked --group dev --extra cuda13`, then include `--extra cuda13`
 in each `uv run` command. For pip, use `python -m pip install 'mimosa-tool[cuda13]'`.
-The GPU and NVIDIA driver must support the chosen CUDA version. For AMD, use
+The GPU and NVIDIA driver must support the chosen CUDA version. For AMD with
+system ROCm 7, use
 `python -m pip install 'mimosa-tool[rocm]'`, or run:
 
 ```bash
@@ -32,8 +33,9 @@ uv run --extra rocm mimosa --version
 The ROCm extra installs
 the plugin and PJRT; it requires a separately installed compatible ROCm 7 and
 driver. See the
-[installation section of the README](../../README.md#installation) for both
-GPU options and links to compatibility instructions. Check device availability
+[installation section of the README](../../README.md#installation) for the
+`rocm7` and `rocm10` extras that install the runtime on Linux x86-64,
+and links to driver compatibility instructions. Check device availability
 in the environment used for computation:
 
 ```bash

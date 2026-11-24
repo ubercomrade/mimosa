@@ -92,7 +92,7 @@ For a source checkout use `uv sync --locked --group dev --extra cuda13` (or
 commands, for example `uv run --extra cuda13 mimosa --version`. Do not select
 both CUDA extras in one environment.
 
-For an AMD GPU on supported Linux systems, install the ROCm extra:
+For an AMD GPU on supported Linux systems with system ROCm 7, install the ROCm extra:
 
 ```bash
 python -m pip install 'mimosa-tool[rocm]'
@@ -104,8 +104,33 @@ ROCm 7 plugin and PJRT, but **not** the ROCm system libraries or GPU driver.
 Install a compatible ROCm version and driver first, and check your GPU and
 platform against [AMD's JAX installation guide](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/frameworks/jax/install.html)
 and [compatibility matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html).
-The project pins JAX 0.10.0; the extra uses its `rocm7-local` variant, not
-newer JAX extras that install ROCm libraries. Select only one GPU extra.
+The project pins JAX 0.10.0. Its AMD extra is `rocm7-local`.
+
+For a ROCm runtime installed alongside Mimosa, choose one of these commands.
+Each installs the runtime, JAX plugin and kernels for all supported GPU targets
+in the tool's own environment.
+
+```bash
+# ROCm 7.14.1
+uv tool install 'mimosa-tool[rocm7]' --index https://repo.amd.com/rocm/whl-multi-arch/
+
+# ROCm 10.0.0
+uv tool install 'mimosa-tool[rocm10]' --index https://stable.repo.amd.com/rocm/whl-next/
+```
+
+The `rocm7` and `rocm10` extras target Linux x86-64 and require a compatible
+AMD driver. With pip, use `python -m pip install 'mimosa-tool[rocm7]'` or
+`'mimosa-tool[rocm10]'` and pass the matching AMD URL as `--extra-index-url`.
+For the source checkout, use `uv sync --locked --group dev --extra rocm7`
+or `--extra rocm10`, and pass the same extra to subsequent `uv run` commands.
+Select a single GPU extra per environment.
+
+GitHub Actions checks wheel dependency resolution for `cuda12`, `cuda13`,
+`rocm7`, and `rocm10`. To test GPU execution, run **GPU smoke test** from
+the default branch and select an extra. Use a Linux x86-64 self-hosted runner
+labelled `amd-gpu` for ROCm or `nvidia-gpu` for CUDA. To use a GitHub-hosted
+Linux GPU larger runner for CUDA, set the repository Actions variable
+`CUDA_GPU_RUNNER` to that runner's name.
 
 JAX selects the compute device automatically. Inspect the selected backend and
 its available devices in the same environment used to run Mimosa:

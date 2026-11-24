@@ -8,12 +8,9 @@ resolution-markers = [
 conflicts = [[
     { package = "mimosa-tool", extra = "cuda12" },
     { package = "mimosa-tool", extra = "cuda13" },
-], [
-    { package = "mimosa-tool", extra = "cuda12" },
     { package = "mimosa-tool", extra = "rocm" },
-], [
-    { package = "mimosa-tool", extra = "cuda13" },
-    { package = "mimosa-tool", extra = "rocm" },
+    { package = "mimosa-tool", extra = "rocm10" },
+    { package = "mimosa-tool", extra = "rocm7" },
 ]]
 
 [[package]]
@@ -52,15 +49,15 @@ wheels = [
 
 [package.optional-dependencies]
 cuda12 = [
-    { name = "jax-cuda12-plugin", extra = ["with-cuda"], marker = "extra == 'extra-11-mimosa-tool-cuda12' or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm')" },
+    { name = "jax-cuda12-plugin", extra = ["with-cuda"], marker = "extra == 'extra-11-mimosa-tool-cuda12' or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm') or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-rocm' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-rocm' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-rocm10' and extra == 'extra-11-mimosa-tool-rocm7')" },
     { name = "jaxlib" },
 ]
 cuda13 = [
-    { name = "jax-cuda13-plugin", extra = ["with-cuda"], marker = "extra == 'extra-11-mimosa-tool-cuda13' or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm')" },
+    { name = "jax-cuda13-plugin", extra = ["with-cuda"], marker = "extra == 'extra-11-mimosa-tool-cuda13' or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-rocm' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-rocm' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-rocm10' and extra == 'extra-11-mimosa-tool-rocm7')" },
     { name = "jaxlib" },
 ]
 rocm7-local = [
-    { name = "jax-rocm7-plugin" },
+    { name = "jax-rocm7-plugin", version = "0.10.0.post1", source = { registry = "https://pypi.org/simple" } },
     { name = "jaxlib" },
 ]
 
@@ -148,19 +145,75 @@ with-cuda = [
 ]
 
 [[package]]
+name = "jax-rocm10-pjrt"
+version = "0.10.0+rocm10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/jax/whl-next/jax-rocm10-pjrt/jax_rocm10_pjrt-0.10.0%2Brocm10.0.0-py3-none-manylinux_2_27_x86_64.whl" },
+]
+
+[[package]]
+name = "jax-rocm10-plugin"
+version = "0.10.0+rocm10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+dependencies = [
+    { name = "jax-rocm10-pjrt" },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/jax/whl-next/jax-rocm10-plugin/jax_rocm10_plugin-0.10.0%2Brocm10.0.0-cp312-cp312-manylinux_2_27_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/jax/whl-next/jax-rocm10-plugin/jax_rocm10_plugin-0.10.0%2Brocm10.0.0-cp313-cp313-manylinux_2_27_x86_64.whl" },
+]
+
+[[package]]
+name = "jax-rocm7-pjrt"
+version = "0.10.0+rocm7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/jax_rocm7_pjrt-0.10.0%2Brocm7.14.1-py3-none-manylinux_2_27_x86_64.whl" },
+]
+
+[[package]]
 name = "jax-rocm7-pjrt"
 version = "0.10.0.post1"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b1/e2/3a15345ac837a46a4f38d1edc80cba6e80c69e9ff3697fd33e06d813a76a/jax_rocm7_pjrt-0.10.0.post1-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:5cdaa03e49beed9de77d1aea83820f7e1b2c84cf33ab8094f4d04e276d3621fa", size = 164655078, upload-time = "2026-06-16T14:14:05.417Z" },
 ]
 
 [[package]]
 name = "jax-rocm7-plugin"
+version = "0.10.0+rocm7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "jax-rocm7-pjrt", version = "0.10.0+rocm7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/jax_rocm7_plugin-0.10.0%2Brocm7.14.1-cp312-cp312-manylinux_2_27_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/jax_rocm7_plugin-0.10.0%2Brocm7.14.1-cp313-cp313-manylinux_2_27_x86_64.whl" },
+]
+
+[[package]]
+name = "jax-rocm7-plugin"
 version = "0.10.0.post1"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
 dependencies = [
-    { name = "jax-rocm7-pjrt" },
+    { name = "jax-rocm7-pjrt", version = "0.10.0.post1", source = { registry = "https://pypi.org/simple" } },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/72/a7/217510394b9cb347df668f4fbd1e0dfde36c7c2f51bbf781246d539b1636/jax_rocm7_plugin-0.10.0.post1-cp312-cp312-manylinux_2_27_x86_64.whl", hash = "sha256:cb4f511d773a8b90cdc689972adae032c76f853d1ff62a91ff1975c07fb95350", size = 8263682, upload-time = "2026-06-16T14:15:39.953Z" },
@@ -192,7 +245,7 @@ wheels = [
 
 [[package]]
 name = "mimosa-tool"
-version = "2.0.3"
+version = "2.0.4"
 source = { editable = "." }
 dependencies = [
     { name = "jax" },
@@ -201,13 +254,23 @@ dependencies = [
 
 [package.optional-dependencies]
 cuda12 = [
-    { name = "jax", extra = ["cuda12"], marker = "extra == 'extra-11-mimosa-tool-cuda12' or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm')" },
+    { name = "jax", extra = ["cuda12"], marker = "extra == 'extra-11-mimosa-tool-cuda12' or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm') or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-rocm' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-rocm' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-rocm10' and extra == 'extra-11-mimosa-tool-rocm7')" },
 ]
 cuda13 = [
-    { name = "jax", extra = ["cuda13"], marker = "extra == 'extra-11-mimosa-tool-cuda13' or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm')" },
+    { name = "jax", extra = ["cuda13"], marker = "extra == 'extra-11-mimosa-tool-cuda13' or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-rocm' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-rocm' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-rocm10' and extra == 'extra-11-mimosa-tool-rocm7')" },
 ]
 rocm = [
-    { name = "jax", extra = ["rocm7-local"], marker = "extra == 'extra-11-mimosa-tool-rocm' or (extra != 'extra-11-mimosa-tool-cuda12' and extra != 'extra-11-mimosa-tool-cuda13') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-cuda13')" },
+    { name = "jax", extra = ["rocm7-local"], marker = "extra == 'extra-11-mimosa-tool-rocm' or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-cuda13') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-rocm10' and extra == 'extra-11-mimosa-tool-rocm7')" },
+]
+rocm10 = [
+    { name = "jax-rocm10-pjrt", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "jax-rocm10-plugin", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "rocm", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }, extra = ["device-all", "libraries"], marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-cuda13') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm') or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-rocm' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-rocm' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-rocm10' and extra == 'extra-11-mimosa-tool-rocm7')" },
+]
+rocm7 = [
+    { name = "jax-rocm7-pjrt", version = "0.10.0+rocm7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "jax-rocm7-plugin", version = "0.10.0+rocm7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "rocm", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }, extra = ["device-all", "libraries"], marker = "(platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-cuda13') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-cuda12' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm') or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-cuda13' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-rocm' and extra == 'extra-11-mimosa-tool-rocm10') or (extra == 'extra-11-mimosa-tool-rocm' and extra == 'extra-11-mimosa-tool-rocm7') or (extra == 'extra-11-mimosa-tool-rocm10' and extra == 'extra-11-mimosa-tool-rocm7')" },
 ]
 
 [package.dev-dependencies]
@@ -222,9 +285,15 @@ requires-dist = [
     { name = "jax", extras = ["cuda12"], marker = "extra == 'cuda12'", specifier = "==0.10.0" },
     { name = "jax", extras = ["cuda13"], marker = "extra == 'cuda13'", specifier = "==0.10.0" },
     { name = "jax", extras = ["rocm7-local"], marker = "extra == 'rocm'", specifier = "==0.10.0" },
+    { name = "jax-rocm10-pjrt", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm10'", specifier = "==0.10.0+rocm10.0.0" },
+    { name = "jax-rocm10-plugin", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm10'", specifier = "==0.10.0+rocm10.0.0" },
+    { name = "jax-rocm7-pjrt", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm7'", specifier = "==0.10.0+rocm7.14.1" },
+    { name = "jax-rocm7-plugin", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm7'", specifier = "==0.10.0+rocm7.14.1" },
     { name = "numpy", specifier = ">=2.4.6" },
+    { name = "rocm", extras = ["libraries", "device-all"], marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm10'", specifier = "==10.0.0" },
+    { name = "rocm", extras = ["libraries", "device-all"], marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'rocm7'", specifier = "==7.14.1" },
 ]
-provides-extras = ["cuda12", "cuda13", "rocm"]
+provides-extras = ["cuda12", "cuda13", "rocm", "rocm7", "rocm10"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -674,6 +743,942 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e4/47/b9efed96c114afcfa3c9d3fe98a76a1d14c74a9e266d397cf6eb64be5e01/pytest-9.1.1.tar.gz", hash = "sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313", size = 1636369, upload-time = "2026-06-19T10:58:32.857Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/24/25/1de2678b631f5a49215c6c96fff41ba892b0a34df68d6d80292b1b48aa7f/pytest-9.1.1-py3-none-any.whl", hash = "sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c", size = 386536, upload-time = "2026-06-19T10:58:31.347Z" },
+]
+
+[[package]]
+name = "rocm"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-core", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+sdist = { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm-7.14.1.tar.gz" }
+
+[package.optional-dependencies]
+device-all = [
+    { name = "rocm-sdk-device-gfx1010", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1011", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1012", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1030", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1031", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1032", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1033", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1034", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1035", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1036", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1100", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1101", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1102", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1103", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1150", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1151", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1152", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1153", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1200", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1201", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx1250", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }, marker = "sys_platform == 'linux'" },
+    { name = "rocm-sdk-device-gfx908", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx90a", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+    { name = "rocm-sdk-device-gfx942", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }, marker = "sys_platform == 'linux'" },
+    { name = "rocm-sdk-device-gfx950", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }, marker = "sys_platform == 'linux'" },
+]
+libraries = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+
+[[package]]
+name = "rocm"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-core", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+sdist = { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm/rocm-10.0.0.tar.gz" }
+
+[package.optional-dependencies]
+device-all = [
+    { name = "rocm-sdk-device-gfx1010", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1011", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1012", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1030", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1031", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1032", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1033", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1034", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1035", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1036", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1100", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1101", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1102", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1103", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1150", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1151", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1152", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1153", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1200", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1201", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx1250", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }, marker = "sys_platform == 'linux'" },
+    { name = "rocm-sdk-device-gfx908", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx90a", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+    { name = "rocm-sdk-device-gfx942", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }, marker = "sys_platform == 'linux'" },
+    { name = "rocm-sdk-device-gfx950", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }, marker = "sys_platform == 'linux'" },
+]
+libraries = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+
+[[package]]
+name = "rocm-sdk-core"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_core-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_core-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-core"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-core/rocm_sdk_core-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-core/rocm_sdk_core-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1010"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1010-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1010-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1010"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1010/rocm_sdk_device_gfx1010-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1010/rocm_sdk_device_gfx1010-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1011"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1011-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1011-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1011"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1011/rocm_sdk_device_gfx1011-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1011/rocm_sdk_device_gfx1011-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1012"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1012-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1012-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1012"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1012/rocm_sdk_device_gfx1012-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1012/rocm_sdk_device_gfx1012-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1030"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1030-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1030-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1030"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1030/rocm_sdk_device_gfx1030-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1030/rocm_sdk_device_gfx1030-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1031"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1031-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1031-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1031"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1031/rocm_sdk_device_gfx1031-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1031/rocm_sdk_device_gfx1031-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1032"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1032-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1032-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1032"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1032/rocm_sdk_device_gfx1032-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1032/rocm_sdk_device_gfx1032-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1033"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1033-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1033-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1033"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1033/rocm_sdk_device_gfx1033-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1033/rocm_sdk_device_gfx1033-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1034"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1034-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1034-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1034"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1034/rocm_sdk_device_gfx1034-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1034/rocm_sdk_device_gfx1034-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1035"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1035-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1035-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1035"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1035/rocm_sdk_device_gfx1035-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1035/rocm_sdk_device_gfx1035-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1036"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1036-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1036-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1036"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1036/rocm_sdk_device_gfx1036-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1036/rocm_sdk_device_gfx1036-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1100"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1100-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1100-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1100"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1100/rocm_sdk_device_gfx1100-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1100/rocm_sdk_device_gfx1100-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1101"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1101-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1101-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1101"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1101/rocm_sdk_device_gfx1101-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1101/rocm_sdk_device_gfx1101-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1102"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1102-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1102-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1102"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1102/rocm_sdk_device_gfx1102-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1102/rocm_sdk_device_gfx1102-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1103"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1103-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1103-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1103"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1103/rocm_sdk_device_gfx1103-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1103/rocm_sdk_device_gfx1103-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1150"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1150-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1150-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1150"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1150/rocm_sdk_device_gfx1150-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1150/rocm_sdk_device_gfx1150-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1151"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1151-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1151-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1151"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1151/rocm_sdk_device_gfx1151-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1151/rocm_sdk_device_gfx1151-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1152"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1152-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1152-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1152"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1152/rocm_sdk_device_gfx1152-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1152/rocm_sdk_device_gfx1152-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1153"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1153-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1153-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1153"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1153/rocm_sdk_device_gfx1153-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1153/rocm_sdk_device_gfx1153-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1200"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1200-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1200-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1200"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1200/rocm_sdk_device_gfx1200-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1200/rocm_sdk_device_gfx1200-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1201"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1201-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1201-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1201"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1201/rocm_sdk_device_gfx1201-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1201/rocm_sdk_device_gfx1201-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1250"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1250-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1250"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx1250/rocm_sdk_device_gfx1250-10.0.0-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx908"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx908-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx908-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx908"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx908/rocm_sdk_device_gfx908-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx908/rocm_sdk_device_gfx908-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx90a"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx90a-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx90a-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx90a"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx90a/rocm_sdk_device_gfx90a-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx90a/rocm_sdk_device_gfx90a-10.0.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx942"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx942-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx942"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx942/rocm_sdk_device_gfx942-10.0.0-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx950"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "7.14.1", source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" } },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx950-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx950"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "rocm-sdk-libraries", version = "10.0.0", source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" } },
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-device-gfx950/rocm_sdk_device_gfx950-10.0.0-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-libraries"
+version = "7.14.1"
+source = { registry = "https://repo.amd.com/rocm/whl-multi-arch/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_libraries-7.14.1-py3-none-linux_x86_64.whl" },
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_libraries-7.14.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-libraries"
+version = "10.0.0"
+source = { registry = "https://stable.repo.amd.com/rocm/whl-next/" }
+resolution-markers = [
+    "python_full_version >= '3.13'",
+    "python_full_version < '3.13'",
+]
+wheels = [
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-libraries/rocm_sdk_libraries-10.0.0-py3-none-linux_x86_64.whl" },
+    { url = "https://stable.repo.amd.com/rocm/core/whl-next/rocm-sdk-libraries/rocm_sdk_libraries-10.0.0-py3-none-win_amd64.whl" },
 ]
 
 [[package]]

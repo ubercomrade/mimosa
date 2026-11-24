@@ -1,0 +1,46 @@
+name: GPU smoke test
+
+on:
+  workflow_dispatch:
+    inputs:
+      extra:
+        description: GPU runtime to install
+        type: choice
+        required: true
+        options:
+          - cuda12
+          - cuda13
+          - rocm7
+          - rocm10
+
+permissions:
+  contents: read
+
+jobs:
+  gpu-smoke:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ${{ startsWith(inputs.extra, 'cuda') && (vars.CUDA_GPU_RUNNER || 'nvidia-gpu') || 'amd-gpu' }}
+    timeout-minutes: 30
+    env:
+      JAX_PLATFORMS: gpu
+      GPU_EXTRA: ${{ inputs.extra }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - name: Report NVIDIA driver
+        if: startsWith(inputs.extra, 'cuda')
+        run: nvidia-smi
+      - name: Install Mimosa with the selected GPU runtime
+        run: uv sync --locked --extra "$GPU_EXTRA"
+      - name: Verify GPU execution
+        run: |
+          uv run --locked --extra "$GPU_EXTRA" python -c \
+            'import jax; print(jax.devices()); print(jax.numpy.arange(8).sum().block_until_ready())'
+      - name: Compare motifs on GPU
+        run: |
+          uv run --locked --extra "$GPU_EXTRA" mimosa compare \
+            examples/foxa2.meme examples/gata2.meme \
+            --query-type pwm --target-type pwm --fasta examples/foreground.fa \
+            --min-logerr 2 --pvalue --mc-replicates 2 --mc-stop-after-exceedances 1

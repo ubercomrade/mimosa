@@ -1,6 +1,6 @@
 [project]
 name = "mimosa-tool"
-version = "2.0.3"
+version = "2.0.4"
 description = "Model-independent motif similarity assessment tool"
 readme = "README.md"
 license = "MIT"
@@ -17,13 +17,37 @@ dependencies = [
 cuda12 = ["jax[cuda12]==0.10.0"]
 cuda13 = ["jax[cuda13]==0.10.0"]
 rocm = ["jax[rocm7-local]==0.10.0"]
+rocm7 = [
+    "rocm[libraries,device-all]==7.14.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "jax-rocm7-plugin==0.10.0+rocm7.14.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "jax-rocm7-pjrt==0.10.0+rocm7.14.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+rocm10 = [
+    "rocm[libraries,device-all]==10.0.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "jax-rocm10-plugin==0.10.0+rocm10.0.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "jax-rocm10-pjrt==0.10.0+rocm10.0.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 
 [tool.uv]
 conflicts = [
-    [{ extra = "cuda12" }, { extra = "cuda13" }],
-    [{ extra = "cuda12" }, { extra = "rocm" }],
-    [{ extra = "cuda13" }, { extra = "rocm" }],
+    [
+        { extra = "cuda12" },
+        { extra = "cuda13" },
+        { extra = "rocm" },
+        { extra = "rocm7" },
+        { extra = "rocm10" },
+    ],
 ]
+# AMD uses the same runtime package names across both versioned indexes.
+index-strategy = "unsafe-first-match"
+
+[[tool.uv.index]]
+name = "amd-rocm7"
+url = "https://repo.amd.com/rocm/whl-multi-arch/"
+
+[[tool.uv.index]]
+name = "amd-rocm10"
+url = "https://stable.repo.amd.com/rocm/whl-next/"
 
 [project.urls]
 Homepage = "https://github.com/ubercomrade/mimosa"

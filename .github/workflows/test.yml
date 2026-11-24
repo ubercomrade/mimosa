@@ -52,3 +52,49 @@ jobs:
       - name: Run PowerShell examples
         shell: pwsh
         run: ./examples/run.ps1
+
+  gpu-package:
+    name: Package resolution (${{ matrix.extra }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - extra: cuda12
+            runtime: nvidia-cuda-runtime-cu12
+          - extra: cuda13
+            runtime: nvidia-cuda-runtime
+          - extra: rocm7
+            index: https://repo.amd.com/rocm/whl-multi-arch/
+            runtime: rocm
+          - extra: rocm10
+            index: https://stable.repo.amd.com/rocm/whl-next/
+            runtime: rocm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - name: Check lock and build wheel
+        run: |
+          uv lock --check
+          uv build --wheel
+      - name: Resolve wheel with the selected GPU extra
+        shell: bash
+        env:
+          GPU_EXTRA: ${{ matrix.extra }}
+          GPU_INDEX: ${{ matrix.index }}
+          GPU_RUNTIME: ${{ matrix.runtime }}
+        run: |
+          uv venv --python 3.13
+          wheel=( "$PWD"/dist/*.whl )
+          index_args=()
+          if [[ -n "$GPU_INDEX" ]]; then
+            index_args=(--index "$GPU_INDEX")
+          fi
+          uv pip install --dry-run "${index_args[@]}" \
+            "mimosa-tool[$GPU_EXTRA] @ file://${wheel[0]}" 2>&1 | tee gpu-install.log
+          grep -F "jax-${GPU_EXTRA}-plugin==" gpu-install.log
+          grep -F "jax-${GPU_EXTRA}-pjrt==" gpu-install.log
+          grep -F "${GPU_RUNTIME}==" gpu-install.log
