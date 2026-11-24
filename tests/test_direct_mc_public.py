@@ -358,23 +358,34 @@ def test_comparison_block_size_preserves_counts(block_size):
         np.testing.assert_array_equal(a, b)
 
 
-def test_query_replicates_are_prepared_once_and_targets_fixed(monkeypatch):
+@pytest.mark.parametrize("group", ["full", "gc"])
+def test_query_replicates_are_prepared_once_and_targets_fixed(monkeypatch, group):
     import mimosa.monte_carlo as mc
 
     query = read_model("examples/foxa2.meme")
     targets = [read_model("examples/gata4.meme"), read_model("examples/gata2.meme")]
     sequences = EncodedSequences.from_strings(["ACGT" * 30])
     real_relabel = mc.relabel_model
-    seen = []
+    real_fingerprint = mc.model_fingerprint
+    expected = [mc._permutations(query, 1, i, group) for i in range(3)]
+    permutations = []
+    fingerprinted = []
 
     def record(model, **kwargs):
-        seen.append(model)
+        assert model is query
+        permutations.append(kwargs["permutations"])
         return real_relabel(model, **kwargs)
 
+    def record_fingerprint(model):
+        fingerprinted.append(model)
+        return real_fingerprint(model)
+
     monkeypatch.setattr(mc, "relabel_model", record)
-    direct_mc(query, targets, sequences, k=3, seed=1, min_logerr=1, batch_size=2)
-    assert len(seen) == 3
-    assert all(model is query for model in seen)
+    monkeypatch.setattr(mc, "model_fingerprint", record_fingerprint)
+    direct_mc(query, targets, sequences, k=3, seed=1, group=group, min_logerr=1, batch_size=2)
+    assert len(fingerprinted) == 1
+    assert fingerprinted[0] is query
+    np.testing.assert_array_equal(permutations, expected)
 
 
 def test_disk_cleanup_after_error(tmp_path, monkeypatch):

@@ -47,8 +47,9 @@ def _count_exceedances(queries, target, starts, sizes, threshold, observed, *,
     return hits if return_mask else jnp.sum(hits, dtype=jnp.int64)
 
 
-def _permutations(model, seed, replicate, group):
-    identity = model_fingerprint(model)
+def _permutations(model, seed, replicate, group, identity=None):
+    if identity is None:
+        identity = model_fingerprint(model)
     digest = hashlib.sha256(f"mimosa-direct-mc-v2|{seed}|{replicate}|{identity}".encode()).digest()
     rng = np.random.default_rng(np.random.SeedSequence(np.frombuffer(digest, dtype="<u4")))
     if group == "full":
@@ -257,14 +258,14 @@ def _prepare_observed_profiles(query, targets, store, score, *, threshold, algor
 
 def _prepare_replicate_blocks(query, sequences, background, *, first, end,
                               comparison_block_size, seed, group, threshold, algorithm,
-                              relabel_scorer):
+                              query_fingerprint, relabel_scorer):
     """Build one bounded batch; replicate identities do not depend on its layout."""
     blocks = []
     for block_start in range(first, end, comparison_block_size):
         profiles = []
         for replicate in range(block_start, min(block_start + comparison_block_size, end)):
             variant = relabel_model(
-                query, permutations=_permutations(query, seed, replicate, group),
+                query, permutations=_permutations(query, seed, replicate, group, query_fingerprint),
             )
             if relabel_scorer is not None and isinstance(variant, InputRelabeledModel):
                 profiles.append(_profile(variant, sequences, background, relabel_scorer=relabel_scorer))
@@ -447,6 +448,7 @@ def _direct_mc(query, targets, sequences, *, k, seed, group,
             anchor_memory_limit=anchor_memory_limit, return_details=return_details,
         )
         relabel_scorer = None if query.sequence_scanner else _compile_relabel_scorer(query)
+        query_fingerprint = model_fingerprint(query)
         active = None
         for first in range(0, k, batch_size):
             if stop_after_exceedances is not None:
@@ -456,7 +458,8 @@ def _direct_mc(query, targets, sequences, *, k, seed, group,
             blocks = _prepare_replicate_blocks(
                 query, sequences, background, first=first, end=min(first + batch_size, k),
                 comparison_block_size=comparison_block_size, seed=seed, group=group,
-                threshold=threshold, algorithm=algorithm, relabel_scorer=relabel_scorer,
+                threshold=threshold, algorithm=algorithm, query_fingerprint=query_fingerprint,
+                relabel_scorer=relabel_scorer,
             )
             _accumulate_exceedances(
                 blocks, target_store, target_anchors, observed, counts, replicates,
