@@ -93,7 +93,7 @@ comparison data; equal row lengths alone cannot establish this.
 Comparison is the weighted Jaccard similarity of circular profiles.
 `min_logerr=None` uses the threshold of a prepared input, or `4.0` otherwise;
 the threshold must be positive. Both profiles must have identical row lengths.
-A `UserWarning` is issued when fewer than 50 positions per strand are expected
+A `UserWarning` is issued when fewer than 50 positions are expected
 above the threshold.
 
 `prepare_profile(..., circular=False)` keeps the linear scan layout: rows hold

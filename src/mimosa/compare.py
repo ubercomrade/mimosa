@@ -87,7 +87,7 @@ def _check_circular(profile):
 
 
 def _warn_if_few_positions(prepared):
-    """Warn when too few positions per strand are expected above the threshold.
+    """Warn when too few positions are expected above the threshold.
 
     Compared profiles share row layout and threshold, so checking the query
     covers every target.
@@ -102,7 +102,7 @@ def _warn_if_few_positions_count(name, positions, min_logerr, *, stacklevel=3):
     if expected < MIN_EXPECTED_ANCHORS:
         warnings.warn(
             f"profile '{name}': only about {expected:.3g} of {positions} "
-            f"positions per strand are expected at "
+            f"positions are expected at "
             f"min_logerr={float(min_logerr):g}; the {METRIC_NAME} "
             "score is noisy. Use more sequence positions or a lower min_logerr.",
             stacklevel=stacklevel,

@@ -76,7 +76,7 @@ With `--pvalue`, JSON includes `p-value`, `adj.p-value` (Benjamini–Hochberg),
 `replicates`, `exceedances`, `seed`, `group`, `algorithm`,
 `version: "mimosa-direct-mc-v2"`, and `randomized: "query"`.
 
-The default threshold expects about `10^6` positions per strand. With fewer
+The default threshold expects about `10^6` positions. With fewer
 than 50 expected positions above the threshold, a warning is written to
 `stderr`; lower `--min-logerr` for small FASTA batches.
 

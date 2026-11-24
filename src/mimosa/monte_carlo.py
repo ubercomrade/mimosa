@@ -23,7 +23,7 @@ from .models import MotifModel, SiteGA, strict_integer
 from .profiles.anchors import parse_min_logerr
 from .profiles.normalization import EmpiricalLogTail
 from .profiles.sparse import count_exceedances as _count_sparse_exceedances, make_anchors
-from .randomization import relabel_model
+from .randomization import InputRelabeledModel, _compile_relabel_scorer, relabel_model
 
 _COMPARISON_BLOCK_SIZE = 8
 _REBUILD_ANCHORS = object()
@@ -58,10 +58,12 @@ def _permutations(model, seed, replicate, group):
     return result
 
 
-def _profile(model, sequences, background):
+def _profile(model, sequences, background, *, relabel_scorer=None):
     if getattr(model, "sequence_scanner", False):
-        raw = jnp.concatenate(scan_circular(model, sequences))
-        calibration = raw if background is None else jnp.concatenate(scan_circular(model, background))
+        raw_pair = scan_circular(model, sequences)
+        cal_pair = raw_pair if background is None else scan_circular(model, background)
+        raw = jnp.concatenate(raw_pair)
+        calibration = jnp.maximum(*cal_pair)
         # Reduce on device and synchronize only the scalar; checking both batches
         # also covers every observed and randomized profile before normalization.
         finite = jnp.all(jnp.isfinite(raw))
@@ -74,16 +76,15 @@ def _profile(model, sequences, background):
         return normalize_exact(raw, calibration).reshape((2, sequences.data.size))
     # Generic window scorers run through the shared scan path, which validates
     # finiteness and yields host-side Float32 tracks.
-    pair = model.scan(sequences, strands="both", circular=True)
+    scan = model.scan if relabel_scorer is None else model._bind_relabel_scorer(relabel_scorer)
+    pair = scan(sequences, strands="both", circular=True)
     if background is None:
         calibration = pair
     else:
-        calibration = model.scan(background, strands="both", circular=True)
+        calibration = scan(background, strands="both", circular=True)
     raw = np.concatenate((pair.forward.data, pair.reverse.data))
-    cal = (
-        raw if background is None
-        else np.concatenate((calibration.forward.data, calibration.reverse.data))
-    )
+    cal = jnp.maximum(jnp.asarray(calibration.forward.data),
+                      jnp.asarray(calibration.reverse.data))
     return normalize_exact(jnp.asarray(raw), jnp.asarray(cal)).reshape((2, sequences.data.size))
 
 
@@ -253,7 +254,8 @@ def _prepare_observed_profiles(query, targets, store, score, *, threshold, algor
 
 
 def _prepare_replicate_blocks(query, sequences, background, *, first, end,
-                              comparison_block_size, seed, group, threshold, algorithm):
+                              comparison_block_size, seed, group, threshold, algorithm,
+                              relabel_scorer):
     """Build one bounded batch; replicate identities do not depend on its layout."""
     blocks = []
     for block_start in range(first, end, comparison_block_size):
@@ -262,7 +264,10 @@ def _prepare_replicate_blocks(query, sequences, background, *, first, end,
             variant = relabel_model(
                 query, permutations=_permutations(query, seed, replicate, group),
             )
-            profiles.append(_profile(variant, sequences, background))
+            if relabel_scorer is not None and isinstance(variant, InputRelabeledModel):
+                profiles.append(_profile(variant, sequences, background, relabel_scorer=relabel_scorer))
+            else:
+                profiles.append(_profile(variant, sequences, background))
         block = jnp.stack(profiles)
         anchors = make_anchors(block, threshold) if algorithm == "sparse" else None
         blocks.append((block, anchors))
@@ -404,11 +409,12 @@ def _direct_mc(query, targets, sequences, *, k, seed, group,
             query, targets, target_store, score, threshold=threshold, algorithm=algorithm,
             anchor_memory_limit=anchor_memory_limit, return_details=return_details,
         )
+        relabel_scorer = None if query.sequence_scanner else _compile_relabel_scorer(query)
         for first in range(0, k, batch_size):
             blocks = _prepare_replicate_blocks(
                 query, sequences, background, first=first, end=min(first + batch_size, k),
                 comparison_block_size=comparison_block_size, seed=seed, group=group,
-                threshold=threshold, algorithm=algorithm,
+                threshold=threshold, algorithm=algorithm, relabel_scorer=relabel_scorer,
             )
             _accumulate_exceedances(
                 blocks, target_store, target_anchors, observed, counts,

@@ -100,21 +100,35 @@ def test_exact_normalization_matches_cpu(background):
     other = EncodedSequences.from_strings(["TGCATGCAN" * 7, "AC" * 20])
     raw = _scan_batch(model, sequences, "both", circular=True)
     calibration = _scan_batch(model, other, "both", circular=True) if background else raw
-    calibration_scores = np.concatenate((calibration.forward.data, calibration.reverse.data))
+    calibration_scores = np.maximum(calibration.forward.data, calibration.reverse.data)
     reference = normalize_bundle(fit(EmpiricalLogTail(), calibration_scores), raw)
     scores = np.concatenate((raw.forward.data, raw.reverse.data))
-    cal = np.concatenate((calibration.forward.data, calibration.reverse.data))
+    cal = calibration_scores
     expected = np.concatenate((reference.forward.data, reference.reverse.data))
     np.testing.assert_array_equal(np.asarray(normalize_exact(scores, cal)), expected)
 
 
+def test_position_calibration_counts_unique_positions():
+    from mimosa import RaggedArray, StrandPair
+    from mimosa.profiles.prepared import _normalize_with_jax
+
+    forward = RaggedArray.from_rows([np.arange(1000, dtype=np.float32)])
+    reverse = RaggedArray.from_rows([np.arange(1000, dtype=np.float32)[::-1]])
+    raw = StrandPair(forward, reverse)
+    actual = _normalize_with_jax(raw)
+    maxima = np.maximum(forward.data, reverse.data)
+    expected = normalize_bundle(fit(EmpiricalLogTail(), maxima), raw)
+    np.testing.assert_array_equal(actual.forward.data, expected.forward.data)
+    np.testing.assert_array_equal(actual.reverse.data, expected.reverse.data)
+    assert np.count_nonzero(np.maximum(actual.forward.data, actual.reverse.data) >= 2) == 10
+
+
 def test_normalization_boundaries_ties_and_empty():
-    values = np.array([-100, -1, 0, 0.5, 1, 2, 100], np.float32)
-    calibration = np.array([-1, -1, 0, 1, 1], np.float32)
-    expected = np.array([0, 0, -np.log10(3 / 5), -np.log10(2 / 5),
-                         -np.log10(2 / 5), -np.log10(2 / 5), -np.log10(2 / 5)],
-                        np.float32)
-    np.testing.assert_array_equal(np.asarray(normalize_exact(values, calibration)), expected)
+    values = np.array([-100, -1, -0.5, -0.0, 0.0, 0.5, 1, 2, 100], np.float32)
+    calibration = np.array([-1, -1, -0.0, 0.0, 1, 1], np.float32)
+    expected = -np.log10(np.array([6, 6, 4, 4, 4, 2, 2, 2, 2], np.float64) / 6)
+    actual = np.asarray(normalize_exact(values, calibration))
+    np.testing.assert_array_equal(actual.view(np.uint32), expected.astype(np.float32).view(np.uint32))
     np.testing.assert_array_equal(np.asarray(normalize_exact(values, np.array([], np.float32))),
                                   np.zeros_like(values))
 

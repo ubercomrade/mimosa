@@ -184,7 +184,7 @@ class TestNormalization:
         assert anchors.positions.tolist() == [offset]
 
     def test_fingerprint(self):
-        assert normalization_fingerprint(EmpiricalLogTail()) == "empirical-log-tail-v2"
+        assert normalization_fingerprint(EmpiricalLogTail()) == "empirical-log-tail-v3"
 
     def test_prepared_normalized_scores_are_threshold_independent(
         self, pwm_pair, batch
@@ -214,7 +214,7 @@ class TestNormalization:
         background = read_fasta("examples/background.fa")[0]
         raw = scan(pwm_pair[0], batch, strands="both")
         calibration = scan(pwm_pair[0], background, strands="both")
-        scores = np.concatenate((calibration.forward.data, calibration.reverse.data))
+        scores = np.maximum(calibration.forward.data, calibration.reverse.data)
         expected = normalize_bundle(fit(EmpiricalLogTail(), scores), raw)
 
         actual = prepare_profile(
@@ -420,10 +420,10 @@ class TestCompare:
         assert result.query == "MA0047.3"
         assert result.target == "MA0036.2"
         assert result.metric == "jaccard"
-        assert result.orientation == "+-"
-        assert result.offset == -2
-        assert result.n_sites == 2828
-        assert abs(float(result.score) - 0.37774196) < 1e-5
+        assert result.orientation == "-+"
+        assert result.offset == -1
+        assert result.n_sites == 1404
+        assert abs(float(result.score) - 0.27955651) < 1e-5
 
     def test_compare_score_profiles(self):
         s1 = read_scores("examples/scores_1.fasta")
@@ -522,10 +522,12 @@ class TestCompare:
             for profile in (query, target)
         ]
         forward = compare(*forward_profiles)
-        assert (forward.score, forward.offset) == (1.0, -columns)
-        # Site starts coincide on the reverse strand, which ties at shift 0.
+        # The two orientations shift differently, so their paired maxima and
+        # calibration tables are not identical even for identical forward tracks.
+        assert forward.offset == -columns
+        assert forward.score == pytest.approx(1.0, abs=0.01)
         result = compare(query, target)
-        assert float(result.score) == 1.0
+        assert float(result.score) == pytest.approx(1.0, abs=0.01)
         assert (result.orientation, result.offset) in (("++", -columns), ("--", 0))
 
     def test_compare_is_symmetric_up_to_mirrored_alignment(self, pwm_pair, batch):

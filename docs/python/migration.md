@@ -50,6 +50,12 @@ strategy. `min_logerr` selects contributing positions without changing their
 stored normalized values. Results can differ from the earlier hybrid
 normalization and from reductions performed by the old backend.
 
+Calibration now uses the best score across both orientations at each position,
+instead of pooling oriented scores. Existing signatures are unchanged, but
+logERR values, comparison scores and Monte Carlo p-values can change. Cache
+entries using the previous normalization fingerprint are misses; recompute
+results when comparing with those produced by the previous method.
+
 Direct Monte Carlo randomizes the single **query**, not the targets:
 
 1. Prepare the observed query and fixed targets.

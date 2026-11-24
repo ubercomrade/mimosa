@@ -192,6 +192,9 @@ class MotifModel(ABC):
 
     def scan(self, sequences, *, strands, circular=False):
         """Return ragged score tracks for a validated sequence batch."""
+        return self._scan_with_window_scorer(sequences, strands=strands, circular=circular)
+
+    def _scan_with_window_scorer(self, sequences, *, strands, circular, window_scorer=None):
         _validate_model_contract(self)
         if strands not in STRAND_POLICIES:
             raise ValueError(
@@ -202,7 +205,10 @@ class MotifModel(ABC):
         sequence_offsets = sequences.offsets
         if circular and not self.sequence_scanner:
             sequences = self._circularize(sequences)
-        forward, reverse, offsets = self._scan_tracks(sequences, strands, circular)
+        if window_scorer is None:
+            forward, reverse, offsets = self._scan_tracks(sequences, strands, circular)
+        else:
+            forward, reverse, offsets = self._scan_window_tracks(sequences, strands, window_scorer)
         if (
             circular and not self.sequence_scanner
             and not np.array_equal(offsets, sequence_offsets)
@@ -261,6 +267,10 @@ class MotifModel(ABC):
             tracks, offsets = scan_linear(self, sequences)
             return tracks[0], tracks[1], offsets
 
+        return self._scan_window_tracks(sequences, strands, jax.jit(self.score_sites))
+
+    def _scan_window_tracks(self, sequences, strands, score):
+        """Batch oriented windows and validate one score per window."""
         width = window_size(self)
         batch_size = min(
             getattr(self, "batch_size", DEFAULT_WINDOW_BATCH_SIZE),
@@ -271,7 +281,6 @@ class MotifModel(ABC):
         data = jnp.asarray(sequences.data)
         forward = np.empty(count, np.float32) if strands != "reverse" else None
         reverse = np.empty(count, np.float32) if strands != "forward" else None
-        score = jax.jit(self.score_sites)
 
         def evaluate(windows):
             try:

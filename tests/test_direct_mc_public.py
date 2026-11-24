@@ -132,6 +132,7 @@ def test_custom_model_monte_carlo():
     custom = Consensus(np.array([0, 1, 2], dtype=np.uint8))
     sequences = EncodedSequences.from_strings(["ACGTACGTAA" * 6, "TTTGGG" * 10])
     options = dict(k=3, seed=11, min_logerr=1, search_range=2)
+    first_counts = None
     for query, target in ((custom, pwm), (pwm, custom), (custom, custom)):
         observed, counts, pvalues = direct_mc(query, [target], sequences, **options)
         with pytest.warns(UserWarning, match="the jaccard score is noisy"):
@@ -139,8 +140,76 @@ def test_custom_model_monte_carlo():
         assert observed[0, 0] == result.score
         np.testing.assert_array_equal(pvalues, (counts + 1) / 4)
         assert counts[0, 0] <= 3
+        if first_counts is None:
+            first_counts = counts.copy()
     repeat = direct_mc(custom, [pwm], sequences, **options)
-    assert repeat[1][0, 0] == counts[0, 0]
+    np.testing.assert_array_equal(repeat[1], first_counts)
+
+
+@pytest.mark.parametrize("group", ["full", "gc"])
+def test_custom_mc_reuses_jit_and_matches_relabel_profiles(monkeypatch, group):
+    import jax.numpy as jnp
+
+    from mimosa import InputRelabeledModel, WindowModel
+    from mimosa.models import DEFAULT_WINDOW_BATCH_SIZE
+    import mimosa.monte_carlo as mc
+
+    traces = []
+
+    def score(windows):
+        traces.append(windows.shape[0])
+        weights = jnp.array([3, 17, 2, 5, 11, 7], dtype=jnp.float32)
+        return jnp.sum(windows * weights, axis=1)
+
+    query = WindowModel("contextual", 3, score, left_context=1, right_context=2,
+                        fingerprint="contextual-mc-test")
+    target = read_model("examples/gata4.meme")
+    sequence = "ACGT" * (DEFAULT_WINDOW_BATCH_SIZE // 4)
+    foreground = EncodedSequences.from_strings([sequence, "", "TT", "ACGTN"])
+    background = EncodedSequences.from_strings(["", "GANTT", "GCAAT" * 10])
+    options = dict(k=4, seed=127, group=group, min_logerr=1, search_range=1,
+                   background=background, batch_size=2)
+    original_profile = mc._profile
+    randomized_profiles = []
+
+    def capture(model, sequences, bg, **kwargs):
+        result = original_profile(model, sequences, bg, **kwargs)
+        if isinstance(model, InputRelabeledModel):
+            randomized_profiles.append(np.asarray(result).view(np.uint32))
+        return result
+
+    monkeypatch.setattr(mc, "_profile", capture)
+    actual = direct_mc(query, [target], foreground, **options)
+    # Each shape can be traced once for the observed scorer and once for the
+    # randomized scorer, independent of the number of replicas or strands.
+    for size in (DEFAULT_WINDOW_BATCH_SIZE, 7, 55):
+        assert 1 <= traces.count(size) <= 2
+    assert len(randomized_profiles) == options["k"]
+    actual_profiles = randomized_profiles.copy()
+    randomized_profiles.clear()
+    monkeypatch.setattr(mc, "_compile_relabel_scorer", lambda _: None)
+    expected = direct_mc(query, [target], foreground, **options)
+    np.testing.assert_array_equal(actual_profiles, randomized_profiles)
+    for left, right in zip(actual, expected):
+        np.testing.assert_array_equal(left, right)
+
+
+def test_custom_mc_rejects_nonfinite_randomized_scores(monkeypatch):
+    import jax.numpy as jnp
+
+    from mimosa import WindowModel
+    import mimosa.monte_carlo as mc
+
+    def score(windows):
+        return jnp.where(windows[:, 0] == 1, jnp.inf, 0.0)
+
+    query = WindowModel("invalid-randomized", 1, score, fingerprint="invalid-randomized")
+    target = read_model("examples/gata4.meme")
+    sequences = EncodedSequences.from_strings(["A" * 20])
+    table = np.array([[1, 0, 3, 2]], dtype=np.uint8)
+    monkeypatch.setattr(mc, "_permutations", lambda *args: table)
+    with pytest.raises(ModelFormatError, match="non-finite"):
+        direct_mc(query, [target], sequences, k=1, seed=127, min_logerr=1)
 
 
 def test_monte_carlo_rejects_non_motif_inputs():

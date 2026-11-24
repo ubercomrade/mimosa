@@ -144,11 +144,11 @@ def _normalize_exact(scores, calibration):
     if calibration.size == 0:
         return jnp.zeros_like(scores)
     ordered = jnp.sort(calibration)
-    indices = jnp.searchsorted(ordered, scores, side="left", method="scan")
-    # CPU table clamps to the maximal calibration score when scores exceed it.
-    # Looking up its first occurrence also preserves ties at that boundary.
-    selected = ordered[jnp.minimum(indices, calibration.size - 1)]
-    first = jnp.searchsorted(ordered, selected, side="left", method="scan")
+    # A left insertion point is already the first index of the next value.
+    # Clamp above the maximum before searching to preserve ties at that boundary.
+    maximum = ordered[-1]
+    capped = jnp.where((scores > maximum) | jnp.isnan(scores), maximum, scores)
+    first = jnp.searchsorted(ordered, capped, side="left", method="scan_unrolled")
     tail = (calibration.size - first).astype(jnp.float64) / jnp.float64(calibration.size)
     # XLA may replace division by a reciprocal, so n/n can round below 1.
     # The exact empirical survival probability at the minimum is one.

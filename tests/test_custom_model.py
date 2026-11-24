@@ -56,6 +56,22 @@ def batch():
 
 
 class TestCustomModel:
+    @pytest.mark.parametrize("use_background", [False, True])
+    @pytest.mark.parametrize("custom", [False, True])
+    def test_monte_carlo_profile_matches_preparation(self, pwm, custom, use_background):
+        import jax
+        from mimosa import EncodedSequences, prepare_profile
+        from mimosa.monte_carlo import _profile
+
+        model = ShiftedPWM(pwm) if custom else pwm
+        sequences = EncodedSequences.from_strings(["ACGTTGCA" * 5, "TTACG" * 6])
+        background = EncodedSequences.from_strings(["GATTACA" * 7]) if use_background else None
+        prepared = prepare_profile(model, sequences, background=background, circular=True)
+        with jax.enable_x64(True):
+            actual = np.asarray(_profile(model, sequences, background))
+        np.testing.assert_array_equal(actual[0], prepared.bundle.forward.data)
+        np.testing.assert_array_equal(actual[1], prepared.bundle.reverse.data)
+
     def test_scan_parity_with_shifted_pwm(self, pwm, batch):
         custom = ShiftedPWM(pwm)
         # custom scan at p reads seq[p+1..p+11]; PWM scan of the N-padded
@@ -85,7 +101,8 @@ class TestCustomModel:
         assert result.target == pwm.name
         # Asymmetric context is reversed on the minus strand, so its perfect
         # alignment is one position left of the plus-strand alignment.
-        assert float(result.score) == pytest.approx(1.0, abs=1e-3)
+        # Opposite orientations shift differently, changing position-wise calibration.
+        assert float(result.score) == pytest.approx(1.0, abs=0.01)
         assert (result.orientation, result.offset) in (("++", 0), ("--", -1))
 
     def test_sites_via_custom(self, pwm, batch):

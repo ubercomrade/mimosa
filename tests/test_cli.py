@@ -92,7 +92,7 @@ class TestCompareCommand:
         assert r.stderr == ""
         d = json.loads(r.stdout)
         assert d["query"] == "MA0047.3"
-        assert d["n_sites"] == 2828
+        assert d["n_sites"] == 1404
 
     def test_defaults_use_generated_sequences_and_threshold_four(self):
         r = run_cli(

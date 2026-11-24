@@ -305,7 +305,7 @@ def _verify_cache_data(cache, key, path, meta):
 
 
 def _normalization_from_fingerprint(value):
-    if value == "empirical-log-tail-v2":
+    if value == "empirical-log-tail-v3":
         return EmpiricalLogTail()
     return None
 

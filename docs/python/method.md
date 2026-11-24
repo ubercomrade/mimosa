@@ -39,17 +39,20 @@ When the score exceeds every calibration score, the table clamps it to the
 maximum calibration score rather than returning an infinite value. An empty
 calibration table produces zero.
 
-For each model, forward and reverse calibration scores are pooled into one
-table. The denominator is the full calibration count and normalized profile values are
-Float32. `EmpiricalLogTail` is the sole normalization strategy; `min_logerr`
+For each model and calibration position, take the maximum of the forward and
+reverse scores. These maxima form the calibration table; both strand scores are
+transformed against it. The denominator is the number of calibration positions,
+and normalized profile values are Float32. `EmpiricalLogTail` is the sole normalization strategy; `min_logerr`
 only selects contributing positions and does not change normalized values.
 Legacy hybrid normalization and its `bins` parameter are no longer supported.
 Prepared-profile cache entries from older formats are misses. Stored pooled-null
 distributions are no longer accepted; recompute significance with `direct_mc`
 or CLI `--pvalue`.
-Because both strands share one
-calibration, approximately a fraction `10^-t` of positions reaches a value
-`t`; tied scores and finite precision can change the exact count.
+When the comparison batch calibrates itself, approximately a fraction `10^-t`
+of its positions reaches `t` on at least one strand; tied scores and finite
+precision can change the count. With a separate background this calibration
+applies to the background, not necessarily the comparison batch. Overlapping
+positions are distinct candidates, not necessarily distinct occupied sites.
 
 ## Weighted Jaccard similarity
 
@@ -71,8 +74,8 @@ alignments have the same score. Both profiles must have the same row lengths.
 Dense Jaccard sums accumulate in Float64; reported scores are Float32.
 
 `min_logerr` must be positive and defaults to `4.0`; `search_range` defaults to
-`5`. About `positions * 10^-min_logerr` positions per strand pass the threshold,
-so the defaults are tuned for `10^6` positions per strand (10 000 sequences of
+`5`. About `positions * 10^-min_logerr` calibration positions pass on either strand,
+so the defaults are tuned for `10^6` positions (10 000 sequences of
 100 bp). Mimosa warns when fewer than 50 are expected: use more sequence or a
 lower threshold. The measure was validated on uniform random sequences
 calibrated on themselves.

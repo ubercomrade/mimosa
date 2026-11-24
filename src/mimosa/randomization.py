@@ -8,7 +8,9 @@ overlapping-window dependence nor a biological null hypothesis is guaranteed.
 from __future__ import annotations
 
 import hashlib
+from functools import partial
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -101,6 +103,21 @@ def _validate_permutations(model, permutations):
     return result
 
 
+def _recode_windows(windows, table):
+    return table[jnp.arange(windows.shape[1])[None, :], windows]
+
+
+def _compile_relabel_scorer(model):
+    """Compile against a fixed model and accept the table as a device argument."""
+    score_sites = model.score_sites
+
+    @jax.jit
+    def score(windows, table):
+        return score_sites(_recode_windows(windows, table))
+
+    return score
+
+
 class InputRelabeledModel(WindowModel):
     """Generic f(pi(x)) wrapper; reverse-complement precedes input recoding.
 
@@ -129,8 +146,12 @@ class InputRelabeledModel(WindowModel):
         return self._permutations
 
     def _recoded_scores(self, windows):
-        transformed = jnp.asarray(self._full_permutations)[jnp.arange(windows.shape[1])[None, :], windows]
+        transformed = _recode_windows(windows, jnp.asarray(self._full_permutations))
         return self.source_model.score_sites(transformed)
+
+    def _bind_relabel_scorer(self, scorer):
+        score = partial(scorer, table=jnp.asarray(self._full_permutations))
+        return partial(self._scan_with_window_scorer, window_scorer=score)
 
     def fingerprint(self):
         from .io.bundles import model_fingerprint

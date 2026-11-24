@@ -17,13 +17,31 @@ python -m pip install .
 ```
 
 JAX is required, including for CPU execution; the project pins `jax==0.10.0`.
-The default installation does not install GPU plugins. For GPU use, follow the
-[JAX installation guide](https://docs.jax.dev/en/latest/installation.html) and
-choose plugins compatible with the pinned version. Check device availability:
+The default installation does not install GPU plugins. For NVIDIA CUDA, choose
+one of the `cuda12` or `cuda13` extras. For example, use
+`uv sync --locked --group dev --extra cuda13`, then include `--extra cuda13`
+in each `uv run` command. For pip, use `python -m pip install 'mimosa-tool[cuda13]'`.
+The GPU and NVIDIA driver must support the chosen CUDA version. For AMD, use
+`python -m pip install 'mimosa-tool[rocm]'`, or run:
 
 ```bash
-uv run python -c "import jax; print(jax.devices())"
+uv sync --locked --group dev --extra rocm
+uv run --extra rocm mimosa --version
 ```
+
+The ROCm extra installs
+the plugin and PJRT; it requires a separately installed compatible ROCm 7 and
+driver. See the
+[installation section of the README](../../README.md#installation) for both
+GPU options and links to compatibility instructions. Check device availability
+in the environment used for computation:
+
+```bash
+uv run --extra rocm python -c "import jax; print(jax.default_backend(), jax.devices())"
+```
+
+Use `--extra cuda13` or `--extra cuda12` for the corresponding NVIDIA
+environment, or omit `--extra` for the default CPU environment.
 
 See [Migrating to JAX](migration.md) if updating an older installation.
 
@@ -69,7 +87,7 @@ print(result.to_dict())
 
 The score is the weighted Jaccard similarity of the two circular `-log10(ERR)`
 profiles, reported with `metric == "jaccard"`. `min_logerr` defaults to `4.0`,
-which suits about `10^6` positions per strand; the bundled FASTA is smaller, so
+which suits about `10^6` positions; the bundled FASTA is smaller, so
 these examples lower it. A separate FASTA batch can be passed as `background=`
 when score normalization needs a separate calibration set.
 

@@ -31,7 +31,7 @@ class EmpiricalLogTail:
 
 def normalization_fingerprint(strategy):
     if isinstance(strategy, EmpiricalLogTail):
-        return "empirical-log-tail-v2"
+        return "empirical-log-tail-v3"
     raise ValueError(f"unknown normalization strategy: {strategy!r}")
 
 

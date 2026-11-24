@@ -302,8 +302,8 @@ class TestPreparedProfileCache:
         with open(path / "meta.toml", "rb") as f:
             metadata = tomllib.load(f)
         assert metadata["prepared_profile_format_version"] == 8
-        assert metadata["normalization"] == "empirical-log-tail-v2"
-        for old_tag in ("hybrid-log-tail-v3;bins=65536", "empirical-log-tail-v1"):
+        assert metadata["normalization"] == "empirical-log-tail-v3"
+        for old_tag in ("hybrid-log-tail-v3;bins=65536", "empirical-log-tail-v1", "empirical-log-tail-v2"):
             old = dict(metadata, normalization=old_tag)
             assert _decode_mmap_prepared_profile(path / "data.bin", old) is None
         assert _decode_mmap_prepared_profile(

@@ -48,10 +48,15 @@ def _normalize_with_jax(raw, calibration=None):
         return forward if bundle.forward is bundle.reverse else np.concatenate((forward, reverse))
 
     raw_values = values(raw)
-    calibration_values = raw_values if calibration is None else values(calibration)
+    cal = raw if calibration is None else calibration
+    if not np.array_equal(cal.forward.offsets, cal.reverse.offsets):
+        raise ValueError("calibration strands must have identical offsets.")
     with jax.enable_x64(True):
+        calibration_values = jnp.maximum(
+            jnp.asarray(cal.forward.data), jnp.asarray(cal.reverse.data)
+        )
         normalized = np.array(
-            normalize_exact(jnp.asarray(raw_values), jnp.asarray(calibration_values)),
+            normalize_exact(jnp.asarray(raw_values), calibration_values),
             dtype=np.float32, copy=True,
         )
     fwd_size = raw.forward.data.size

@@ -71,17 +71,52 @@ Paths under `examples/` below refer to files in the repository, not files
 installed beside the CLI. With the uv environment, prefix CLI commands with
 `uv run`.
 
-Mimosa uses JAX for computation. The default installation supports CPU
-execution; GPU execution requires a compatible JAX
-CUDA or ROCm plugin and driver as described in the
-[JAX installation guide](https://docs.jax.dev/en/latest/installation.html).
-The project currently requires `jax==0.10.0`; any GPU plugin must be compatible
-with that version. JAX selects the compute device automatically. Inspect the
-selected backend and its available devices with:
+Mimosa uses JAX for computation. The default installation supports CPU. GPU
+plugins are optional: an installer cannot reliably select one from the target
+hardware, driver and system libraries, which may differ from the installation
+machine.
+
+For an NVIDIA GPU on supported Linux systems, choose **one** CUDA extra:
 
 ```bash
-uv run python -c "import jax; print(jax.default_backend(), jax.devices())"
+python -m pip install 'mimosa-tool[cuda13]'
+# Or, for CUDA 12:
+python -m pip install 'mimosa-tool[cuda12]'
 ```
+
+These extras install the matching JAX plugin and CUDA libraries; a compatible
+NVIDIA driver must already be installed. Check GPU, driver and platform support
+in the [JAX installation guide](https://docs.jax.dev/en/latest/installation.html).
+For a source checkout use `uv sync --locked --group dev --extra cuda13` (or
+`cuda12`) and include the same `--extra cuda13` in subsequent `uv run`
+commands, for example `uv run --extra cuda13 mimosa --version`. Do not select
+both CUDA extras in one environment.
+
+For an AMD GPU on supported Linux systems, install the ROCm extra:
+
+```bash
+python -m pip install 'mimosa-tool[rocm]'
+```
+
+For a source checkout, use `uv sync --locked --group dev --extra rocm`, then
+include `--extra rocm` in subsequent `uv run` commands. This installs the JAX
+ROCm 7 plugin and PJRT, but **not** the ROCm system libraries or GPU driver.
+Install a compatible ROCm version and driver first, and check your GPU and
+platform against [AMD's JAX installation guide](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/frameworks/jax/install.html)
+and [compatibility matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html).
+The project pins JAX 0.10.0; the extra uses its `rocm7-local` variant, not
+newer JAX extras that install ROCm libraries. Select only one GPU extra.
+
+JAX selects the compute device automatically. Inspect the selected backend and
+its available devices in the same environment used to run Mimosa:
+
+```bash
+python -c "import jax; print(jax.default_backend(), jax.devices())"
+```
+
+For the uv checkout, use `uv run --extra rocm python -c 'import jax; print(jax.default_backend(), jax.devices())'`
+(or the selected CUDA extra). To require a GPU instead of silently using CPU, run
+with `JAX_PLATFORMS=gpu`; JAX will report an error if it cannot initialize one.
 
 ## CLI
 
