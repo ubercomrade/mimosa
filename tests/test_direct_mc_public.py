@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -67,6 +68,52 @@ def test_monte_carlo_counts_match_public_comparison_reference(group, algorithm):
     np.testing.assert_array_equal(pvalues, (expected_counts + 1) / 6)
 
 
+@pytest.mark.parametrize(("algorithm", "batch_size", "block_size"), [
+    ("dense", 4, 2), ("sparse", 6, 4),
+])
+def test_sequential_monte_carlo_uses_exact_prefix(
+    tmp_path, monkeypatch, algorithm, batch_size, block_size,
+):
+    query = read_model("examples/foxa2.meme")
+    target = read_model("examples/gata4.meme")
+    rng = np.random.default_rng(318)
+    sequences = EncodedSequences.from_rows([rng.integers(0, 4, 1600, dtype=np.uint8)])
+    options = dict(seed=91, min_logerr=1, search_range=2, algorithm=algorithm,
+                   batch_size=batch_size, comparison_block_size=block_size,
+                   storage="disk", temp_dir=tmp_path, prefetch=2)
+    _, preceding, _ = direct_mc(query, [target], sequences, k=8, **options)
+    scores, counts, _ = direct_mc(query, [target, query], sequences, k=9, **options)
+    np.testing.assert_array_equal(preceding, [[3]])
+    np.testing.assert_array_equal(counts, [[4, 0]])
+
+    reads = []
+    load = np.load
+
+    def record_load(path, **kwargs):
+        reads.append(Path(path).name)
+        return load(path, **kwargs)
+
+    monkeypatch.setattr(np, "load", record_load)
+    observed, exceedances, pvalues, used = direct_mc(
+        query, [target, query], sequences, k=16, stop_after_exceedances=4,
+        return_replicates=True, **options,
+    )
+    np.testing.assert_array_equal(observed, scores)
+    np.testing.assert_array_equal(exceedances, [[4, 0]])
+    np.testing.assert_array_equal(pvalues, [[4 / 9, 1 / 17]])
+    np.testing.assert_array_equal(used, [[9, 16]])
+    assert reads.count("0.npy") == (9 + batch_size - 1) // batch_size
+    assert reads.count("1.npy") == (16 + batch_size - 1) // batch_size
+    for cap in (8, 9):
+        _, _, capped, used = direct_mc(
+            query, [target], sequences, k=cap, stop_after_exceedances=4,
+            return_replicates=True, **options,
+        )
+        np.testing.assert_array_equal(capped, [[4 / 9]])
+        np.testing.assert_array_equal(used, [[cap]])
+    assert list(tmp_path.iterdir()) == []
+
+
 @pytest.mark.parametrize("algorithm", ["dense", "sparse"])
 @pytest.mark.parametrize("storage", ["memory", "disk"])
 def test_monte_carlo_empty_sequences_and_targets(tmp_path, algorithm, storage):
@@ -83,28 +130,37 @@ def test_monte_carlo_empty_sequences_and_targets(tmp_path, algorithm, storage):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_cli_direct_monte_carlo(tmp_path):
+@pytest.mark.parametrize("sequential", [False, True])
+def test_cli_direct_monte_carlo(tmp_path, sequential):
     sequences = tmp_path / "input.fa"
     sequences.write_text(">a\n" + "ACGTN" * 12 + "\n")
     command = [
         sys.executable, "-m", "mimosa.cli", "compare-many",
         "examples/foxa2.meme", "examples/gata4.meme", "examples/foxa2.meme",
         "--query-type", "pwm", "--target-type", "pwm", "--fasta", str(sequences),
-        "--min-logerr", "1", "--search-range", "1", "--pvalue",
+        "--min-logerr", "4" if sequential else "1", "--search-range", "1", "--pvalue",
         "--mc-replicates", "2", "--mc-seed", "7", "--mc-group", "gc",
         "--mc-storage", "disk", "--mc-temp-dir", str(tmp_path), "--mc-batch-size", "1",
         "--mc-algorithm", "sparse", "--mc-prefetch", "2",
     ]
+    if sequential:
+        command.extend(["--mc-stop-after-exceedances", "1"])
     completed = subprocess.run(command, capture_output=True, text=True, check=True)
     results = json.loads(completed.stdout)
     assert len(results) == 2
     for result in results:
         mc = result["monte_carlo"]
-        assert (mc["replicates"], mc["seed"], mc["group"]) == (2, 7, "gc")
+        assert (mc["seed"], mc["group"]) == (7, "gc")
         assert mc["randomized"] == "query"
         assert mc["version"] == "mimosa-direct-mc-v2"
         assert mc["algorithm"] == "sparse"
-        assert result["p-value"] == (mc["exceedances"] + 1) / 3
+        if sequential:
+            assert mc["replicates"] == mc["exceedances"] == mc["stop_after_exceedances"] == 1
+            assert mc["max_replicates"] == 2
+            assert result["p-value"] == 1
+        else:
+            assert mc["replicates"] == 2
+            assert result["p-value"] == (mc["exceedances"] + 1) / 3
     assert "temporary target profiles" in completed.stderr
     assert sorted(p.name for p in tmp_path.iterdir()) == ["input.fa"]
 
@@ -233,6 +289,8 @@ def test_removed_null_command_and_option():
     {"k": 0, "seed": 1},
     {"k": 2, "seed": -1},
     {"k": 2, "seed": 1, "group": "invalid"},
+    {"k": 2, "seed": 1, "stop_after_exceedances": 0},
+    {"k": 2, "seed": 1, "stop_after_exceedances": 3},
 ])
 def test_invalid_monte_carlo_options(options):
     model = read_model("examples/foxa2.meme")

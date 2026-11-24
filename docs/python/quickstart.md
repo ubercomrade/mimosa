@@ -157,3 +157,6 @@ target order or batch size. Ties count as exceedances:
 `p = (count + 1) / (k + 1)`. Here `k=99` is a small demonstration, with a
 minimum possible p-value of `0.01`; use more replicates for finer resolution.
 The function returns raw p-values, not BH-adjusted values or E-values.
+For larger budgets, pass `stop_after_exceedances=20` to stop each pair once
+it reaches 20 exceedances, with `k` as the cap. Add `return_replicates=True`
+to receive the per-pair sample sizes as a fourth array.

@@ -157,12 +157,18 @@ mimosa compare examples/foxa2.meme examples/gata2.meme \
   --query-type pwm --target-type pwm \
   --fasta examples/foreground.fa --background examples/background.fa \
   --min-logerr 2 \
-  --pvalue --mc-replicates 2000 --mc-seed 127
+  --pvalue --mc-replicates 2000 --mc-stop-after-exceedances 20 --mc-seed 127
 ```
 
-Monte Carlo randomizes the query while keeping targets fixed. This option
-requires motif models, not precomputed score profiles. See
-[Method and statistics](docs/python/method.md) for assumptions and settings.
+Monte Carlo randomizes the query while keeping targets fixed and requires
+motif models. Here each pair stops after 20 randomized scores meet or exceed
+its observed score, or after 2000 simulations. The JSON field
+`monte_carlo.replicates` reports how many simulations were used for each pair.
+Omit `--mc-stop-after-exceedances` to use a fixed number of simulations.
+In Python, use `direct_mc(..., stop_after_exceedances=20, return_replicates=True)`
+with the usual `k` and `seed` arguments.
+See [Method and statistics](docs/python/method.md) for the p-value formula and
+how to choose the simulation budget.
 
 Manage the optional prepared-profile cache:
 

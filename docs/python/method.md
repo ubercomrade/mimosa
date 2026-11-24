@@ -88,8 +88,8 @@ reconstruction defaults to a pseudocount of `0.25`.
 
 ## Pair-specific Monte Carlo
 
-The single query is independently relabeled in each of K replicates; targets
-remain fixed and share the same query replicates. Each replicate draws an alphabet permutation
+The single query is independently relabeled up to K times. Targets remain fixed
+and use prefixes of the same query replicate stream. Each replicate draws an alphabet permutation
 at each motif position. The `full` group permits all permutations; `gc`
 permutes A/T and C/G separately.
 For a function f of an oriented window it evaluates f(pi(x)); declared context
@@ -121,17 +121,42 @@ This query-randomization protocol differs from the previous target-randomization
 protocol and can produce different p-values. Shared replicates induce dependence
 between targets' estimates; BH adjustment's assumptions should be considered.
 
-The Monte Carlo upper-tail p-value is:
+With a fixed replicate count, the Monte Carlo upper-tail p-value is
 
 ```text
 (1 + count(random_score >= observed_score)) / (K + 1)
 ```
 
+Enable [Besag–Clifford sequential sampling](https://doi.org/10.1093/biomet/78.2.301)
+with `--pvalue --mc-replicates 10000 --mc-stop-after-exceedances 20`, or
+`direct_mc(..., k=10000, seed=127, stop_after_exceedances=20, return_replicates=True)`.
+The cap K and the exceedance threshold h are set before sampling. Each target
+stops on the first replicate n that brings its exceedance count to h, yielding
+`h / n`. Ties count as exceedances. Targets that finish K replicates with
+fewer than h exceedances use the fixed-sample formula above. This gives a
+valid per-pair test under the exchangeability null of the randomization test.
+
+For independent replicates with an exceedance probability near 0.5, the
+expected number of draws to reach h=20 is about 40, subject to the cap.
+Increasing h improves Monte Carlo precision and requires more draws.
+The minimum attainable p-value is `1 / (K + 1)` for zero exceedances.
+That resolution alone gives no guarantee of decimal-place accuracy.
+For a preselected raw p-value cutoff alpha, choosing `h > alpha * K`
+preserves the fixed-sample rejection decision at that cutoff on the same
+replicate stream.
+
+The CLI reports the sample size used for each pair in
+`monte_carlo.replicates`, along with the cap and exceedance threshold when
+sequential sampling is enabled. JAX works in batches, so some comparisons in
+the last batch can fall after a pair's stopping point. Finished targets are
+skipped in subsequent batches.
+
 The CLI adds p-values, BH-adjusted p-values, and E-values. By
 default, the E-value multiplier is the number of results; pass
 `--effective-number-of-targets N` to override it. BH adjustment is unaffected by
 that override. The Python `direct_mc` function returns observed scores, counts
-and raw p-values only; use `adjusted_pvalues(pvalues[0])` and
+and raw p-values, plus an optional array of replicate counts when
+`return_replicates=True`. Use `adjusted_pvalues(pvalues[0])` and
 `evalue(pvalue, effective_n)` to compute annotations separately.
 
 Observed scores use the dense comparison kernel. Randomized comparisons use

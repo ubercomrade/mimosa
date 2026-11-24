@@ -34,15 +34,17 @@ def _target_storage_estimate(sequences, targets):
     return len(targets) * (2 * sequences.data.size * 4 + 256)
 
 
-@partial(jax.jit, static_argnames=("search_range",))
-def _count_exceedances(queries, target, starts, sizes, threshold, observed, *, search_range):
+@partial(jax.jit, static_argnames=("search_range", "return_mask"))
+def _count_exceedances(queries, target, starts, sizes, threshold, observed, *,
+                       search_range, return_mask=False):
     """Compare a bounded block of query profiles against one target on device."""
     scores = jax.vmap(
         lambda query: _compare_circular(
             query, target, starts, sizes, threshold, search_range=search_range,
         )[0]
     )(queries)
-    return jnp.sum(scores >= observed, dtype=jnp.int64)
+    hits = scores >= observed
+    return hits if return_mask else jnp.sum(hits, dtype=jnp.int64)
 
 
 def _permutations(model, seed, replicate, group):
@@ -132,10 +134,11 @@ def _bundle_to_device(bundle):
 
 
 @contextmanager
-def _target_sources(profiles, *, use_disk, cache, prefetch, offsets):
+def _target_sources(profiles, *, use_disk, cache, prefetch, offsets, active):
     """Yield profiles in order; optionally prefetch a bounded number on the host."""
+    source = enumerate(profiles) if active is None else ((i, profiles[i]) for i in active)
     if not prefetch or (not use_disk and cache is None):
-        yield enumerate(profiles)
+        yield source
         return
 
     def load(saved):
@@ -148,7 +151,6 @@ def _target_sources(profiles, *, use_disk, cache, prefetch, offsets):
 
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mimosa-prefetch")
     pending = deque()
-    source = iter(enumerate(profiles))
 
     def submit_next():
         item = next(source, None)
@@ -157,7 +159,7 @@ def _target_sources(profiles, *, use_disk, cache, prefetch, offsets):
             pending.append((index, executor.submit(load, saved)))
 
     try:
-        for _ in range(min(prefetch, len(profiles))):
+        for _ in range(min(prefetch, len(profiles) if active is None else len(active))):
             submit_next()
 
         def iterator():
@@ -209,10 +211,10 @@ class _TargetProfileStore:
         else:
             self.profiles.append(np.asarray(profile, dtype=np.float32))
 
-    def sources(self, prefetch):
+    def sources(self, prefetch, active):
         return _target_sources(
             self.profiles, use_disk=self.root is not None, cache=self.cache,
-            prefetch=prefetch, offsets=self.sequences.offsets,
+            prefetch=prefetch, offsets=self.sequences.offsets, active=active,
         )
 
     def load(self, saved, *, prefetch):
@@ -275,30 +277,49 @@ def _prepare_replicate_blocks(query, sequences, background, *, first, end,
     return blocks
 
 
-def _accumulate_exceedances(blocks, store, target_anchors, observed, counts, *,
-                            starts, sizes, threshold, search_range, prefetch):
+def _accumulate_exceedances(blocks, store, target_anchors, observed, counts, replicates, *,
+                            starts, sizes, threshold, search_range, prefetch,
+                            first, active, stop_after_exceedances):
     """Stream fixed targets through a replicate batch and update host counts."""
-    with store.sources(prefetch) as sources:
+    sequential = stop_after_exceedances is not None
+    options = {"search_range": search_range}
+    if sequential:
+        options["return_mask"] = True
+    with store.sources(prefetch, active) as sources:
         for j, saved in sources:
             target_profile = store.load(saved, prefetch=prefetch)
             target_anchor = target_anchors[j]
             if target_anchor is _REBUILD_ANCHORS:
                 target_anchor = make_anchors(target_profile, threshold)
             counter = jnp.int64(0)
+            masks = []
             for block, query_anchor in blocks:
                 if not store.sequences.data.size:
-                    counter = counter + block.shape[0] * (jnp.float32(0) >= observed[0, j])
+                    hit = jnp.float32(0) >= observed[0, j]
+                    contribution = (jnp.broadcast_to(hit, (block.shape[0],)) if sequential
+                                    else block.shape[0] * hit)
                 elif query_anchor is not None and target_anchor is not None:
-                    counter = counter + _count_sparse_exceedances(
+                    contribution = _count_sparse_exceedances(
                         block, target_profile, *query_anchor, *target_anchor,
-                        starts, sizes, threshold, observed[0, j], search_range=search_range,
+                        starts, sizes, threshold, observed[0, j], **options,
                     )
                 else:
-                    counter = counter + _count_exceedances(
-                        block, target_profile, starts, sizes, threshold, observed[0, j],
-                        search_range=search_range,
+                    contribution = _count_exceedances(
+                        block, target_profile, starts, sizes, threshold, observed[0, j], **options,
                     )
-            counts[0, j] += int(counter)
+                if sequential:
+                    masks.append(contribution)
+                else:
+                    counter = counter + contribution
+            if sequential:
+                # Keep the exact stopping position, even inside a vectorized block.
+                hits = np.flatnonzero(np.asarray(jnp.concatenate(masks)))
+                remaining = stop_after_exceedances - counts[0, j]
+                if hits.size >= remaining:
+                    replicates[0, j] = first + hits[remaining - 1] + 1
+                counts[0, j] += min(hits.size, remaining)
+            else:
+                counts[0, j] += int(counter)
             del target_profile
 
 
@@ -306,12 +327,18 @@ def direct_mc(query, targets, sequences, *, k, seed, group="full",
               min_logerr=4.0, search_range=5, background=None,
               batch_size=8, storage="auto", memory_limit=256 * 1024**2,
               temp_dir=None, comparison_block_size=_COMPARISON_BLOCK_SIZE,
-              algorithm="sparse", prefetch=0, anchor_memory_limit=256 * 1024**2):
+              algorithm="sparse", prefetch=0, anchor_memory_limit=256 * 1024**2,
+              stop_after_exceedances=None, return_replicates=False):
     """Return observed scores, exceedance counts and p-values for ordered pairs.
 
     Returns arrays of shape (1, number of targets). The query is randomized
-    once per replicate and each target stays fixed. The same replicates are
-    used for all targets. Ties are included: p = (count + 1) / (k + 1).
+    once per replicate and each target uses a prefix of the same replicate
+    stream. Ties count as exceedances. By default p = (count + 1) / (k + 1).
+    Set ``stop_after_exceedances=h`` to use the sequential Besag–Clifford
+    p-value h / n when the h-th exceedance occurs on replicate n <= k.
+    Targets with fewer than h exceedances use all k replicates and the
+    fixed-sample formula. Set ``return_replicates=True`` to append the number
+    of replicates used per target as a fourth array of the same shape.
 
     Query replicates are held on device in batches; target profiles are kept
     on the host or in an isolated temporary directory. Auto storage uses disk
@@ -333,18 +360,25 @@ def direct_mc(query, targets, sequences, *, k, seed, group="full",
                           background=background, batch_size=batch_size, storage=storage,
                           memory_limit=memory_limit, temp_dir=temp_dir,
                           comparison_block_size=comparison_block_size, algorithm=algorithm,
-                          prefetch=prefetch, anchor_memory_limit=anchor_memory_limit)
+                          prefetch=prefetch, anchor_memory_limit=anchor_memory_limit,
+                          stop_after_exceedances=stop_after_exceedances,
+                          return_replicates=return_replicates)
 
 
 def _direct_mc(query, targets, sequences, *, k, seed, group,
                min_logerr, search_range, background, batch_size, storage,
                memory_limit, temp_dir, comparison_block_size, algorithm, prefetch=0,
                anchor_memory_limit=256 * 1024**2,
+               stop_after_exceedances=None, return_replicates=False,
                return_details=False, cache=None):
     k, seed = strict_integer(k, "k"), strict_integer(seed, "seed")
     search_range = strict_integer(search_range, "search_range")
     if k < 1 or seed < 0 or search_range < 0:
         raise ValueError("k must be positive; seed and search_range must be non-negative.")
+    if stop_after_exceedances is not None:
+        stop_after_exceedances = strict_integer(stop_after_exceedances, "stop_after_exceedances")
+        if not 1 <= stop_after_exceedances <= k:
+            raise ValueError("stop_after_exceedances must be between 1 and k.")
     threshold = parse_min_logerr(min_logerr)
     if group not in ("full", "gc"):
         raise ValueError("group must be 'full' or 'gc'.")
@@ -379,8 +413,11 @@ def _direct_mc(query, targets, sequences, *, k, seed, group,
     counts = np.zeros((1, len(targets)), dtype=np.int64)
     if not targets:
         observed = np.empty((1, 0), dtype=np.float32)
-        result = (observed, counts, (counts + 1) / (k + 1))
+        result = (observed, counts, np.empty_like(observed, dtype=np.float64))
+        if return_replicates:
+            result = (*result, np.empty_like(counts))
         return (*result, []) if return_details else result
+    replicates = np.full_like(counts, k)
     if sequences.data.size > np.iinfo(np.int32).max:
         raise ValueError("JAX comparison currently supports at most 2**31-1 positions.")
     lengths = np.diff(sequences.offsets)
@@ -410,23 +447,36 @@ def _direct_mc(query, targets, sequences, *, k, seed, group,
             anchor_memory_limit=anchor_memory_limit, return_details=return_details,
         )
         relabel_scorer = None if query.sequence_scanner else _compile_relabel_scorer(query)
+        active = None
         for first in range(0, k, batch_size):
+            if stop_after_exceedances is not None:
+                active = np.flatnonzero(counts[0] < stop_after_exceedances)
+                if active.size == 0:
+                    break
             blocks = _prepare_replicate_blocks(
                 query, sequences, background, first=first, end=min(first + batch_size, k),
                 comparison_block_size=comparison_block_size, seed=seed, group=group,
                 threshold=threshold, algorithm=algorithm, relabel_scorer=relabel_scorer,
             )
             _accumulate_exceedances(
-                blocks, target_store, target_anchors, observed, counts,
+                blocks, target_store, target_anchors, observed, counts, replicates,
                 starts=starts, sizes=sizes, threshold=threshold,
-                search_range=search_range, prefetch=prefetch,
+                search_range=search_range, prefetch=prefetch, first=first,
+                active=active, stop_after_exceedances=stop_after_exceedances,
             )
             del blocks
-    result = (observed, counts, (counts + 1) / (k + 1))
+    pvalues = (counts + 1) / (k + 1)
+    if stop_after_exceedances is not None:
+        reached = counts == stop_after_exceedances
+        pvalues[reached] = stop_after_exceedances / replicates[reached]
+    result = (observed, counts, pvalues)
+    if return_replicates:
+        result = (*result, replicates)
     return (*result, details) if return_details else result
 
 
 def _direct_mc_with_details(query, targets, sequences, **options):
     """Internal CLI path sharing observed and randomized profile preparation."""
     with jax.enable_x64(True):
-        return _direct_mc(query, targets, sequences, return_details=True, **options)
+        return _direct_mc(query, targets, sequences, return_details=True,
+                          return_replicates=True, **options)

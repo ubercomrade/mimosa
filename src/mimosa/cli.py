@@ -141,32 +141,26 @@ def _mc_options(args, background):
                 batch_size=args.mc_batch_size, storage=args.mc_storage,
                 memory_limit=args.mc_memory_limit_mib * 1024**2, temp_dir=args.mc_temp_dir,
                 comparison_block_size=args.mc_comparison_block_size, algorithm=args.mc_algorithm,
-                prefetch=args.mc_prefetch, anchor_memory_limit=args.mc_anchor_memory_mib * 1024**2)
+                prefetch=args.mc_prefetch, anchor_memory_limit=args.mc_anchor_memory_mib * 1024**2,
+                stop_after_exceedances=args.mc_stop_after_exceedances)
 
 
-def _annotate_comparison_results(results, args, sequences, background, models=None, mc_result=None):
-    if not args.pvalue:
-        return results
-    from .monte_carlo import direct_mc
+def _annotate_comparison_results(results, args, counts, pvalues, replicates):
     from .statistics import AnnotatedResult, adjusted_pvalues, evalue
 
-    if mc_result is None:
-        _report_mc_storage(args, sequences, models[1:])
-        mc_result = direct_mc(models[0], models[1:], sequences, **_mc_options(args, background))
-    scores, counts, pvalues = mc_result
     pvalues = pvalues[0]
     adjusted = adjusted_pvalues(pvalues)
     effective = (len(results) if args.effective_number_of_targets is None
                  else args.effective_number_of_targets)
     annotated = []
     for index, result in enumerate(results):
-        if result.score != scores[0, index]:
-            raise MimosaError("Monte Carlo observed score differs from comparison score.")
         annotated.append(AnnotatedResult(
             result, p_value=float(pvalues[index]), adj_p_value=float(adjusted[index]),
-            e_value=evalue(pvalues[index], effective), mc_replicates=args.mc_replicates,
+            e_value=evalue(pvalues[index], effective), mc_replicates=int(replicates[0, index]),
             mc_exceedances=int(counts[0, index]), mc_seed=args.mc_seed,
             mc_group=args.mc_group, mc_algorithm=args.mc_algorithm,
+            mc_stop_after_exceedances=args.mc_stop_after_exceedances,
+            mc_max_replicates=args.mc_replicates,
         ))
     return annotated
 
@@ -179,7 +173,7 @@ def _compare_with_monte_carlo(query, targets, sequences, background, args, cache
 
     if cache is None:
         _report_mc_storage(args, sequences, targets)
-    scores, counts, pvalues, details = _direct_mc_with_details(
+    scores, counts, pvalues, replicates, details = _direct_mc_with_details(
         query, targets, sequences, cache=cache, **_mc_options(args, background),
     )
     threshold = parse_min_logerr(args.min_logerr)
@@ -190,9 +184,7 @@ def _compare_with_monte_carlo(query, targets, sequences, background, args, cache
                          search_range=args.search_range, min_logerr=threshold)
         for i, (target, (shift, orientation, sites)) in enumerate(zip(targets, details))
     ]
-    return _annotate_comparison_results(
-        results, args, sequences, background, mc_result=(scores, counts, pvalues),
-    )
+    return _annotate_comparison_results(results, args, counts, pvalues, replicates)
 
 
 def _run_compare(args):
@@ -211,13 +203,6 @@ def _run_compare(args):
         background=background,
         cache=cache,
     )
-    result = _annotate_comparison_results(
-        [result],
-        args,
-        sequences,
-        background,
-        models=[query, *targets],
-    )[0]
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     return 0
 
@@ -237,13 +222,6 @@ def _run_compare_many(args):
         min_logerr=args.min_logerr,
         background=background,
         cache=cache,
-    )
-    results = _annotate_comparison_results(
-        results,
-        args,
-        sequences,
-        background,
-        models=[query, *targets],
     )
     print(json.dumps([result.to_dict() for result in results], indent=2, sort_keys=True))
     return 0
@@ -320,7 +298,12 @@ def build_parser():
             type=_bounded_positive_integer("effective-number-of-targets", MAX_GENERATED_SEQUENCES),
         )
         p.add_argument("--pvalue", action="store_true")
-        p.add_argument("--mc-replicates", type=_bounded_positive_integer("mc-replicates", 1_000_000), default=1000)
+        p.add_argument("--mc-replicates", type=_bounded_positive_integer("mc-replicates", 1_000_000),
+                       default=1000, help="replicate count, or maximum with sequential stopping")
+        p.add_argument("--mc-stop-after-exceedances",
+                       type=_bounded_positive_integer("mc-stop-after-exceedances", 1_000_000),
+                       help="stop each pair after this many randomized scores meet or exceed "
+                            "its observed score (requires --pvalue)")
         p.add_argument("--mc-seed", type=int, default=127)
         p.add_argument("--mc-group", choices=("full", "gc"), default="full")
         p.add_argument("--mc-batch-size", type=_bounded_positive_integer("mc-batch-size", 1_000_000),
@@ -361,6 +344,11 @@ def _validate_cli_arguments(args):
         raise MimosaError("--fasta and --background are not used for scores-only comparison.")
     if not args.pvalue and args.effective_number_of_targets is not None:
         raise MimosaError("--effective-number-of-targets requires --pvalue.")
+    if args.mc_stop_after_exceedances is not None:
+        if not args.pvalue:
+            raise MimosaError("--mc-stop-after-exceedances requires --pvalue.")
+        if args.mc_stop_after_exceedances > args.mc_replicates:
+            raise MimosaError("--mc-stop-after-exceedances cannot exceed --mc-replicates.")
     if args.pvalue and (args.query_type == "scores" or args.target_type == "scores"):
         raise MimosaError("--pvalue requires motif models, not score profiles.")
     if args.mc_seed < 0:

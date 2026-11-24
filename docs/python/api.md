@@ -144,7 +144,8 @@ direct_mc(query, targets, sequences, *, k, seed, group="full",
           min_logerr=4.0, search_range=5, background=None,
           batch_size=8, storage="auto", memory_limit=268435456, temp_dir=None,
           comparison_block_size=8, algorithm="sparse", prefetch=0,
-          anchor_memory_limit=268435456)
+          anchor_memory_limit=268435456, stop_after_exceedances=None,
+          return_replicates=False)
 ```
 
 Available selectors are `BestPerSequence`, `ThresholdHits`, and
@@ -158,13 +159,19 @@ in `(0, 1]`.
 
 `direct_mc` returns matrices of observed scores, exceedance counts and
 p-values, each with shape `(1, number_of_targets)`. It randomizes the single
-query and uses the same replicates for all fixed targets. It supports built-in
+query and each fixed target uses a prefix of the same replicate stream. It supports built-in
 PWM, BaMM, Dimont and Slim models on the device-level pipeline and any other
 `MotifModel` with `score_sites` through the shared scan path (SiteGA is
 temporarily disabled). `group` is `full` or `gc`; ties are included. Score
 profiles are not supported by this Monte Carlo path.
 `k` must be a positive integer and `seed` a non-negative integer. Counts
-include `random_score == observed_score`, with `p = (count + 1) / (k + 1)`.
+include `random_score == observed_score`. By default all targets use `k`
+replicates, with `p = (count + 1) / (k + 1)`. Set
+`stop_after_exceedances=h` with an integer `1 <= h <= k` to use
+sequential sampling. A target reaching its h-th exceedance on replicate n
+gets `p = h / n`. Targets with fewer than h exceedances at k use the
+fixed-sample formula. `return_replicates=True` appends a fourth matrix
+containing the number of replicates used per target.
 Custom models also need a stable `fingerprint()` to define the random stream.
 The public function has no `cache` argument; persistent caching of observed
 Monte Carlo profiles is exposed by the CLI's `--cache-dir`.

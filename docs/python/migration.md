@@ -63,12 +63,13 @@ Direct Monte Carlo randomizes the single **query**, not the targets:
    replicate's calibration table.
 3. Reuse those query replicates for every target.
 4. Count randomized scores greater than or equal to the observed score and
-   return `(count + 1) / (k + 1)`.
+   return `(count + 1) / (k + 1)` in fixed-sample mode.
 
-`direct_mc(query, targets, sequences, *, k, seed, ...)` returns three arrays
+`direct_mc(query, targets, sequences, *, k, seed, ...)` returns three arrays by default
 with shape `(1, number_of_targets)`: observed scores, exceedance counts and raw
 p-values. It accepts motif models, not score profiles or prepared profiles.
 Custom models need a stable fingerprint as well as `score_sites`.
+For sequential sampling, see [Method and statistics](method.md#pair-specific-monte-carlo).
 
 Query randomization differs from the earlier target-randomization protocol;
 old p-values and pooled nulls are not interchangeable with these results.

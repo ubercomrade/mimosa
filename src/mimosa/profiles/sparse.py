@@ -66,10 +66,10 @@ def _sparse_score(query, target, qidx, qvalid, tidx, tvalid, starts, sizes,
     return jax.lax.fori_loop(0, 4 * shifts, one, jnp.float64(0)).astype(jnp.float32)
 
 
-@partial(jax.jit, static_argnames=("search_range",))
+@partial(jax.jit, static_argnames=("search_range", "return_mask"))
 def count_exceedances(queries, target, qidx, qvalid, tidx, tvalid, starts, sizes,
-                      threshold, observed, *, search_range):
-    """Count sparse scores, checking near-ties with the original dense kernel."""
+                      threshold, observed, *, search_range, return_mask=False):
+    """Check sparse exceedances, resolving near-ties with the dense kernel."""
     sparse = jax.vmap(lambda q, qi, qv: _sparse_score(
         q, target, qi, qv, tidx, tvalid, starts, sizes, threshold,
         search_range=search_range,
@@ -85,4 +85,5 @@ def count_exceedances(queries, target, qidx, qvalid, tidx, tvalid, starts, sizes
         )[0])(queries)
 
     scores = jax.lax.cond(near, dense, lambda _: sparse, operand=None)
-    return jnp.sum(scores >= observed, dtype=jnp.int64)
+    hits = scores >= observed
+    return hits if return_mask else jnp.sum(hits, dtype=jnp.int64)

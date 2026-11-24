@@ -45,6 +45,10 @@ Important options:
   `1000`, positive), `--mc-seed` the randomization seed (default `127`,
   non-negative), and `--mc-group` either `full` (default) or `gc`.
   `--seed` controls sequence generation, not the Monte Carlo random stream.
+- `--mc-stop-after-exceedances H` enables sequential sampling for each pair.
+  It requires `--pvalue` and an integer H between 1 and K. The pair stops once
+  H randomized scores meet or exceed its observed score. K then caps the
+  number of simulations per pair.
 - `--mc-batch-size` bounds random query profiles held on the device (default 8).
   `--mc-comparison-block-size` bounds the vectorized comparison block (default 8);
   larger values may use substantially more device memory.
@@ -75,6 +79,9 @@ With `--pvalue`, JSON includes `p-value`, `adj.p-value` (Benjamini–Hochberg),
 `E-value`, and `annotation_schema_version: 2`. The `monte_carlo` object records
 `replicates`, `exceedances`, `seed`, `group`, `algorithm`,
 `version: "mimosa-direct-mc-v2"`, and `randomized: "query"`.
+With sequential sampling, `replicates` is the number used for that pair,
+and `max_replicates` and `stop_after_exceedances` record the configured
+cap and threshold.
 
 The default threshold expects about `10^6` positions. With fewer
 than 50 expected positions above the threshold, a warning is written to

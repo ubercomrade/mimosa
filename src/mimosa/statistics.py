@@ -18,6 +18,8 @@ class AnnotatedResult:
     mc_seed: int | None = None
     mc_group: str | None = None
     mc_algorithm: str | None = None
+    mc_stop_after_exceedances: int | None = None
+    mc_max_replicates: int | None = None
 
     def __getattr__(self, name):
         if name == "result" or (name.startswith("__") and name.endswith("__")):
@@ -40,6 +42,11 @@ class AnnotatedResult:
                 "version": "mimosa-direct-mc-v2", "randomized": "query",
                 "algorithm": self.mc_algorithm,
             }
+            if self.mc_stop_after_exceedances is not None:
+                d["monte_carlo"].update(
+                    stop_after_exceedances=self.mc_stop_after_exceedances,
+                    max_replicates=self.mc_max_replicates,
+                )
         return d
 
 
